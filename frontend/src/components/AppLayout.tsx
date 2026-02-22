@@ -666,19 +666,16 @@ export function AppLayout({ onLogout }: AppLayoutProps): JSX.Element {
                 });
               } else if (connectData.action === 'connect_builtin') {
                 // Connect built-in connector directly
-                try {
-                  await fetch(`${API_BASE}/auth/integrations/connect-builtin`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      provider: connectData.provider,
-                      organization_id: orgId,
-                    }),
-                  });
-                  queryClient.invalidateQueries({ queryKey: ['integrations'] });
-                } catch (err) {
-                  console.error('Failed to connect builtin:', err);
-                }
+                fetch(`${API_BASE}/auth/integrations/connect-builtin`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    provider: connectData.provider,
+                    organization_id: orgId,
+                  }),
+                })
+                  .then(() => queryClient.invalidateQueries({ queryKey: ['integrations'] }))
+                  .catch((err) => console.error('Failed to connect builtin:', err));
               }
             }
           }
