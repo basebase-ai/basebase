@@ -1656,6 +1656,17 @@ WHERE scheduled_start >= '2026-01-27'::date AND scheduled_start < '2026-01-28'::
                             "app": app_data,
                         })
 
+                # Emit connector_connect event for OAuth flow
+                if tool_name == "initiate_connector" and tool_result.get("action") in ("connect_oauth", "connect_builtin"):
+                    yield json.dumps({
+                        "type": "connector_connect",
+                        "action": tool_result.get("action"),
+                        "provider": tool_result.get("provider"),
+                        "scope": tool_result.get("scope"),
+                        "session_token": tool_result.get("session_token"),
+                        "connection_id": tool_result.get("connection_id"),
+                    })
+
                 # Persist tool result to DB in background (fire-and-forget).
                 # The final _save_assistant_message at the end is the authoritative save.
                 if self.conversation_id:

@@ -36,7 +36,7 @@ from config import get_nango_integration_id
 logger = logging.getLogger(__name__)
 EMAIL_PATTERN = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
 SLOW_REPLY_TIMEOUT_SECONDS = 30
-SLOW_REPLY_MESSAGE = "I'm sorry, I'll see if I can get to this, but it's taking a while."
+SLOW_REPLY_MESSAGE = "Still working on this..."
 
 
 def _cannot_action_message() -> str:
@@ -1796,39 +1796,56 @@ async def process_slack_dm(
             local_time=local_time_iso,
         )
 
-        total_length: int = await asyncio.wait_for(
+        response_task = asyncio.create_task(
             _stream_and_post_responses(
                 orchestrator=orchestrator,
                 connector=connector,
                 message_text=message_text or "(see attached files)",
                 channel=channel_id,
                 attachment_ids=attachment_ids or None,
-            ),
-            timeout=SLOW_REPLY_TIMEOUT_SECONDS,
+            )
         )
 
-        logger.info(
-            "[slack_conversations] Posted response to channel %s (%d chars)",
-            channel_id,
-            total_length,
-        )
-        return {
-            "status": "success",
-            "conversation_id": str(conversation.id),
-            "response_length": total_length,
-        }
-    except asyncio.TimeoutError:
+        done, _ = await asyncio.wait({response_task}, timeout=SLOW_REPLY_TIMEOUT_SECONDS)
+
+        if response_task in done:
+            total_length: int = response_task.result()
+            logger.info(
+                "[slack_conversations] Posted response to channel %s (%d chars)",
+                channel_id,
+                total_length,
+            )
+            await connector.remove_reaction(channel=channel_id, timestamp=event_ts)
+            return {
+                "status": "success",
+                "conversation_id": str(conversation.id),
+                "response_length": total_length,
+            }
+
         logger.warning(
-            "[slack_conversations] DM processing exceeded %ss team=%s channel=%s user=%s",
+            "[slack_conversations] DM processing exceeded %ss team=%s channel=%s user=%s; continuing in background",
             SLOW_REPLY_TIMEOUT_SECONDS,
             team_id,
             channel_id,
             user_id,
         )
         await connector.post_message(channel=channel_id, text=SLOW_REPLY_MESSAGE)
-        return {"status": "timeout", "error": "slow_response"}
-    finally:
-        await connector.remove_reaction(channel=channel_id, timestamp=event_ts)
+
+        async def _finish_slow_dm_response() -> None:
+            try:
+                await response_task
+            except Exception as e:
+                logger.error(
+                    "[slack_conversations] Background DM response failed team=%s channel=%s: %s",
+                    team_id,
+                    channel_id,
+                    e,
+                )
+            finally:
+                await connector.remove_reaction(channel=channel_id, timestamp=event_ts)
+
+        asyncio.create_task(_finish_slow_dm_response())
+        return {"status": "timeout_continuing", "conversation_id": str(conversation.id)}
 
 
 async def process_slack_mention(
@@ -1969,47 +1986,60 @@ async def process_slack_mention(
         local_time=local_time_iso,
     )
 
-    try:
-        total_length: int = await asyncio.wait_for(
-            _stream_and_post_responses(
-                orchestrator=orchestrator,
-                connector=connector,
-                message_text=message_text or "(see attached files)",
-                channel=channel_id,
-                thread_ts=thread_ts,
-                attachment_ids=attachment_ids or None,
-            ),
-            timeout=SLOW_REPLY_TIMEOUT_SECONDS,
+    response_task = asyncio.create_task(
+        _stream_and_post_responses(
+            orchestrator=orchestrator,
+            connector=connector,
+            message_text=message_text or "(see attached files)",
+            channel=channel_id,
+            thread_ts=thread_ts,
+            attachment_ids=attachment_ids or None,
         )
+    )
 
+    done, pending = await asyncio.wait({response_task}, timeout=SLOW_REPLY_TIMEOUT_SECONDS)
+
+    if response_task in done:
+        total_length: int = response_task.result()
         logger.info(
             "[slack_conversations] Posted thread response to %s (thread %s, %d chars)",
             channel_id,
             thread_ts,
             total_length,
         )
+        await connector.remove_reaction(channel=channel_id, timestamp=thread_ts)
         return {
             "status": "success",
             "conversation_id": str(conversation.id),
             "response_length": total_length,
         }
-    except asyncio.TimeoutError:
-        logger.warning(
-            "[slack_conversations] Mention processing exceeded %ss team=%s channel=%s user=%s thread=%s",
-            SLOW_REPLY_TIMEOUT_SECONDS,
-            team_id,
-            channel_id,
-            user_id,
-            thread_ts,
-        )
-        await connector.post_message(
-            channel=channel_id,
-            text=SLOW_REPLY_MESSAGE,
-            thread_ts=thread_ts,
-        )
-        return {"status": "timeout", "error": "slow_response"}
-    finally:
-        await connector.remove_reaction(channel=channel_id, timestamp=thread_ts)
+
+    logger.warning(
+        "[slack_conversations] Mention processing exceeded %ss team=%s channel=%s user=%s thread=%s; continuing in background",
+        SLOW_REPLY_TIMEOUT_SECONDS,
+        team_id,
+        channel_id,
+        user_id,
+        thread_ts,
+    )
+    await connector.post_message(channel=channel_id, text=SLOW_REPLY_MESSAGE, thread_ts=thread_ts)
+
+    async def _finish_slow_response() -> None:
+        try:
+            await response_task
+        except Exception as e:
+            logger.error(
+                "[slack_conversations] Background mention response failed team=%s channel=%s thread=%s: %s",
+                team_id,
+                channel_id,
+                thread_ts,
+                e,
+            )
+        finally:
+            await connector.remove_reaction(channel=channel_id, timestamp=thread_ts)
+
+    asyncio.create_task(_finish_slow_response())
+    return {"status": "timeout_continuing", "conversation_id": str(conversation.id)}
 
 
 async def process_slack_thread_reply(
@@ -2161,45 +2191,57 @@ async def process_slack_thread_reply(
         local_time=local_time_iso,
     )
 
-    try:
-        total_length: int = await asyncio.wait_for(
-            _stream_and_post_responses(
-                orchestrator=orchestrator,
-                connector=connector,
-                message_text=message_text or "(see attached files)",
-                channel=channel_id,
-                thread_ts=thread_ts,
-                attachment_ids=attachment_ids or None,
-            ),
-            timeout=SLOW_REPLY_TIMEOUT_SECONDS,
+    response_task = asyncio.create_task(
+        _stream_and_post_responses(
+            orchestrator=orchestrator,
+            connector=connector,
+            message_text=message_text or "(see attached files)",
+            channel=channel_id,
+            thread_ts=thread_ts,
+            attachment_ids=attachment_ids or None,
         )
+    )
 
+    done, _ = await asyncio.wait({response_task}, timeout=SLOW_REPLY_TIMEOUT_SECONDS)
+
+    if response_task in done:
+        total_length: int = response_task.result()
         logger.info(
             "[slack_conversations] Posted thread reply to %s (thread %s, %d chars)",
             channel_id,
             thread_ts,
             total_length,
         )
-
+        await connector.remove_reaction(channel=channel_id, timestamp=event_ts)
         return {
             "status": "success",
             "conversation_id": str(conversation.id),
             "response_length": total_length,
         }
-    except asyncio.TimeoutError:
-        logger.warning(
-            "[slack_conversations] Thread processing exceeded %ss team=%s channel=%s user=%s thread=%s",
-            SLOW_REPLY_TIMEOUT_SECONDS,
-            team_id,
-            channel_id,
-            user_id,
-            thread_ts,
-        )
-        await connector.post_message(
-            channel=channel_id,
-            text=SLOW_REPLY_MESSAGE,
-            thread_ts=thread_ts,
-        )
-        return {"status": "timeout", "error": "slow_response"}
-    finally:
-        await connector.remove_reaction(channel=channel_id, timestamp=event_ts)
+
+    logger.warning(
+        "[slack_conversations] Thread processing exceeded %ss team=%s channel=%s user=%s thread=%s; continuing in background",
+        SLOW_REPLY_TIMEOUT_SECONDS,
+        team_id,
+        channel_id,
+        user_id,
+        thread_ts,
+    )
+    await connector.post_message(channel=channel_id, text=SLOW_REPLY_MESSAGE, thread_ts=thread_ts)
+
+    async def _finish_slow_thread_response() -> None:
+        try:
+            await response_task
+        except Exception as e:
+            logger.error(
+                "[slack_conversations] Background thread response failed team=%s channel=%s thread=%s: %s",
+                team_id,
+                channel_id,
+                thread_ts,
+                e,
+            )
+        finally:
+            await connector.remove_reaction(channel=channel_id, timestamp=event_ts)
+
+    asyncio.create_task(_finish_slow_thread_response())
+    return {"status": "timeout_continuing", "conversation_id": str(conversation.id)}
