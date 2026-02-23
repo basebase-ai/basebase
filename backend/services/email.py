@@ -12,6 +12,11 @@ import httpx
 from config import settings
 
 
+def _resend_request_succeeded(status_code: int) -> bool:
+    """Return whether a Resend API response should be considered successful."""
+    return 200 <= status_code < 300
+
+
 async def send_email(
     to: str | list[str],
     subject: str,
@@ -76,7 +81,7 @@ async def send_email(
                 timeout=10.0,
             )
             
-            if response.status_code == 200:
+            if _resend_request_succeeded(response.status_code):
                 print(f"[Email] Sent to {to_list}")
                 return True
             else:
@@ -180,7 +185,7 @@ Needs: {needs or "—"}
                 timeout=10.0,
             )
             
-            if response.status_code == 200:
+            if _resend_request_succeeded(response.status_code):
                 print(f"[Email] Waitlist notification sent for {applicant_email}")
                 return True
             else:
@@ -268,7 +273,7 @@ We'll be in touch soon with next steps.
                 timeout=10.0,
             )
             
-            if response.status_code == 200:
+            if _resend_request_succeeded(response.status_code):
                 print(f"[Email] Waitlist confirmation sent to {to_email}")
                 return True
             else:
@@ -363,7 +368,7 @@ Questions? Just reply to this email.
                 timeout=10.0,
             )
             
-            if response.status_code == 200:
+            if _resend_request_succeeded(response.status_code):
                 print(f"[Email] Invitation sent to {to_email}")
                 return True
             else:
@@ -496,7 +501,7 @@ Questions? Just reply to this email.
                 timeout=10.0,
             )
 
-            if response.status_code == 200:
+            if _resend_request_succeeded(response.status_code):
                 print(f"[Email] Org invitation sent to {to_email} for org {org_name}")
                 return True
             else:
