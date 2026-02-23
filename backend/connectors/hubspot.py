@@ -96,6 +96,7 @@ class HubSpotConnector(BaseConnector):
                     {"name": "lastname", "type": "string", "required": False, "description": "Last name"},
                     {"name": "company", "type": "string", "required": False, "description": "Company name"},
                     {"name": "jobtitle", "type": "string", "required": False, "description": "Job title"},
+                    {"name": "phone", "type": "string", "required": False, "description": "Phone number"},
                 ],
             ),
             WriteOperation(
@@ -116,6 +117,7 @@ class HubSpotConnector(BaseConnector):
                     {"name": "name", "type": "string", "required": False, "description": "Company name"},
                     {"name": "domain", "type": "string", "required": False, "description": "Company domain"},
                     {"name": "industry", "type": "string", "required": False, "description": "Industry"},
+                    {"name": "numberofemployees", "type": "integer", "required": False, "description": "Number of employees"},
                 ],
             ),
         ],

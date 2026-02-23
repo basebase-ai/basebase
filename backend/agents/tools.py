@@ -364,12 +364,23 @@ def _log_tool_execution_result(
         logger.info("[Tools] %s completed: %s", requested_tool_name, result.get("status", result))
 
 
+def _strip_sql_comments(query: str) -> str:
+    """Remove SQL comments (-- line comments and /* block comments */) from a query."""
+    # Remove block comments /* ... */
+    query = re.sub(r'/\*.*?\*/', '', query, flags=re.DOTALL)
+    # Remove line comments -- ...
+    query = re.sub(r'--[^\n]*', '', query)
+    return query.strip()
+
+
 def _validate_sql_query(query: str) -> tuple[bool, str | None]:
     """
     Validate that the SQL query is safe to execute.
     Returns (is_valid, error_message).
     """
-    query_upper = query.upper().strip()
+    # Strip comments before validation so queries like "-- comment\nSELECT ..." pass
+    query_no_comments: str = _strip_sql_comments(query)
+    query_upper = query_no_comments.upper().strip()
     
     # Must start with SELECT (or WITH for CTEs)
     if not (query_upper.startswith("SELECT") or query_upper.startswith("WITH")):
@@ -389,6 +400,18 @@ def _validate_sql_query(query: str) -> tuple[bool, str | None]:
     return True, None
 
 
+_SQL_BUILTIN_FUNCTIONS: set[str] = {
+    # Date/time functions that might appear after FROM in expressions
+    "now", "current_date", "current_time", "current_timestamp",
+    "localtime", "localtimestamp", "date", "time", "timestamp",
+    "extract", "date_part", "date_trunc", "age", "interval",
+    # Other common functions that could be mistaken for tables
+    "generate_series", "unnest", "json_each", "json_array_elements",
+    "jsonb_each", "jsonb_array_elements", "regexp_matches",
+    "string_to_array", "lateral", "rows",
+}
+
+
 def _extract_tables_from_query(query: str) -> set[str]:
     """Extract table names from a SQL query (best effort)."""
     tables: set[str] = set()
@@ -402,6 +425,9 @@ def _extract_tables_from_query(query: str) -> set[str]:
     for pattern in patterns:
         matches = re.findall(pattern, query, re.IGNORECASE)
         tables.update(m.lower() for m in matches)
+    
+    # Exclude SQL built-in functions that might be mistaken for tables
+    tables -= _SQL_BUILTIN_FUNCTIONS
     
     return tables
 

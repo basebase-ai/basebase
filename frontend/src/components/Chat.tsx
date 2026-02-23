@@ -125,6 +125,7 @@ export function Chat({
   const [isWorkflowPolling, setIsWorkflowPolling] = useState<boolean>(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [newConversationScope, setNewConversationScope] = useState<'private' | 'shared'>('shared');
+  const [showScrollToBottom, setShowScrollToBottom] = useState<boolean>(false);
   
   // Attachment state
   const [pendingAttachments, setPendingAttachments] = useState<UploadResponse[]>([]);
@@ -171,6 +172,22 @@ export function Chat({
       : combined;
   }, [pendingMessages, conversationState?.messages]);
   const isThinking = pendingThinking || conversationThinking;
+  
+  // Agent is running if there's an active task OR we're in a thinking/pending state
+  const agentRunning = activeTaskId !== null || isThinking;
+
+  // Track if this conversation has uncommitted changes (write tools completed)
+  const hasUncommittedChanges = useMemo(() => {
+    return messages.some((msg) =>
+      (msg.contentBlocks ?? []).some(
+        (block) =>
+          block.type === 'tool_use' &&
+          (block as ToolUseBlock).status === 'complete' &&
+          ((block as ToolUseBlock).name === 'write_to_system_of_record' ||
+           (block as ToolUseBlock).name === 'run_sql_write')
+      )
+    );
+  }, [messages]);
 
   // Handle tool approval (generic for all tools)
   const handleToolApprove = useCallback((operationId: string, options?: Record<string, unknown>) => {
@@ -307,16 +324,8 @@ export function Chat({
       return;
     }
 
-    // If there's an active task for this conversation, don't load from API yet
-    // The task will populate the state via WebSocket updates
-    const activeTasks = useAppStore.getState().activeTasksByConversation;
-    if (chatId in activeTasks) {
-      console.log('[Chat] Skipping load - active task in progress');
-      setIsLoading(false);
-      return;
-    }
-
     // If we already have messages for this conversation in state, don't reload
+    // (This handles both active tasks populating via WebSocket AND cached state)
     const existingState = useAppStore.getState().conversations[chatId];
     if (existingState && existingState.messages.length > 0) {
       console.log('[Chat] Using existing state for conversation:', chatId);
@@ -515,6 +524,7 @@ export function Chat({
 
   // Track whether user is near the bottom of the scroll container.
   // Only update on user-initiated scrolls (ignore programmatic ones).
+  // When user scrolls up, we "lock" the scroll position until they scroll back down.
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
@@ -523,28 +533,49 @@ export function Chat({
       if (isProgrammaticScrollRef.current) return;
       const threshold = 100; // px from bottom
       const distanceFromBottom: number = container.scrollHeight - container.scrollTop - container.clientHeight;
-      isUserNearBottomRef.current = distanceFromBottom <= threshold;
+      const isNearBottom = distanceFromBottom <= threshold;
+      isUserNearBottomRef.current = isNearBottom;
+      // Show "scroll to bottom" button when user has scrolled up significantly
+      setShowScrollToBottom(!isNearBottom && distanceFromBottom > 200);
     };
 
     container.addEventListener('scroll', handleScroll, { passive: true });
     return () => container.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // Auto-scroll to bottom only if user hasn't scrolled up.
-  // Use instant scroll during streaming to avoid smooth-scroll animations
-  // that fire intermediate scroll events and defeat the user's scroll-up.
+  // Auto-scroll to bottom only if user is near the bottom.
+  // This allows users to scroll up and read while the agent is working.
   useEffect(() => {
-    if (isUserNearBottomRef.current) {
-      const container = messagesContainerRef.current;
-      if (container) {
-        isProgrammaticScrollRef.current = true;
-        container.scrollTop = container.scrollHeight;
-        requestAnimationFrame(() => {
-          isProgrammaticScrollRef.current = false;
-        });
-      }
-    }
+    // Only auto-scroll if user hasn't scrolled up
+    if (!isUserNearBottomRef.current) return;
+    
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    
+    isProgrammaticScrollRef.current = true;
+    container.scrollTop = container.scrollHeight;
+    // Use a small delay to ensure the flag is cleared after the scroll event fires
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        isProgrammaticScrollRef.current = false;
+      });
+    });
   }, [messages, isThinking]);
+
+  // Scroll to bottom handler (for the button)
+  const scrollToBottom = useCallback(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    
+    isProgrammaticScrollRef.current = true;
+    container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+    isUserNearBottomRef.current = true;
+    setShowScrollToBottom(false);
+    // Clear the flag after animation completes
+    setTimeout(() => {
+      isProgrammaticScrollRef.current = false;
+    }, 500);
+  }, []);
 
   const sendChatMessage = useCallback((message: string, source: 'input' | 'suggestion' | 'auto'): void => {
     if ((!message.trim() && pendingAttachments.length === 0) || !isConnected) {
@@ -861,6 +892,20 @@ export function Chat({
               {conversationScope}
             </span>
           )}
+          {/* Uncommitted changes indicator */}
+          {hasUncommittedChanges && (
+            <span 
+              className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-yellow-500/20 text-yellow-400 cursor-pointer hover:bg-yellow-500/30 transition-colors"
+              title="This conversation has uncommitted changes. Click to review."
+              onClick={() => {
+                const setCurrentView = useAppStore.getState().setCurrentView;
+                setCurrentView('pending-changes');
+              }}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
+              Changes
+            </span>
+          )}
           {messages.length > 0 && (
             <button
               onClick={() => void handleCopyConversation()}
@@ -935,7 +980,8 @@ export function Chat({
       {/* Content area with messages and optional artifact sidebar */}
       <div className="flex-1 flex overflow-hidden">
         {/* Messages */}
-        <div ref={messagesContainerRef} className={`overflow-y-auto overflow-x-hidden p-3 md:p-6 ${currentArtifact || currentApp ? 'w-1/2' : 'flex-1'}`}>
+        <div className={`relative ${currentArtifact || currentApp ? 'w-1/2' : 'flex-1'}`}>
+          <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto overflow-x-hidden p-3 md:p-6">
           {!userId && (
             <div className="mb-3 rounded-lg border border-amber-600/50 bg-amber-900/20 px-3 py-2 text-sm text-amber-200">
               User context is missing — artifacts and apps may not save correctly. Please refresh or re-sign in.
@@ -999,6 +1045,20 @@ export function Chat({
 
               <div ref={messagesEndRef} />
             </div>
+          )}
+          </div>
+          
+          {/* Scroll to bottom button */}
+          {showScrollToBottom && (
+            <button
+              onClick={scrollToBottom}
+              className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-800 border border-surface-700 text-surface-300 hover:text-surface-100 hover:bg-surface-700 shadow-lg transition-all text-xs font-medium z-10"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+              </svg>
+              Scroll to bottom
+            </button>
           )}
         </div>
 
@@ -1078,7 +1138,7 @@ export function Chat({
 
           {/* Single container that looks like one input box */}
           <div className={`rounded-2xl border bg-surface-900 transition-all duration-150 ${
-            (!isConnected || isThinking) ? 'border-surface-700 opacity-50' : 'border-surface-700 focus-within:ring-2 focus-within:ring-primary-500 focus-within:border-transparent'
+            (!isConnected || agentRunning) ? 'border-surface-700 opacity-50' : 'border-surface-700 focus-within:ring-2 focus-within:ring-primary-500 focus-within:border-transparent'
           }`}>
             {/* Attachment cards */}
             {pendingAttachments.length > 0 && (
@@ -1106,11 +1166,11 @@ export function Chat({
                 e.target.style.height = `${Math.min(e.target.scrollHeight, 240)}px`;
               }}
               onKeyDown={handleKeyDown}
-              placeholder={isThinking ? 'Thinking...' : 'Ask about your pipeline...'}
+              placeholder={agentRunning ? 'Agent working...' : 'Ask about your pipeline...'}
               className="w-full resize-none bg-transparent text-surface-100 px-4 pt-3 pb-1 text-sm placeholder-surface-500 focus:outline-none leading-5 scrollbar-none disabled:cursor-not-allowed"
               style={{ minHeight: '36px', maxHeight: '240px' }}
               rows={1}
-              disabled={!isConnected || isThinking}
+              disabled={!isConnected || agentRunning}
               autoFocus={chatId === null}
             />
 
@@ -1121,7 +1181,7 @@ export function Chat({
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={isUploading || isThinking}
+                  disabled={isUploading || agentRunning}
                   className="flex w-8 h-8 rounded-full text-surface-400 hover:text-surface-200 hover:bg-surface-800 items-center justify-center transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   title="Attach file"
                 >
@@ -1168,7 +1228,7 @@ export function Chat({
               </div>
 
               {/* Send/Stop button */}
-              {isThinking ? (
+              {agentRunning ? (
                 <button
                   onClick={handleStop}
                   className="flex-shrink-0 w-8 h-8 rounded-lg bg-red-600 text-white hover:bg-red-500 flex items-center justify-center transition-colors"

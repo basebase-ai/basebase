@@ -488,10 +488,25 @@ class JiraConnector(BaseConnector):
         description: str | None = None,
         issue_type: str = "Task",
         priority: str | None = None,
-        assignee_id: str | None = None,
+        assignee_name: str | None = None,
         labels: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Create an issue in Jira."""
+        """Create an issue in Jira.
+
+        Accepts human-friendly parameters (assignee_name) and resolves
+        them to Jira IDs internally.
+        """
+        # Resolve optional assignee_name → assignee_id
+        assignee_id: str | None = None
+        if assignee_name:
+            assignee: dict[str, Any] | None = await self.resolve_assignee_by_name(
+                assignee_name, project_key
+            )
+            if assignee:
+                assignee_id = assignee.get("accountId")
+            else:
+                logger.warning("Assignee '%s' not found, creating issue unassigned", assignee_name)
+
         fields: dict[str, Any] = {
             "project": {"key": project_key},
             "summary": summary,
@@ -537,9 +552,27 @@ class JiraConnector(BaseConnector):
         description: str | None = None,
         status_name: str | None = None,
         priority: str | None = None,
-        assignee_id: str | None = None,
+        assignee_name: str | None = None,
     ) -> dict[str, Any]:
-        """Update an existing issue in Jira."""
+        """Update an existing issue in Jira.
+
+        Accepts human-friendly parameters (assignee_name) and resolves
+        them to Jira IDs internally.
+        """
+        # Extract project key from issue_key for user lookup (e.g., "ENG-123" → "ENG")
+        project_key: str | None = issue_key.split("-")[0] if "-" in issue_key else None
+
+        # Resolve optional assignee_name → assignee_id
+        assignee_id: str | None = None
+        if assignee_name:
+            assignee: dict[str, Any] | None = await self.resolve_assignee_by_name(
+                assignee_name, project_key
+            )
+            if assignee:
+                assignee_id = assignee.get("accountId")
+            else:
+                logger.warning("Assignee '%s' not found, skipping assignee update", assignee_name)
+
         fields: dict[str, Any] = {}
 
         if summary is not None:
