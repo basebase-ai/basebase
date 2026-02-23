@@ -378,6 +378,7 @@ export function AppLayout({ onLogout }: AppLayoutProps): JSX.Element {
       'tool_progress',
       'crm_approval_result',
       'tool_approval_result',
+      'new_message',
     ].includes(type);
   }, []);
 
@@ -799,6 +800,34 @@ export function AppLayout({ onLogout }: AppLayoutProps): JSX.Element {
               result,
               status: status === 'complete' ? 'complete' : 'running',
             });
+          }
+          break;
+        }
+
+        case 'new_message': {
+          // New message from another participant in a shared conversation
+          const { conversation_id, message, sender_user_id } = parsed;
+          const currentUserId = useAppStore.getState().user?.id;
+          
+          // Skip if this is our own message (already added optimistically)
+          if (sender_user_id === currentUserId) {
+            console.log('[AppLayout] Skipping own message broadcast');
+            break;
+          }
+          
+          if (conversation_id && message) {
+            console.log('[AppLayout] New message from participant:', sender_user_id, 'in conversation:', conversation_id);
+            // Convert API message format to store format
+            const chatMessage = {
+              id: message.id,
+              role: message.role as 'user' | 'assistant',
+              contentBlocks: message.content_blocks,
+              timestamp: new Date(message.created_at),
+              userId: message.user_id ?? undefined,
+              senderName: message.sender_name ?? undefined,
+              senderEmail: message.sender_email ?? undefined,
+            };
+            addConversationMessage(conversation_id, chatMessage);
           }
           break;
         }
