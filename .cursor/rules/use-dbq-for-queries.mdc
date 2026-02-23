@@ -1,0 +1,22 @@
+---
+description: Use dbq.py for database queries instead of raw psql or Python imports
+alwaysApply: true
+---
+
+# Database Queries
+
+When you need to run SQL queries against the database, use the `dbq.py` script:
+
+```bash
+python3 backend/scripts/dbq.py "SELECT * FROM users LIMIT 5"
+```
+
+**Do NOT:**
+- Use raw `psql` commands (requires finding connection strings, handling passwords)
+- Try to import Python modules like `backend.db` (path issues, async complexity)
+
+**The script:**
+- Reads `DATABASE_URL` from `.env` automatically
+- Outputs clean JSON with proper UUID/datetime serialization
+- Works for both SELECT and DML statements
+- Run from project root or `backend/` directory

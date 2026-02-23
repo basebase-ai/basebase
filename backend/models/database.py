@@ -240,10 +240,14 @@ async def get_admin_session() -> AsyncGenerator[AsyncSession, None]:
             # Query across all organizations
             result = await session.execute(query)
     """
+    from sqlalchemy import text
+    
     factory = get_session_factory()
     session: AsyncSession = factory()
     try:
-        # Keep superuser role - bypasses RLS for cross-org system operations
+        # Explicitly ensure superuser role - with transaction pooling (NullPool),
+        # connections may have stale role state from previous sessions
+        await session.execute(text("RESET ROLE"))
         yield session
     except Exception:
         await session.rollback()

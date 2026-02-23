@@ -577,27 +577,59 @@ class AsanaConnector(BaseConnector):
     async def create_issue(
         self,
         *,
-        project_gid: str,
-        name: str,
-        notes: str | None = None,
-        assignee: str | None = None,
-        due_on: str | None = None,
+        team_key: str,
+        title: str,
+        description: str | None = None,
+        project_name: str | None = None,
+        assignee_name: str | None = None,
+        due_date: str | None = None,
     ) -> dict[str, Any]:
-        """Create a task in Asana."""
+        """Create a task in Asana.
+
+        Accepts human-friendly parameters (project_name, assignee_name, etc.)
+        and resolves them to Asana GIDs internally.
+
+        Args:
+            team_key: Workspace GID (required for task creation).
+            title: Task name.
+            description: Task description/notes.
+            project_name: Project name to add task to (resolved to GID).
+            assignee_name: Assignee display name (resolved to GID).
+            due_date: Due date in YYYY-MM-DD format.
+        """
+        # Resolve optional project_name → project_gid
+        project_gid: str | None = None
+        if project_name:
+            project: dict[str, Any] | None = await self.resolve_project_by_name(project_name)
+            if project:
+                project_gid = project.get("gid")
+            else:
+                logger.warning("Project '%s' not found, creating task without project", project_name)
+
+        # Resolve optional assignee_name → assignee GID
+        assignee_gid: str | None = None
+        if assignee_name:
+            assignee: dict[str, Any] | None = await self.resolve_assignee_by_name(assignee_name)
+            if assignee:
+                assignee_gid = assignee.get("gid")
+            else:
+                logger.warning("Assignee '%s' not found, creating task unassigned", assignee_name)
+
         workspace_gid: str = await self._get_workspace_gid()
         body: dict[str, Any] = {
             "data": {
                 "workspace": workspace_gid,
-                "projects": [project_gid],
-                "name": name,
+                "name": title,
             }
         }
-        if notes:
-            body["data"]["notes"] = notes
-        if assignee:
-            body["data"]["assignee"] = assignee
-        if due_on:
-            body["data"]["due_on"] = due_on
+        if project_gid:
+            body["data"]["projects"] = [project_gid]
+        if description:
+            body["data"]["notes"] = description
+        if assignee_gid:
+            body["data"]["assignee"] = assignee_gid
+        if due_date:
+            body["data"]["due_on"] = due_date
 
         result: dict[str, Any] = await self._post("/tasks", body)
         task: dict[str, Any] = result.get("data", {})
@@ -614,31 +646,63 @@ class AsanaConnector(BaseConnector):
     async def update_issue(
         self,
         *,
-        task_gid: str,
-        name: str | None = None,
-        notes: str | None = None,
-        completed: bool | None = None,
-        assignee: str | None = None,
-        due_on: str | None = None,
+        issue_identifier: str,
+        title: str | None = None,
+        description: str | None = None,
+        state_name: str | None = None,
+        assignee_name: str | None = None,
+        due_date: str | None = None,
     ) -> dict[str, Any]:
-        """Update an existing task in Asana."""
+        """Update an existing task in Asana.
+
+        Accepts human-friendly parameters (assignee_name, state_name, etc.)
+        and resolves them to Asana values internally.
+
+        Args:
+            issue_identifier: Asana task GID.
+            title: New task name.
+            description: New task description/notes.
+            state_name: State ("completed" or "not completed").
+            assignee_name: Assignee display name (resolved to GID).
+            due_date: Due date in YYYY-MM-DD format.
+        """
+        # Resolve optional assignee_name → assignee GID
+        assignee_gid: str | None = None
+        if assignee_name:
+            assignee: dict[str, Any] | None = await self.resolve_assignee_by_name(assignee_name)
+            if assignee:
+                assignee_gid = assignee.get("gid")
+            else:
+                logger.warning("Assignee '%s' not found, skipping assignee update", assignee_name)
+
+        # Convert state_name to completed boolean
+        completed: bool | None = None
+        if state_name is not None:
+            state_lower: str = state_name.lower().strip()
+            if state_lower in ("completed", "done", "complete"):
+                completed = True
+            elif state_lower in ("not completed", "incomplete", "open", "in progress"):
+                completed = False
+            else:
+                logger.warning("Unknown state '%s', skipping state update", state_name)
+
         data: dict[str, Any] = {}
-        if name is not None:
-            data["name"] = name
-        if notes is not None:
-            data["notes"] = notes
+        if title is not None:
+            data["name"] = title
+        if description is not None:
+            data["notes"] = description
         if completed is not None:
             data["completed"] = completed
-        if assignee is not None:
-            data["assignee"] = assignee
-        if due_on is not None:
-            data["due_on"] = due_on
+        if assignee_gid is not None:
+            data["assignee"] = assignee_gid
+        if due_date is not None:
+            data["due_on"] = due_date
 
         if not data:
             raise ValueError("At least one field to update must be provided")
 
         result: dict[str, Any] = await self._put(
-            f"/tasks/{task_gid}", {"data": data}
+            f"/tasks/{issue_identifier}", {"data": data}
         )
         task: dict[str, Any] = result.get("data", {})
 
