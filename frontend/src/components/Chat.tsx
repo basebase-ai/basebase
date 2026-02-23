@@ -141,6 +141,9 @@ export function Chat({
   // Always sort by timestamp to guard against race conditions where WebSocket
   // chunks (assistant message) arrive before the pending user message is moved
   // into the conversation state, which would otherwise cause out-of-order display.
+  // If two messages share the same timestamp (common when backend timestamps have
+  // coarse resolution), keep user questions before assistant responses so grouped
+  // responses always appear after the asking question.
   const messages = useMemo(() => {
     const conversationMessages = conversationState?.messages ?? [];
     const combined: ChatMessage[] = pendingMessages.length > 0
@@ -156,9 +159,21 @@ export function Chat({
         break;
       }
     }
-    return needsSort
-      ? [...combined].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
-      : combined;
+    if (!needsSort) return combined;
+
+    return combined
+      .map((message, index) => ({ message, index }))
+      .sort((a, b) => {
+        const timeDiff = a.message.timestamp.getTime() - b.message.timestamp.getTime();
+        if (timeDiff !== 0) return timeDiff;
+
+        if (a.message.role !== b.message.role) {
+          return a.message.role === 'user' ? -1 : 1;
+        }
+
+        return a.index - b.index;
+      })
+      .map(({ message }) => message);
   }, [pendingMessages, conversationState?.messages]);
   const isThinking = pendingThinking || conversationThinking;
 
