@@ -353,6 +353,34 @@ Sales opportunities from CRM.
 id, organization_id, name, account_id, owner_id, amount, stage, probability, close_date, 
 created_date, last_modified_date, custom_fields, synced_at
 ```
+- `stage`: Contains the **source_id** from pipeline_stages (e.g. "closedwon", "99977530"), NOT the human-readable name.
+
+### pipelines
+Sales pipelines from CRM.
+```
+id, organization_id, name, source_id, source_system, is_default
+```
+- `source_id`: CRM's internal identifier for the pipeline.
+- `name`: Human-readable pipeline name.
+
+### pipeline_stages
+Stages within each pipeline, with probabilities and closed status.
+```
+id, pipeline_id, name, source_id, probability, display_order, is_closed_won, is_closed_lost
+```
+- `source_id`: CRM's internal identifier — **this is what deals.stage contains**.
+- `name`: Human-readable stage name (e.g. "Closed/Won", "Nurture - 5-24%").
+- `probability`: Win probability percentage (0-100).
+- `is_closed_won` / `is_closed_lost`: Boolean flags for closed stages.
+
+**CRITICAL**: When joining deals to pipeline_stages, ALWAYS use `ps.source_id = d.stage`, NOT `ps.name = d.stage`.
+Example to filter open deals:
+```sql
+SELECT d.* FROM deals d
+LEFT JOIN pipeline_stages ps ON ps.pipeline_id = d.pipeline_id AND ps.source_id = d.stage
+WHERE d.organization_id = :org_id
+  AND (ps.id IS NULL OR (ps.is_closed_won = false AND ps.is_closed_lost = false))
+```
 
 ### accounts
 Companies/organizations - your customers and prospects.
