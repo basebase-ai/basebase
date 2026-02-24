@@ -42,6 +42,7 @@ celery_app = Celery(
         "workers.tasks.sync",
         "workers.tasks.workflows",
         "workers.tasks.bulk_operations",
+        "workers.tasks.health_monitor",
     ],
 )
 
@@ -98,6 +99,12 @@ celery_app.conf.beat_schedule = {
     "process-workflow-events": {
         "task": "workers.tasks.workflows.process_pending_events",
         "schedule": timedelta(seconds=10),
+    },
+
+    # Monitor external dependencies every 15 minutes and page on outages
+    "check-dependency-health": {
+        "task": "workers.tasks.health_monitor.check_dependencies",
+        "schedule": timedelta(minutes=15),
     },
 }
 

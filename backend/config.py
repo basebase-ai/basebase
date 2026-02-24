@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 
@@ -118,6 +119,14 @@ class Settings(BaseSettings):
     STRIPE_WEBHOOK_SECRET: Optional[str] = None
     STRIPE_PUBLISHABLE_KEY: Optional[str] = None
 
+    # PagerDuty incident API
+    PAGERDUTY_FROM_EMAIL: Optional[str] = None
+    PAGERDUTY_KEY: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("PAGERDUTY_KEY", "PagerDuty_Key"),
+    )
+    PAGERDUTY_SERVICE_ID: Optional[str] = None
+
     @property
     def sandbox_database_url(self) -> str:
         """Sync Postgres URL for E2B sandbox (strips SQLAlchemy asyncpg prefix)."""
@@ -163,6 +172,10 @@ EXPECTED_ENV_VARS: tuple[str, ...] = (
     "ADMIN_KEY",
     "RESEND_API_KEY",
     "EMAIL_FROM",
+    "PAGERDUTY_FROM_EMAIL",
+    "PAGERDUTY_KEY",
+    "PagerDuty_Key",
+    "PAGERDUTY_SERVICE_ID",
 )
 
 
