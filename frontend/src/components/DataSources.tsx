@@ -1002,21 +1002,17 @@ export function DataSources(): JSX.Element {
       }
       if (state === 'action-required') {
         return {
-          text: isMobile ? 'Use desktop to connect' : (isConnecting ? 'Connecting...' : `Connect Your ${integration.name}`),
-          className: isMobile 
-            ? 'px-4 py-2 text-sm font-medium text-surface-500 border border-surface-700 rounded-lg cursor-not-allowed'
-            : 'px-4 py-2 text-sm font-medium text-amber-400 border border-amber-500/30 hover:bg-amber-500/10 disabled:opacity-50 rounded-lg transition-colors',
-          action: () => { if (!isMobile) void handleConnect(integration.provider, integration.scope); },
-          disabled: isMobile || isConnecting,
+          text: isConnecting ? 'Connecting...' : `Connect Your ${integration.name}`,
+          className: 'px-4 py-2 text-sm font-medium text-amber-400 border border-amber-500/30 hover:bg-amber-500/10 disabled:opacity-50 rounded-lg transition-colors',
+          action: () => { void handleConnect(integration.provider, integration.scope); },
+          disabled: isConnecting,
         };
       }
       return {
-        text: isMobile ? 'Use desktop to connect' : (isConnecting ? 'Connecting...' : (integration.scope === 'user' ? 'Connect your account' : 'Connect')),
-        className: isMobile
-          ? 'px-4 py-2 text-sm font-medium text-surface-500 border border-surface-700 rounded-lg cursor-not-allowed'
-          : 'px-4 py-2 text-sm font-medium text-primary-400 border border-primary-500/30 hover:bg-primary-500/10 disabled:opacity-50 rounded-lg transition-colors',
-        action: () => { if (!isMobile) void handleConnect(integration.provider, integration.scope); },
-        disabled: isMobile || isConnecting,
+        text: isConnecting ? 'Connecting...' : (integration.scope === 'user' ? 'Connect your account' : 'Connect'),
+        className: 'px-4 py-2 text-sm font-medium text-primary-400 border border-primary-500/30 hover:bg-primary-500/10 disabled:opacity-50 rounded-lg transition-colors',
+        action: () => { void handleConnect(integration.provider, integration.scope); },
+        disabled: isConnecting,
       };
     };
     const buttonConfig = getButtonConfig();
@@ -1515,12 +1511,10 @@ export function DataSources(): JSX.Element {
                     <li key={integration.provider}>
                       <button
                         onClick={() => {
-                          if (!isMobile) {
-                            setShowConnectModal(false);
-                            void handleConnect(integration.provider, integration.scope);
-                          }
+                          setShowConnectModal(false);
+                          void handleConnect(integration.provider, integration.scope);
                         }}
-                        disabled={isMobile || isConnecting}
+                        disabled={isConnecting}
                         className="w-full flex items-center gap-4 px-4 py-3 rounded-xl hover:bg-surface-800 transition-colors text-left group disabled:opacity-50"
                       >
                         <div className={`${getColorClass(integration.color)} p-2 rounded-lg text-white flex-shrink-0`}>
@@ -1575,10 +1569,9 @@ export function DataSources(): JSX.Element {
               <HiDeviceMobile className="w-5 h-5 text-primary-400" />
             </div>
             <div>
-              <h3 className="font-medium text-surface-100">Connect from your computer</h3>
+              <h3 className="font-medium text-surface-100">Connecting on mobile</h3>
               <p className="text-sm text-surface-400 mt-1">
-                For the best experience connecting connectors, please visit this page from a desktop or laptop computer. 
-                OAuth sign-in works more reliably on larger screens.
+                If your browser blocks popups, allow them for this site and try connecting again.
               </p>
             </div>
           </div>
@@ -1628,13 +1621,7 @@ export function DataSources(): JSX.Element {
                     <button
                       key={provider}
                       type="button"
-                      onClick={() => {
-                        if (!isMobile) void handleConnect(provider, scope);
-                        else {
-                          setConnectSearch(config.name);
-                          setShowConnectModal(true);
-                        }
-                      }}
+                      onClick={() => { void handleConnect(provider, scope); }}
                       disabled={isConnecting}
                       className="card p-4 text-left hover:border-surface-600 hover:bg-surface-800/50 transition-colors disabled:opacity-50 flex items-start gap-3 group"
                     >
