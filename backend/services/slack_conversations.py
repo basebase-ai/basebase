@@ -46,6 +46,9 @@ _SLACK_USER_INFO_CACHE_TTL_NOT_FOUND_SECONDS: int = 120  # 2 min for not-found/e
 _SLACK_USER_INFO_CACHE_MAX_ENTRIES: int = 5000  # cap to avoid unbounded growth in long-lived processes
 _slack_user_info_cache: dict[tuple[str, str], tuple[dict[str, Any] | None, float]] = {}
 _slack_user_info_cache_lock: asyncio.Lock = asyncio.Lock()
+_SLACK_TEAM_ORG_CACHE_TTL_SECONDS: int = 300  # 5 min for workspace -> org lookups
+_slack_team_org_cache: dict[str, tuple[str | None, float]] = {}
+_slack_team_org_cache_lock: asyncio.Lock = asyncio.Lock()
 
 
 def _slack_user_info_cache_evict_expired(now: float) -> None:
@@ -130,6 +133,28 @@ async def find_organization_by_slack_team(team_id: str) -> str | None:
     Returns:
         Organization ID string or None if not found
     """
+    normalized_team_id = (team_id or "").strip()
+    if not normalized_team_id:
+        logger.warning("[slack_conversations] Missing team_id on Slack event")
+        return None
+
+    now = time.monotonic()
+    async with _slack_team_org_cache_lock:
+        cached = _slack_team_org_cache.get(normalized_team_id)
+        if cached and cached[1] > now:
+            logger.debug(
+                "[slack_conversations] team_id cache hit for %s -> %s",
+                normalized_team_id,
+                cached[0],
+            )
+            return cached[0]
+        if cached:
+            _slack_team_org_cache.pop(normalized_team_id, None)
+
+    def _cache_team_lookup(organization_id: str | None) -> None:
+        expiry = time.monotonic() + _SLACK_TEAM_ORG_CACHE_TTL_SECONDS
+        _slack_team_org_cache[normalized_team_id] = (organization_id, expiry)
+
     integrations: list[Integration] = []
     query = (
         select(Integration)
@@ -151,29 +176,37 @@ async def find_organization_by_slack_team(team_id: str) -> str | None:
             if attempt == 2:
                 logger.error(
                     "[slack_conversations] Exhausted Slack integration lookup retries for team=%s; returning no organization",
-                    team_id,
+                    normalized_team_id,
                 )
+                async with _slack_team_org_cache_lock:
+                    _cache_team_lookup(None)
                 return None
             await asyncio.sleep(0.2)
 
     # --- Fast path: match on stored team_id in extra_data ---
     for integration in integrations:
         extra_data: dict[str, Any] = integration.extra_data or {}
-        if extra_data.get("team_id") == team_id:
+        if extra_data.get("team_id") == normalized_team_id:
             logger.info(
                 "[slack_conversations] Matched Slack team %s to org %s via integration metadata",
-                team_id,
+                normalized_team_id,
                 integration.organization_id,
             )
-            return str(integration.organization_id)
+            organization_id = str(integration.organization_id)
+            async with _slack_team_org_cache_lock:
+                _cache_team_lookup(organization_id)
+            return organization_id
 
     if len(integrations) == 1:
         logger.warning(
             "[slack_conversations] No team_id metadata match; using the only active Slack integration org=%s for team=%s",
             integrations[0].organization_id,
-            team_id,
+            normalized_team_id,
         )
-        return str(integrations[0].organization_id)
+        organization_id = str(integrations[0].organization_id)
+        async with _slack_team_org_cache_lock:
+            _cache_team_lookup(organization_id)
+        return organization_id
 
     # --- Slow path: resolve team_id via auth.test for integrations missing it ---
     integrations_missing_team_id: list[Integration] = [
@@ -198,15 +231,20 @@ async def find_organization_by_slack_team(team_id: str) -> str | None:
                 integration.id,
                 integration.organization_id,
             )
-            if resolved_team_id == team_id:
+            if resolved_team_id == normalized_team_id:
                 logger.info(
                     "[slack_conversations] Matched Slack team %s to org %s via auth.test",
-                    team_id,
+                    normalized_team_id,
                     integration.organization_id,
                 )
-                return str(integration.organization_id)
+                organization_id = str(integration.organization_id)
+                async with _slack_team_org_cache_lock:
+                    _cache_team_lookup(organization_id)
+                return organization_id
 
-    logger.warning("[slack_conversations] No Slack integration found for team=%s", team_id)
+    logger.warning("[slack_conversations] No Slack integration found for team=%s", normalized_team_id)
+    async with _slack_team_org_cache_lock:
+        _cache_team_lookup(None)
     return None
 
 
