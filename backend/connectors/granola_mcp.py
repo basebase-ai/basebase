@@ -1,4 +1,47 @@
-"""
+{
+  "event_message": "cannot insert multiple commands into a prepared statement",
+  "id": "c4d8c54b-74d9-407f-bdf9-65fa6a6904a8",
+  "metadata": [
+    {
+      "file": null,
+      "host": "db-izcwxmpvafizqkcxioje",
+      "metadata": [],
+      "parsed": [
+        {
+          "application_name": "Supavisor",
+          "backend_type": "client backend",
+          "command_tag": "PARSE",
+          "connection_from": "2600:1f13:838:6e01:5e8f:364:f3:7a74:60902",
+          "context": null,
+          "database_name": "postgres",
+          "detail": null,
+          "error_severity": "ERROR",
+          "hint": null,
+          "internal_query": null,
+          "internal_query_pos": null,
+          "leader_pid": null,
+          "location": null,
+          "process_id": 31505,
+          "query": "SELECT set_config('app.current_org_id', '', false); RESET ROLE",
+          "query_id": 0,
+          "query_pos": null,
+          "session_id": "699f27ad.7b11",
+          "session_line_num": 77,
+          "session_start_time": "2026-02-25 16:47:41 UTC",
+          "sql_state_code": "42601",
+          "timestamp": "2026-02-25 16:49:32.153 UTC",
+          "transaction_id": 0,
+          "user_name": "postgres",
+          "virtual_transaction_id": "16/17922"
+        }
+      ],
+      "parsed_from": null,
+      "project": null,
+      "source_type": null
+    }
+  ],
+  "timestamp": 1772038172153000
+}"""
 Granola MCP connector – meeting notes via Granola's MCP server.
 
 Uses OAuth (browser-based, stored in Nango). Works for all Granola plans
