@@ -343,6 +343,20 @@ async def find_organization_by_slack_team(team_id: str) -> str | None:
                     _cache_team_lookup(organization_id)
                 return organization_id
 
+    # --- Bot install (Add-to-Slack) path: no Nango integration, token in slack_bot_installs ---
+    from services.slack_bot_install import get_organization_id_by_slack_team as get_org_by_bot_install
+
+    bot_install_org_id: str | None = await get_org_by_bot_install(normalized_team_id)
+    if bot_install_org_id:
+        logger.info(
+            "[slack_conversations] Matched Slack team %s to org %s via slack_bot_installs",
+            normalized_team_id,
+            bot_install_org_id,
+        )
+        async with _slack_team_org_cache_lock:
+            _cache_team_lookup(bot_install_org_id)
+        return bot_install_org_id
+
     logger.warning("[slack_conversations] No Slack integration found for team=%s", normalized_team_id)
     async with _slack_team_org_cache_lock:
         _cache_team_lookup(None)

@@ -173,6 +173,26 @@ class SlackConnector(BaseConnector):
             require_active=require_active,
         )
 
+    async def get_oauth_token(self) -> tuple[str, str]:
+        """
+        Get Slack token: prefer bot-install token for this team_id, else Nango.
+        """
+        if self._token:
+            return self._token, ""
+
+        # When we have team_id, try Add-to-Slack (bot install) token first
+        if self.team_id:
+            from services.slack_bot_install import get_slack_bot_token
+
+            bot_token: str | None = await get_slack_bot_token(
+                self.organization_id, self.team_id
+            )
+            if bot_token:
+                self._token = bot_token
+                return self._token, ""
+
+        return await super().get_oauth_token()
+
     async def _get_headers(self) -> dict[str, str]:
         """Get authorization headers for Slack API."""
         token, _ = await self.get_oauth_token()

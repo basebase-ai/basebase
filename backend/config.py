@@ -107,6 +107,11 @@ class Settings(BaseSettings):
     
     # Slack Events API (for receiving DMs)
     SLACK_SIGNING_SECRET: Optional[str] = None
+    # Slack OAuth app (same app as Nango uses) — for "Add Penny to Slack" bot-install flow
+    SLACK_CLIENT_ID: Optional[str] = None
+    SLACK_CLIENT_SECRET: Optional[str] = None
+    # Public backend URL (for Slack OAuth redirect_uri). Default from FRONTEND_URL for local.
+    BACKEND_PUBLIC_URL: Optional[str] = None
     
     # ScrapingBee (for fetch_url tool - web scraping with proxy support)
     SCRAPINGBEE_API_KEY: Optional[str] = None

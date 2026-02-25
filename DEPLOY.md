@@ -115,6 +115,18 @@ After deployment, update your Nango integration callbacks:
    https://your-frontend-domain.railway.app
    ```
 
+### Slack: Add-to-Slack (Penny bot) and Nango Connect
+
+To support both (1) **Connect** (Nango OAuth) and (2) **Add Penny to Slack** (other workspaces installing the bot), use a single Slack OAuth callback on your backend:
+
+1. **Slack app** (api.slack.com → Your App → OAuth & Permissions): set **Redirect URL** to:
+   ```
+   https://your-backend-domain/api/auth/slack/oauth-callback
+   ```
+2. **Nango** (Slack integration): set the integration’s **callback URL** to the same backend URL above (so Nango sends users to Slack with this `redirect_uri`).
+3. **Backend env**: set `BACKEND_PUBLIC_URL=https://your-backend-domain`, `SLACK_CLIENT_ID`, and `SLACK_CLIENT_SECRET` (same app as Nango).
+4. Run migration `078_slack_bot_installs` so the `slack_bot_installs` table exists.
+
 ## Updating Supabase Auth
 
 1. Go to Supabase → Authentication → URL Configuration

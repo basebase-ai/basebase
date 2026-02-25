@@ -214,6 +214,7 @@ async def get_session(organization_id: str | None = None) -> AsyncGenerator[Asyn
         # Without this, a pooled connection could leak one org's RLS context to another.
         # Must run as separate statements: prepared statements (e.g. Supavisor) allow only one command.
         try:
+            logger.debug("Session cleanup: resetting RLS context (set_config + RESET ROLE)")
             await session.execute(text("SELECT set_config('app.current_org_id', '', false)"))
             await session.execute(text("RESET ROLE"))
         except Exception:

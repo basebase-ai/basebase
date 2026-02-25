@@ -1183,16 +1183,15 @@ export function DataSources(): JSX.Element {
                 <p className="text-xs leading-relaxed text-surface-400">
                   This integration syncs your Slack messages so Penny can search and reference them.
                   To <span className="text-surface-300">DM Penny</span> or <span className="text-surface-300">@mention</span> her
-                  directly in channels, ask your workspace admin to install the
-                  {' '}<span className="font-medium text-purple-300">Penny</span> bot app from the Slack App Directory.
+                  directly in channels, add the Penny bot to your Slack workspace.
                 </p>
                 <a
-                  href="https://slack.com/apps"
+                  href={organizationId ? `${API_BASE}/auth/slack/add-to-slack?organization_id=${encodeURIComponent(organizationId)}` : 'https://slack.com/apps'}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 text-xs font-medium text-purple-400 hover:text-purple-300 transition-colors"
                 >
-                  Browse Slack App Directory
+                  Add Penny to Slack
                   <span aria-hidden="true">&rarr;</span>
                 </a>
               </div>
