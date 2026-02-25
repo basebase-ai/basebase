@@ -73,7 +73,7 @@ def test_process_slack_dm_posts_reply_in_same_thread(monkeypatch) -> None:
     assert captured["team_id"] == "T1"
 
 
-def test_streaming_flushes_on_buffer_threshold(monkeypatch) -> None:
+def test_streaming_waits_for_sentence_boundary_when_threshold_reached(monkeypatch) -> None:
     posted: list[str] = []
 
     class _FakeConnector:
@@ -95,10 +95,39 @@ def test_streaming_flushes_on_buffer_threshold(monkeypatch) -> None:
         )
     )
 
-    assert len(posted) == 2
-    assert posted[0] == "x" * slack_conversations.SLACK_STREAM_FLUSH_CHAR_THRESHOLD
-    assert posted[1] == "tail"
-    assert total == len(posted[0]) + len(posted[1])
+    assert len(posted) == 1
+    assert posted[0] == ("x" * slack_conversations.SLACK_STREAM_FLUSH_CHAR_THRESHOLD) + "tail"
+    assert total == len(posted[0])
+
+
+def test_streaming_flushes_completed_sentences_before_stream_end(monkeypatch) -> None:
+    posted: list[str] = []
+
+    class _FakeConnector:
+        async def post_message(self, channel: str, text: str, thread_ts: str | None = None) -> None:
+            posted.append(text)
+
+    class _FakeOrchestrator:
+        async def process_message(self, _message_text: str, attachment_ids=None):
+            yield "Hello world."
+            yield " Another sentence"
+            yield " without punctuation"
+            yield "!"
+
+    monkeypatch.setattr(slack_conversations, "SLACK_STREAM_FLUSH_CHAR_THRESHOLD", 1)
+
+    total = asyncio.run(
+        slack_conversations._stream_and_post_responses(
+            orchestrator=_FakeOrchestrator(),
+            connector=_FakeConnector(),
+            message_text="hello",
+            channel="C123",
+            thread_ts="T123",
+        )
+    )
+
+    assert posted == ["Hello world.", "Another sentence without punctuation!"]
+    assert total == sum(len(chunk) for chunk in posted)
 
 
 def test_process_slack_dm_allows_initial_response_when_credits_check_is_slow(monkeypatch) -> None:

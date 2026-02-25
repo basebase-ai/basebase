@@ -55,6 +55,7 @@ _slack_team_org_cache: dict[str, tuple[str | None, float]] = {}
 _slack_team_org_cache_lock: asyncio.Lock = asyncio.Lock()
 _slack_credits_gate_cache: dict[str, tuple[bool, float]] = {}
 _slack_credits_gate_cache_lock: asyncio.Lock = asyncio.Lock()
+_SENTENCE_BOUNDARY_PATTERN = re.compile(r"(?s)^(.+?[.!?](?:[\"'\)\]\u201d\u2019]+)?)(?:\s+|$)")
 
 
 def _slack_user_info_cache_evict_expired(now: float) -> None:
@@ -1911,11 +1912,34 @@ async def _stream_and_post_responses(
     cleaned_message = _strip_slack_mentions(message_text)
     last_flush_at = time.monotonic()
 
-    async def _flush_current_text(*, reason: str) -> None:
+    def _split_flushable_sentences(text: str) -> tuple[str, str]:
+        """Split text into a flushable sentence prefix and remaining suffix."""
+        idx = 0
+        while idx < len(text):
+            match = _SENTENCE_BOUNDARY_PATTERN.match(text[idx:])
+            if not match:
+                break
+            idx += len(match.group(0))
+        if idx == 0:
+            return "", text
+        return text[:idx], text[idx:]
+
+    async def _flush_current_text(*, reason: str, force: bool = False) -> None:
         nonlocal current_text, total_length, last_flush_at
-        text_to_send = current_text.strip()
-        if not text_to_send:
+        if force:
+            text_to_send = current_text.strip()
             current_text = ""
+        else:
+            flushable_text, remaining_text = _split_flushable_sentences(current_text)
+            text_to_send = flushable_text.strip()
+            current_text = remaining_text
+
+        if not text_to_send:
+            logger.debug(
+                "[slack_conversations] Skipped flush reason=%s force=%s; waiting for sentence boundary",
+                reason,
+                force,
+            )
             return
 
         await connector.post_message(
@@ -1931,7 +1955,6 @@ async def _stream_and_post_responses(
             thread_ts,
             len(text_to_send),
         )
-        current_text = ""
         last_flush_at = time.monotonic()
 
     try:
@@ -1939,7 +1962,7 @@ async def _stream_and_post_responses(
             cleaned_message, attachment_ids=attachment_ids,
         ):
             if chunk.startswith("{"):
-                await _flush_current_text(reason="tool_boundary")
+                await _flush_current_text(reason="tool_boundary", force=True)
             else:
                 current_text += chunk
                 should_flush_for_size = len(current_text) >= SLACK_STREAM_FLUSH_CHAR_THRESHOLD
@@ -1955,7 +1978,7 @@ async def _stream_and_post_responses(
         current_text += f"\n{_cannot_action_message()}"
 
     # Post any remaining text after the stream ends
-    await _flush_current_text(reason="stream_end")
+    await _flush_current_text(reason="stream_end", force=True)
 
     return total_length
 
