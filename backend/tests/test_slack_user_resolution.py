@@ -1,8 +1,18 @@
 import asyncio
+
+import pytest
 from types import SimpleNamespace
 from uuid import UUID
 
 from services import slack_conversations
+
+
+@pytest.fixture(autouse=True)
+def _clear_slack_team_cache():
+    slack_conversations._slack_team_org_cache.clear()
+    yield
+    slack_conversations._slack_team_org_cache.clear()
+
 
 
 class _FakeScalarResult:
@@ -107,6 +117,31 @@ def test_resolve_revtops_user_falls_back_to_connected_slack_name_match(monkeypat
     assert resolved is not None
     assert resolved.id == jane_id
 
+
+
+
+def test_find_organization_by_slack_team_uses_cache(monkeypatch):
+    org_id = "11111111-1111-1111-1111-111111111111"
+    integration = SimpleNamespace(
+        provider="slack",
+        is_active=True,
+        organization_id=org_id,
+        extra_data={"team_id": "T123"},
+    )
+    calls = {"count": 0}
+
+    def _fake_admin_session():
+        calls["count"] += 1
+        return _FakeAdminSessionContext([[integration]])
+
+    monkeypatch.setattr(slack_conversations, "get_admin_session", _fake_admin_session)
+
+    first = asyncio.run(slack_conversations.find_organization_by_slack_team("T123"))
+    second = asyncio.run(slack_conversations.find_organization_by_slack_team("T123"))
+
+    assert first == org_id
+    assert second == org_id
+    assert calls["count"] == 1
 
 def test_find_organization_by_slack_team_returns_none_when_lookup_fails(monkeypatch):
     monkeypatch.setattr(
