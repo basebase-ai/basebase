@@ -1004,15 +1004,13 @@ export function DataSources(): JSX.Element {
     }
   };
 
-  // Separate integrations into three categories:
-  // 1. Action Required: connected by team but not by current user (and not shared for query)
-  // 2. Connected: current user connected, or team connected with sharing enabled
-  // 3. Available: not connected by anyone
-  const actionRequiredIntegrations = allIntegrations.filter(
-    (i) => i.connected && !i.currentUserConnected && !i.shareQueryAccess
-  );
-  const connectedIntegrations = allIntegrations.filter(
-    (i) => i.connected && (i.currentUserConnected || i.shareQueryAccess)
+  // Sections aligned with user-scoped model:
+  // 1. My connectors — current user has connected
+  // 2. From your team — teammates have connected, current user has not (show what's shared + Connect)
+  // 3. Available — no one in org has connected yet
+  const myConnectors = allIntegrations.filter((i) => i.currentUserConnected);
+  const fromTeamConnectors = allIntegrations.filter(
+    (i) => i.connected && !i.currentUserConnected && i.teamConnections.length > 0
   );
   const availableIntegrations = allIntegrations.filter((i) => !i.connected);
 
@@ -1042,7 +1040,7 @@ export function DataSources(): JSX.Element {
   };
 
   // Tile state type for unified rendering
-  type TileState = 'connected' | 'action-required' | 'available';
+  type TileState = 'connected' | 'team-only' | 'available';
 
   // Unified integration tile component
   const renderIntegrationTile = (
@@ -1053,19 +1051,17 @@ export function DataSources(): JSX.Element {
     const isSyncing = syncingProviders.has(integration.provider);
     const isDisconnecting = disconnectingProviders.has(integration.provider);
 
-    // State-specific styling - fade card when disconnecting
-    const cardClass = state === 'action-required'
-      ? 'card p-4 border-amber-500/30 bg-amber-500/5'
-      : isDisconnecting
-        ? 'card p-4 opacity-50 pointer-events-none transition-opacity duration-200'
-        : 'card p-4';
+    // State-specific styling - no amber for team-only
+    const cardClass = isDisconnecting
+      ? 'card p-4 opacity-50 pointer-events-none transition-opacity duration-200'
+      : 'card p-4';
 
     const iconOpacity = state === 'available' ? 'opacity-60' : '';
 
     // Badge config by state
     const badgeConfig: Record<TileState, { text: string; className: string } | null> = {
       'connected': { text: 'Connected', className: 'bg-emerald-500/20 text-emerald-400' },
-      'action-required': { text: 'Your account not connected', className: 'bg-amber-500/20 text-amber-400' },
+      'team-only': { text: 'From team', className: 'bg-surface-700 text-surface-300' },
       'available': null,
     };
     const badge = badgeConfig[state];
@@ -1090,16 +1086,7 @@ export function DataSources(): JSX.Element {
           disabled: isSyncing,
         };
       }
-      if (state === 'action-required') {
-        return {
-          text: isMobile ? 'Use desktop to connect' : (isConnecting ? 'Connecting...' : `Connect Your ${integration.name}`),
-          className: isMobile
-            ? 'px-4 py-2 text-sm font-medium text-surface-500 border border-surface-700 rounded-lg cursor-not-allowed'
-            : 'px-4 py-2 text-sm font-medium text-amber-400 border border-amber-500/30 hover:bg-amber-500/10 disabled:opacity-50 rounded-lg transition-colors',
-          action: () => { if (!isMobile) void handleConnect(integration.provider); },
-          disabled: isMobile || isConnecting,
-        };
-      }
+      // team-only and available: show Connect
       return {
         text: isMobile ? 'Use desktop to connect' : (isConnecting ? 'Connecting...' : 'Connect'),
         className: isMobile
@@ -1141,9 +1128,9 @@ export function DataSources(): JSX.Element {
       );
     };
 
-    // Team connections info
+    // Team connections info (for connected tiles; team-only shows "Connected by" in body)
     const renderTeamInfo = (): JSX.Element | null => {
-      if (integration.teamTotal === 0) return null;
+      if (state === 'team-only' || integration.teamTotal === 0) return null;
 
       const connectedCount = integration.teamConnections.length;
       const names = integration.teamConnections.map((tc) => tc.userName);
@@ -1457,13 +1444,8 @@ export function DataSources(): JSX.Element {
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
           {/* Icon and name row on mobile */}
           <div className="flex items-center gap-3 sm:gap-4">
-            <div className={`${getColorClass(integration.color)} p-2.5 sm:p-3 rounded-xl text-white ${iconOpacity} relative flex-shrink-0`}>
+            <div className={`${getColorClass(integration.color)} p-2.5 sm:p-3 rounded-xl text-white ${iconOpacity} flex-shrink-0`}>
               {renderIcon(integration.icon)}
-              {state === 'action-required' && (
-                <div className="absolute -top-1 -right-1 w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center">
-                  <HiExclamation className="w-3 h-3 text-white" />
-                </div>
-              )}
             </div>
 
             {/* Content */}
@@ -1502,10 +1484,24 @@ export function DataSources(): JSX.Element {
               {state === 'connected' && integration.lastError && (
                 <p className="text-xs text-red-400 mt-1">Error: {integration.lastError}</p>
               )}
-              {state === 'action-required' && (
-                <p className="text-xs text-amber-400 mt-1 hidden sm:block">
-                  Connect yours to include your data in team insights.
-                </p>
+              {state === 'team-only' && (
+                <div className="mt-2 space-y-1 text-xs text-surface-400">
+                  <p>
+                    Connected by {integration.teamConnections.map((tc) => tc.userName).join(', ')}
+                  </p>
+                  {integration.shareSyncedData || integration.shareQueryAccess || integration.shareWriteAccess ? (
+                    <p className="text-surface-300">
+                      Shared with you:{' '}
+                      {[
+                        integration.shareSyncedData && 'synced data',
+                        integration.shareQueryAccess && 'query access',
+                        integration.shareWriteAccess && 'write access',
+                      ].filter(Boolean).join(', ')}
+                    </p>
+                  ) : (
+                    <p className="text-surface-500">No sharing enabled yet</p>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -1719,27 +1715,14 @@ export function DataSources(): JSX.Element {
             </div>
           </div>
         )}
-        {/* Action Required - User-scoped integrations where current user hasn't connected */}
-        {actionRequiredIntegrations.length > 0 && (
-          <section>
-            <h2 className="text-lg font-semibold text-surface-100 mb-4 flex items-center gap-2">
-              <span className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
-              <span className="text-amber-400">Action Required ({actionRequiredIntegrations.length})</span>
-            </h2>
-            <div className="grid gap-4">
-              {actionRequiredIntegrations.map((integration) => renderIntegrationTile(integration, 'action-required'))}
-            </div>
-          </section>
-        )}
-
-        {/* Connected Sources */}
+        {/* My connectors */}
         <section>
           <h2 className="text-lg font-semibold text-surface-100 mb-4 flex items-center gap-2">
             <span className="w-2 h-2 bg-emerald-500 rounded-full" />
-            Connected ({connectedIntegrations.length})
+            My connectors ({myConnectors.length})
           </h2>
 
-          {connectedIntegrations.length === 0 ? (
+          {myConnectors.length === 0 ? (
             <div className="card p-6 md:p-8">
               <div className="text-center mb-6">
                 <div className="w-16 h-16 rounded-full bg-surface-800 flex items-center justify-center mx-auto mb-4">
@@ -1812,10 +1795,39 @@ export function DataSources(): JSX.Element {
             </div>
           ) : (
             <div className="grid gap-4">
-              {connectedIntegrations.map((integration) => renderIntegrationTile(integration, 'connected'))}
+              {myConnectors.map((integration) => renderIntegrationTile(integration, 'connected'))}
             </div>
           )}
         </section>
+
+        {/* From your team — teammates have connected; you haven't. Show what's shared + Connect. */}
+        {fromTeamConnectors.length > 0 && (
+          <section>
+            <h2 className="text-lg font-semibold text-surface-100 mb-4 flex items-center gap-2">
+              <span className="w-2 h-2 bg-surface-500 rounded-full" />
+              From your team ({fromTeamConnectors.length})
+            </h2>
+            <p className="text-sm text-surface-400 mb-4">
+              Teammates have connected these. You can use shared data or connect your own.
+            </p>
+            <div className="grid gap-4">
+              {fromTeamConnectors.map((integration) => renderIntegrationTile(integration, 'team-only'))}
+            </div>
+          </section>
+        )}
+
+        {/* Available to connect — no one in org has connected yet */}
+        {availableIntegrations.length > 0 && (
+          <section>
+            <h2 className="text-lg font-semibold text-surface-100 mb-4 flex items-center gap-2">
+              <span className="w-2 h-2 bg-surface-500 rounded-full opacity-60" />
+              More connectors
+            </h2>
+            <div className="grid gap-4">
+              {availableIntegrations.map((integration) => renderIntegrationTile(integration, 'available'))}
+            </div>
+          </section>
+        )}
 
       </div>
 
