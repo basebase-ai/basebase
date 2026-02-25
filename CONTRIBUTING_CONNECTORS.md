@@ -278,6 +278,24 @@ class MyConnector(BaseConnector):
 
 ---
 
+## MCP-backed connectors
+
+When a third-party service only exposes a **Model Context Protocol (MCP)** server (e.g. Granola MCP), use the shared MCP client and base class instead of calling a REST API.
+
+1. **MCP client**: The backend uses the official `mcp` Python SDK in `services/mcp_client.py` to connect via Streamable HTTP, initialize, list tools, and call tools. Connectors do not implement the wire protocol.
+
+2. **Base class**: Subclass `BaseMCPConnector` from `connectors.base_mcp`. Set:
+   - `source_system` and `meta` (slug, name, QUERY + ACTION, `query_description`, `actions` mirroring the MCP tools).
+   - `mcp_server_url` (e.g. `https://mcp.granola.ai/mcp`).
+
+3. **Auth**: Typically OAuth (browser-based); store the token in Nango and add the provider to `config.NANGO_INTEGRATION_IDS`. The base class calls `get_oauth_token()` and passes `Authorization: Bearer <token>` to the MCP client.
+
+4. **No SYNC**: MCP connectors usually only implement QUERY and ACTION; CRM abstract methods are no-ops in `BaseMCPConnector`.
+
+See `connectors.granola_mcp.GranolaMCPConnector` as the reference implementation.
+
+---
+
 ## Data Type Decision Tree
 
 When your connector syncs data, choose the right storage tier:

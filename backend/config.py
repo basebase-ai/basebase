@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     NANGO_LINEAR_INTEGRATION_ID: str = "linear"
     NANGO_ASANA_INTEGRATION_ID: str = "asana"
     NANGO_GRANOLA_INTEGRATION_ID: str = "granola"
+    NANGO_GRANOLA_MCP_INTEGRATION_ID: str = "granola-mcp"
 
     # App
     SECRET_KEY: str = "dev-secret-change-in-production"
@@ -195,6 +196,7 @@ NANGO_INTEGRATION_IDS: dict[str, str] = {
     "linear": settings.NANGO_LINEAR_INTEGRATION_ID,
     "asana": settings.NANGO_ASANA_INTEGRATION_ID,
     "granola": settings.NANGO_GRANOLA_INTEGRATION_ID,
+    "granola_mcp": settings.NANGO_GRANOLA_MCP_INTEGRATION_ID,
 }
 
 # Default sharing settings for each provider when user first connects.
@@ -226,6 +228,7 @@ PROVIDER_SHARING_DEFAULTS: dict[str, SharingDefaults] = {
     "asana": SharingDefaults(share_synced_data=True),
     "jira": SharingDefaults(share_synced_data=True),
     "granola": SharingDefaults(share_synced_data=True),
+    "granola_mcp": SharingDefaults(share_query_access=True),
     # Personal tools - private by default
     "google_calendar": SharingDefaults(),
     "gmail": SharingDefaults(),

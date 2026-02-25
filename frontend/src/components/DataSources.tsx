@@ -80,6 +80,7 @@ const ICON_MAP: Record<string, IconType> = {
   linear: SiLinear,
   jira: SiJira,
   granola: HiDocumentText,
+  granola_mcp: HiDocumentText,
   globe: HiGlobeAlt,
   terminal: HiLightningBolt,
   sms: HiDeviceMobile,
@@ -96,6 +97,7 @@ const PROVIDER_SHARING_DEFAULTS: Record<string, { shareSyncedData: boolean; shar
   jira: { shareSyncedData: true, shareQueryAccess: false, shareWriteAccess: false },
   asana: { shareSyncedData: true, shareQueryAccess: false, shareWriteAccess: false },
   granola: { shareSyncedData: true, shareQueryAccess: false, shareWriteAccess: false },
+  granola_mcp: { shareSyncedData: false, shareQueryAccess: true, shareWriteAccess: false },
   web_search: { shareSyncedData: true, shareQueryAccess: false, shareWriteAccess: false },
   code_sandbox: { shareSyncedData: true, shareQueryAccess: false, shareWriteAccess: false },
   twilio: { shareSyncedData: true, shareQueryAccess: false, shareWriteAccess: false },
@@ -125,6 +127,7 @@ const INTEGRATION_CONFIG: Record<string, { name: string; description: string; ic
   linear: { name: 'Linear', description: 'Issue tracking - sync and manage teams, projects, and issues', icon: 'linear', color: 'from-indigo-500 to-violet-600' },
   jira: { name: 'Jira', description: 'Issue tracking - sync projects and issues from Atlassian Jira', icon: 'jira', color: 'from-blue-500 to-blue-600' },
   granola: { name: 'Granola', description: 'Meeting notes and transcripts – sync and query', icon: 'granola', color: 'from-amber-400 to-amber-600' },
+  granola_mcp: { name: 'Granola (MCP)', description: 'Meeting notes via MCP – list, search, and chat with your meetings', icon: 'granola_mcp', color: 'from-amber-400 to-amber-600' },
   // Built-in connectors (no OAuth — connect with one click)
   web_search: { name: 'Web Search', description: 'Web search and URL fetching — enable for the agent to search the web or fetch pages', icon: 'globe', color: 'from-emerald-500 to-teal-600' },
   code_sandbox: { name: 'Code Sandbox', description: 'Run shell commands and scripts in a secure sandbox (Python, Node, bash)', icon: 'terminal', color: 'from-amber-500 to-orange-600' },
