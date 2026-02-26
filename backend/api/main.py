@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,15 +21,10 @@ from api.websockets import websocket_endpoint
 from api.routes import apps, artifacts, auth, billing, change_sessions, chat, connectors, data, deals, drive, memories, search, slack_events, slack_user_mappings, sync, tool_settings, twilio_events, waitlist, workflows
 from models.database import init_db, close_db, get_pool_status
 from config import log_missing_env_vars, settings
+from api.logging_config import configure_logging
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    stream=sys.stdout,
-)
-# Set agents module to DEBUG for detailed tool logging
-logging.getLogger("agents").setLevel(logging.DEBUG)
+configure_logging()
 
 app = FastAPI(title="Revenue Copilot API", version="1.0.0")
 

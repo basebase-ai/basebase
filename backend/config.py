@@ -83,6 +83,14 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "dev-secret-change-in-production"
     ENVIRONMENT: str = "development"
     FRONTEND_URL: str = "http://localhost:5173"
+
+    # Logging
+    LOG_LEVEL: str = "INFO"
+    AGENTS_LOG_LEVEL: str = "DEBUG"
+    LOGGING_SPIKE_MODE: bool = False
+    LOG_SPIKE_FILE_PATH: str = "backend/logs/app.log"
+    LOG_SPIKE_MAX_BYTES: int = 10 * 1024 * 1024
+    LOG_SPIKE_BACKUP_COUNT: int = 5
     
     # Supabase configuration
     # URL: Your Supabase project URL (e.g., https://xyz.supabase.co)
