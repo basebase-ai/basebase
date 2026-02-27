@@ -26,7 +26,7 @@ import {
   SiJira,
   SiAsana,
 } from 'react-icons/si';
-import { HiOutlineCalendar, HiOutlineMail, HiGlobeAlt, HiUserGroup, HiExclamation, HiDeviceMobile, HiMicrophone, HiLightningBolt, HiX, HiCog, HiShare, HiLockClosed } from 'react-icons/hi';
+import { HiOutlineCalendar, HiOutlineMail, HiGlobeAlt, HiUserGroup, HiDeviceMobile, HiMicrophone, HiLightningBolt, HiX, HiCog, HiShare, HiLockClosed } from 'react-icons/hi';
 // Custom Apollo.io icon - 8-ray starburst matching their brand
 const ApolloIcon: IconType = ({ className, ...props }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={className} {...props}>
@@ -656,29 +656,14 @@ export function DataSources(): JSX.Element {
                 return;
               }
 
-              // Get the response with integration_id and sharing defaults
               const confirmData = await confirmResponse.json() as {
                 status: string;
                 integration_id: string;
                 sharing_defaults: { share_synced_data: boolean; share_query_access: boolean; share_write_access: boolean };
               };
 
-              console.log('Integration confirmed, showing sharing modal:', confirmData);
-
-              // Show sharing modal for user to configure
-              const config = INTEGRATION_CONFIG[provider];
-              setSharingModal({
-                isOpen: true,
-                integrationId: confirmData.integration_id,
-                provider,
-                providerName: config?.name ?? provider,
-                shareSyncedData: confirmData.sharing_defaults.share_synced_data,
-                shareQueryAccess: confirmData.sharing_defaults.share_query_access,
-                shareWriteAccess: confirmData.sharing_defaults.share_write_access,
-                isInitialSetup: true,
-              });
-
-              void fetchIntegrations();
+              console.log('Integration confirmed (using default sharing):', confirmData);
+              await fetchIntegrations();
             } catch (confirmError) {
               console.error('Error confirming integration:', confirmError);
             }
@@ -1098,18 +1083,9 @@ export function DataSources(): JSX.Element {
     };
     const buttonConfig = getButtonConfig();
 
-    // Sharing status badge
+    // Sharing status badge (no "Setup required" - we use sensible defaults on connect)
     const renderSharingBadge = (): JSX.Element | null => {
       if (state !== 'connected') return null;
-
-      if (integration.pendingSharingConfig) {
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-amber-500/20 text-amber-400">
-            <HiExclamation className="w-3 h-3" />
-            Setup required
-          </span>
-        );
-      }
 
       if (integration.shareSyncedData) {
         return (

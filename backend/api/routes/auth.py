@@ -1926,7 +1926,10 @@ async def confirm_integration(
             existing.is_active = True
             existing.last_error = None
             existing.updated_at = datetime.utcnow()
-            existing.pending_sharing_config = True  # Re-prompt for sharing config on reconnect
+            existing.pending_sharing_config = False
+            existing.share_synced_data = sharing_defaults.share_synced_data
+            existing.share_query_access = sharing_defaults.share_query_access
+            existing.share_write_access = sharing_defaults.share_write_access
             if connection_metadata:
                 existing.extra_data = connection_metadata
             integration_id = str(existing.id)
@@ -1940,11 +1943,10 @@ async def confirm_integration(
                 connected_by_user_id=user_uuid,
                 is_active=True,
                 extra_data=connection_metadata,
-                # Sharing flags - defaults from provider config, user will confirm in modal
                 share_synced_data=sharing_defaults.share_synced_data,
                 share_query_access=sharing_defaults.share_query_access,
                 share_write_access=sharing_defaults.share_write_access,
-                pending_sharing_config=True,  # Sync won't start until user confirms
+                pending_sharing_config=False,
             )
             session.add(new_integration)
             await session.flush()
@@ -1952,8 +1954,15 @@ async def confirm_integration(
 
         await session.commit()
 
-    # Don't trigger sync yet - wait for user to configure sharing preferences
-    # Sync will be triggered by POST /integrations/{id}/sharing
+    # Trigger initial sync in background (we use defaults, no sharing modal)
+    user_id_str = str(user_uuid) if user_uuid else ""
+    if user_id_str:
+        background_tasks.add_task(
+            run_initial_sync,
+            str(org_uuid),
+            request.provider,
+            user_id_str,
+        )
 
     if request.provider == "slack" and user_uuid:
         background_tasks.add_task(
@@ -1964,7 +1973,7 @@ async def confirm_integration(
         )
 
     return {
-        "status": "pending_sharing_config",
+        "status": "connected",
         "provider": request.provider,
         "integration_id": integration_id,
         "sharing_defaults": {
