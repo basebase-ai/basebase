@@ -2709,6 +2709,39 @@ async def disconnect_integration(
         else:
             print("Disconnect: No nango_connection_id, skipping Nango deletion")
 
+        # Always delete tracker_* rows for this provider so we can delete the integration
+        # (tracker_teams.integration_id FK references integrations.id)
+        source_system_disconnect: str = provider
+        if provider == "google-calendar":
+            source_system_disconnect = "google_calendar"
+        elif provider == "google-mail":
+            source_system_disconnect = "gmail"
+        params_disconnect: dict[str, str] = {
+            "org_id": str(org_uuid),
+            "source_system": source_system_disconnect,
+        }
+        await db_session.execute(
+            text("""
+                DELETE FROM tracker_issues
+                WHERE organization_id = :org_id AND source_system = :source_system
+            """),
+            params_disconnect,
+        )
+        await db_session.execute(
+            text("""
+                DELETE FROM tracker_projects
+                WHERE organization_id = :org_id AND source_system = :source_system
+            """),
+            params_disconnect,
+        )
+        await db_session.execute(
+            text("""
+                DELETE FROM tracker_teams
+                WHERE organization_id = :org_id AND source_system = :source_system
+            """),
+            params_disconnect,
+        )
+
         # Optionally delete all synced data from this provider
         deleted_activities: int = 0
         deleted_contacts: int = 0
@@ -2846,45 +2879,6 @@ async def disconnect_integration(
             )
             deleted_meetings = len(result.fetchall())
             print(f"Disconnect: Deleted {deleted_meetings} orphaned meetings")
-
-            # 9. Delete tracker issues (references tracker_teams via team_id)
-            result = await db_session.execute(
-                text("""
-                    DELETE FROM tracker_issues
-                    WHERE organization_id = :org_id
-                      AND source_system = :source_system
-                    RETURNING id
-                """),
-                params,
-            )
-            deleted_tracker_issues: int = len(result.fetchall())
-            print(f"Disconnect: Deleted {deleted_tracker_issues} tracker issues")
-
-            # 10. Delete tracker projects
-            result = await db_session.execute(
-                text("""
-                    DELETE FROM tracker_projects
-                    WHERE organization_id = :org_id
-                      AND source_system = :source_system
-                    RETURNING id
-                """),
-                params,
-            )
-            deleted_tracker_projects: int = len(result.fetchall())
-            print(f"Disconnect: Deleted {deleted_tracker_projects} tracker projects")
-
-            # 11. Delete tracker teams (references integrations via integration_id)
-            result = await db_session.execute(
-                text("""
-                    DELETE FROM tracker_teams
-                    WHERE organization_id = :org_id
-                      AND source_system = :source_system
-                    RETURNING id
-                """),
-                params,
-            )
-            deleted_tracker_teams: int = len(result.fetchall())
-            print(f"Disconnect: Deleted {deleted_tracker_teams} tracker teams")
 
         print(f"Disconnect: Deleting integration from database")
         await db_session.delete(integration)
