@@ -129,16 +129,22 @@ To support both (1) **Connect** (Nango OAuth) and (2) **Add Penny to Slack** (ot
 
 ## Updating Supabase Auth
 
-1. Go to Supabase → Authentication → URL Configuration
-2. Add your frontend Railway URL to:
-   - Site URL: `https://your-frontend-domain.railway.app`
-   - Redirect URLs: `https://your-frontend-domain.railway.app/**`
+**Required after changing app domain (e.g. to app.basebase.com):** If users are sent to the old domain after Google/OAuth sign-in, Supabase is still using the previous Site URL.
+
+1. Go to **Supabase Dashboard** → **Authentication** → **URL Configuration**
+2. Set:
+   - **Site URL**: your app origin, e.g. `https://app.basebase.com`
+   - **Redirect URLs**: add `https://app.basebase.com/**` (or at least `https://app.basebase.com/auth/callback`)
+3. Save. New OAuth sign-ins will redirect to this domain.
 
 ## Troubleshooting
 
 ### CORS Errors
 - Ensure `FRONTEND_URL` is set correctly on the backend
 - Check that the URL doesn't have a trailing slash
+
+### OAuth redirects to wrong domain (e.g. app.revtops.com instead of app.basebase.com)
+- Supabase uses **Site URL** as the default post-login redirect. Update it: **Supabase** → **Authentication** → **URL Configuration** → set **Site URL** to your app origin (e.g. `https://app.basebase.com`) and add that origin to **Redirect URLs** (`https://app.basebase.com/**`).
 
 ### WebSocket Connection Issues
 - Ensure `VITE_API_URL` is set correctly (should be the backend URL without `/api`)

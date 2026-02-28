@@ -2709,14 +2709,14 @@ async def disconnect_integration(
         else:
             print("Disconnect: No nango_connection_id, skipping Nango deletion")
 
-        # Always delete tracker_* rows for this provider so we can delete the integration
-        # (tracker_teams.integration_id FK references integrations.id)
+        # Always delete rows that reference this integration so we can delete the integration row.
+        # 1) Tracker tables (Linear/Jira/Asana): tracker_teams.integration_id -> integrations.id
         source_system_disconnect: str = provider
         if provider == "google-calendar":
             source_system_disconnect = "google_calendar"
         elif provider == "google-mail":
             source_system_disconnect = "gmail"
-        params_disconnect: dict[str, str] = {
+        params_tracker: dict[str, str] = {
             "org_id": str(org_uuid),
             "source_system": source_system_disconnect,
         }
@@ -2725,21 +2725,45 @@ async def disconnect_integration(
                 DELETE FROM tracker_issues
                 WHERE organization_id = :org_id AND source_system = :source_system
             """),
-            params_disconnect,
+            params_tracker,
         )
         await db_session.execute(
             text("""
                 DELETE FROM tracker_projects
                 WHERE organization_id = :org_id AND source_system = :source_system
             """),
-            params_disconnect,
+            params_tracker,
         )
         await db_session.execute(
             text("""
                 DELETE FROM tracker_teams
                 WHERE organization_id = :org_id AND source_system = :source_system
             """),
-            params_disconnect,
+            params_tracker,
+        )
+        # 2) GitHub: github_repositories.integration_id -> integrations.id
+        integration_id_param: dict[str, Any] = {"integration_id": str(integration.id)}
+        await db_session.execute(
+            text("""
+                DELETE FROM github_commits
+                WHERE repository_id IN (
+                    SELECT id FROM github_repositories WHERE integration_id = :integration_id
+                )
+            """),
+            integration_id_param,
+        )
+        await db_session.execute(
+            text("""
+                DELETE FROM github_pull_requests
+                WHERE repository_id IN (
+                    SELECT id FROM github_repositories WHERE integration_id = :integration_id
+                )
+            """),
+            integration_id_param,
+        )
+        await db_session.execute(
+            text("DELETE FROM github_repositories WHERE integration_id = :integration_id"),
+            integration_id_param,
         )
 
         # Optionally delete all synced data from this provider
