@@ -526,13 +526,14 @@ function App(): JSX.Element {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
             </div>
-            <h1 className="text-2xl font-bold text-surface-50 mb-3">Work email required</h1>
+            <h1 className="text-2xl font-bold text-surface-50 mb-3">Organization invite required</h1>
             <p className="text-surface-400 mb-6">
-              {APP_NAME} is designed for teams. Please sign in with your work email address
-              (not {emailDomain}).
+              It looks like <span className="text-surface-200 font-medium">{emailDomain}</span> is a free/private email domain
+              (for example, Gmail). You'll need to be invited to an existing organization because
+              we can't reliably detect your company by default.
             </p>
             <button onClick={() => void handleLogout()} className="btn-primary">
-              Sign in with work email
+Sign out
             </button>
           </div>
         </div>

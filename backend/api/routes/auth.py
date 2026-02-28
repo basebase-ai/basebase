@@ -1214,7 +1214,7 @@ class InviteToOrgResponse(BaseModel):
 async def invite_to_organization(
     org_id: str,
     request: InviteToOrgRequest,
-    background_tasks: BackgroundTasks,
+    _background_tasks: BackgroundTasks,
     user_id: Optional[str] = None,
 ) -> InviteToOrgResponse:
     """Invite a user to an organization by email.
@@ -1292,6 +1292,7 @@ async def invite_to_organization(
         )
         existing_membership: Optional[OrgMember] = result.scalar_one_or_none()
 
+        membership_id_str: str
         if existing_membership:
             if existing_membership.status == "active":
                 raise HTTPException(
@@ -1308,8 +1309,7 @@ async def invite_to_organization(
             existing_membership.invited_by_user_id = inviter_uuid
             existing_membership.invited_at = datetime.utcnow()
             existing_membership.role = request.role
-            await session.commit()
-            membership_id_str: str = str(existing_membership.id)
+            membership_id_str = str(existing_membership.id)
         else:
             new_membership = OrgMember(
                 user_id=target_user.id,
@@ -1320,17 +1320,26 @@ async def invite_to_organization(
                 invited_at=datetime.utcnow(),
             )
             session.add(new_membership)
-            await session.commit()
+            await session.flush()
             membership_id_str = str(new_membership.id)
 
-        # Send invitation email in background
+        # Send invitation email synchronously so 4xx/5xx provider failures are
+        # surfaced to the caller immediately (UI can show an actionable error).
+        # We only commit membership changes after email delivery succeeds.
         inviter_name: str = inviter.name or inviter.email
-        background_tasks.add_task(
-            send_org_invitation_email,
+        invite_sent: bool = await send_org_invitation_email(
             invite_email,
             org.name,
             inviter_name,
         )
+        if not invite_sent:
+            await session.rollback()
+            raise HTTPException(
+                status_code=502,
+                detail="Invitation email failed to send. Please verify the address and try again.",
+            )
+
+        await session.commit()
 
         return InviteToOrgResponse(
             membership_id=membership_id_str,

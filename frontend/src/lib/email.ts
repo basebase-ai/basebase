@@ -1,38 +1,10 @@
 /**
  * Email validation utilities.
- * 
+ *
  * Used to enforce work email requirement and extract company domain.
  */
 
-// Blocked personal email domains
-export const BLOCKED_EMAIL_DOMAINS = [
-  'gmail.com',
-  'googlemail.com',
-  'hotmail.com',
-  'hotmail.co.uk',
-  'outlook.com',
-  'outlook.co.uk',
-  'live.com',
-  'msn.com',
-  'yahoo.com',
-  'yahoo.co.uk',
-  'yahoo.fr',
-  'ymail.com',
-  'aol.com',
-  'icloud.com',
-  'me.com',
-  'mac.com',
-  'protonmail.com',
-  'proton.me',
-  'zoho.com',
-  'mail.com',
-  'gmx.com',
-  'gmx.net',
-  'yandex.com',
-  'fastmail.com',
-  'tutanota.com',
-  'hey.com',
-];
+import { isFreeOrPrivateEmailDomain } from '../data/freeEmailDomains';
 
 export function getEmailDomain(email: string): string {
   return email.split('@')[1]?.toLowerCase() || '';
@@ -40,7 +12,7 @@ export function getEmailDomain(email: string): string {
 
 export function isPersonalEmail(email: string): boolean {
   const domain = getEmailDomain(email);
-  return BLOCKED_EMAIL_DOMAINS.includes(domain);
+  return isFreeOrPrivateEmailDomain(domain);
 }
 
 export function suggestCompanyName(domain: string): string {
