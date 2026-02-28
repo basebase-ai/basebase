@@ -1904,7 +1904,7 @@ async def confirm_integration(
     sharing_defaults = get_provider_sharing_defaults(request.provider)
 
     integration_id: str = ""
-    async with get_session() as session:
+    async with get_session(organization_id=str(org_uuid)) as session:
         await session.execute(
             text("SELECT set_config('app.current_org_id', :org_id, true)"),
             {"org_id": str(org_uuid)}

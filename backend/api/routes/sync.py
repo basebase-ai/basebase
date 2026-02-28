@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from connectors.base import SyncCancelledError
+from connectors.github import GitHubConnector
 from connectors.registry import discover_connectors
 from models.database import get_session
 from models.integration import Integration
@@ -1056,22 +1057,30 @@ async def list_github_repos(organization_id: str) -> GitHubAvailableReposRespons
 
     async with get_session(organization_id=organization_id) as session:
         result = await session.execute(
-            select(Integration).where(
+            select(Integration)
+            .where(
                 Integration.organization_id == UUID(organization_id),
                 Integration.provider == "github",
                 Integration.is_active == True,
             )
+            .limit(1)
         )
         if not result.scalar_one_or_none():
             raise HTTPException(
                 status_code=404, detail="No active GitHub integration found"
             )
 
-    connector: GitHubConnector = GitHubConnector(organization_id)
-    repos: list[dict[str, Any]] = await connector.list_available_repos()
-    return GitHubAvailableReposResponse(
-        repos=[GitHubRepoResponse(**r) for r in repos]
-    )
+    try:
+        connector: GitHubConnector = GitHubConnector(organization_id)
+        repos: list[dict[str, Any]] = await connector.list_available_repos()
+        return GitHubAvailableReposResponse(
+            repos=[GitHubRepoResponse(**r) for r in repos]
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        logger.exception("list_github_repos failed")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post(

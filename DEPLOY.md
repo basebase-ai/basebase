@@ -105,15 +105,9 @@ VITE_SUPABASE_ANON_KEY=eyJ...
 VITE_NANGO_PUBLIC_KEY=...
 ```
 
-## Updating Nango Callback URLs
+## Nango
 
-After deployment, update your Nango integration callbacks:
-
-1. Go to Nango dashboard → Integrations
-2. For each integration (HubSpot, Slack, etc.), update the callback URL to:
-   ```
-   https://your-frontend-domain.railway.app
-   ```
+OAuth redirect stays as `api.nango.dev/oauth/callback`; no change needed when you change app/API domain. Ensure **VITE_NANGO_PUBLIC_KEY** is set when building the frontend (required for the Connect UI popup); if it’s missing, connecting GitHub or other Nango integrations can fail.
 
 ### Slack: Add-to-Slack (Penny bot) and Nango Connect
 
@@ -142,6 +136,14 @@ To support both (1) **Connect** (Nango OAuth) and (2) **Add Penny to Slack** (ot
 ### CORS Errors
 - Ensure `FRONTEND_URL` is set correctly on the backend
 - Check that the URL doesn't have a trailing slash
+
+### Nango after domain change (e.g. revtops.com → basebase.com)
+- Redirect URLs in Nango stay as **api.nango.dev/oauth/callback**; the domain change doesn’t affect that.
+- **Backend env (production):** Set `FRONTEND_URL=https://app.basebase.com` (and `BACKEND_PUBLIC_URL=https://api.basebase.com` if used). The backend passes `redirect_url` to Nango so users land on your app after OAuth; that URL is built from `FRONTEND_URL`.
+- **Supabase:** Update **Site URL** and **Redirect URLs** to `https://app.basebase.com` (see “Updating Supabase Auth” above).
+
+### GitHub / Nango integrations fail to connect
+- Ensure **VITE_NANGO_PUBLIC_KEY** is set when building the frontend (build arg / env). If it’s missing, the Connect UI can fail (console may show “VITE_NANGO_PUBLIC_KEY is not set”). Nango OAuth callback stays as api.nango.dev; no change needed when changing app domain.
 
 ### OAuth redirects to wrong domain (e.g. app.revtops.com instead of app.basebase.com)
 - Supabase uses **Site URL** as the default post-login redirect. Update it: **Supabase** → **Authentication** → **URL Configuration** → set **Site URL** to your app origin (e.g. `https://app.basebase.com`) and add that origin to **Redirect URLs** (`https://app.basebase.com/**`).

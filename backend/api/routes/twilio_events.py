@@ -141,7 +141,7 @@ def _resolve_webhook_url(request: Request) -> str:
     signature mismatches.
 
     Preferred: set ``TWILIO_WEBHOOK_URL`` in env to the exact public URL
-    (e.g. ``https://api.revtops.com/api/twilio/webhook``).
+    (e.g. ``https://api.basebase.com/api/twilio/webhook``).
 
     Fallback: reconstruct from ``X-Forwarded-*`` headers.
     """

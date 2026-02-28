@@ -264,7 +264,7 @@ We'll be in touch soon with next steps.
                     "Content-Type": "application/json",
                 },
                 json={
-                    "from": settings.EMAIL_FROM or "Basebase <hello@revtops.com>",
+                    "from": settings.EMAIL_FROM or "Basebase <hello@basebase.com>",
                     "to": [to_email],
                     "subject": "You're on the Basebase waitlist!",
                     "html": html_content,
@@ -359,7 +359,7 @@ Questions? Just reply to this email.
                     "Content-Type": "application/json",
                 },
                 json={
-                    "from": settings.EMAIL_FROM or "Basebase <hello@revtops.com>",
+                    "from": settings.EMAIL_FROM or "Basebase <hello@basebase.com>",
                     "to": [to_email],
                     "subject": "You're off the waitlist! 🎉",
                     "html": html_content,
@@ -492,7 +492,7 @@ Questions? Just reply to this email.
                     "Content-Type": "application/json",
                 },
                 json={
-                    "from": settings.EMAIL_FROM or "Basebase <hello@revtops.com>",
+                    "from": settings.EMAIL_FROM or "Basebase <hello@basebase.com>",
                     "to": [to_email],
                     "subject": f"You're invited to {org_name} on Basebase",
                     "html": html_content,
