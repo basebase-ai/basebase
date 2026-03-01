@@ -2104,10 +2104,11 @@ function ConnectionStatus({
   state,
 }: {
   state: 'connecting' | 'connected' | 'disconnected' | 'error';
-}): JSX.Element {
+}): JSX.Element | null {
+  if (state === 'connected') return null;
+
   const statusConfig = {
     connecting: { color: 'bg-yellow-500', text: 'Connecting...' },
-    connected: { color: 'bg-green-500', text: 'Connected' },
     disconnected: { color: 'bg-surface-500', text: 'Disconnected' },
     error: { color: 'bg-red-500', text: 'Error' },
   };

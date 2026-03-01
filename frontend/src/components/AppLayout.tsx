@@ -18,23 +18,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Nango from '@nangohq/frontend';
 import { API_BASE } from '../lib/api';
 import { crossTab, subscribeCrossTab } from '../lib/crossTab';
-
-// Hook to detect mobile viewport
-function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = useState(false);
-  
-  useEffect(() => {
-    const checkMobile = (): void => {
-      setIsMobile(window.innerWidth < 768);
-    };
-    
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
-  
-  return isMobile;
-}
+import { useIsMobile } from '../hooks';
 import { useShallow } from 'zustand/react/shallow';
 import { Sidebar } from './Sidebar';
 import { Home } from './Home';

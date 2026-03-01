@@ -39,27 +39,7 @@ const ApolloIcon: IconType = ({ className, ...props }) => (
 import { API_BASE } from '../lib/api';
 import { useAppStore, useIntegrations, useIntegrationsLoading, type Integration, type SyncStats } from '../store';
 import { useWebSocket } from '../hooks/useWebSocket';
-
-// Detect if user is on a mobile device
-function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = useState(false);
-  
-  useEffect(() => {
-    const checkMobile = (): void => {
-      const userAgent = navigator.userAgent || navigator.vendor;
-      const mobileRegex = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
-      const isMobileDevice = mobileRegex.test(userAgent);
-      const isSmallScreen = window.innerWidth < 768;
-      setIsMobile(isMobileDevice || isSmallScreen);
-    };
-    
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
-  
-  return isMobile;
-}
+import { useIsMobile } from '../hooks';
 
 // Icon map for integration providers
 const ICON_MAP: Record<string, IconType> = {
@@ -355,6 +335,16 @@ export function DataSources(): JSX.Element {
   }
   const [sharingModal, setSharingModal] = useState<SharingModalState | null>(null);
   const [sharingSaving, setSharingSaving] = useState(false);
+
+  // Disconnect confirmation modal state
+  interface DisconnectModalState {
+    provider: string;
+    step: 'confirm' | 'ask-delete';
+  }
+  const [disconnectModal, setDisconnectModal] = useState<DisconnectModalState | null>(null);
+  const [disconnectError, setDisconnectError] = useState<string | null>(null);
+  const [disconnectSuccess, setDisconnectSuccess] = useState<string | null>(null);
+  const [sharingError, setSharingError] = useState<string | null>(null);
 
   const organizationId = organization?.id ?? '';
   const userId = user?.id ?? '';
@@ -719,17 +709,14 @@ export function DataSources(): JSX.Element {
     }
   };
 
-  const handleDisconnect = async (provider: string): Promise<void> => {
+  const handleDisconnect = (provider: string): void => {
     if (!organizationId || !userId || disconnectingProviders.has(provider)) return;
+    setDisconnectError(null);
+    setDisconnectModal({ provider, step: 'confirm' });
+  };
 
-    if (!confirm(`Are you sure you want to disconnect ${provider}?`)) return;
-
-    // Ask if user wants to delete all synced data
-    const deleteData = confirm(
-      `Do you also want to delete all data synced from ${provider}?\n\n` +
-      `This includes contacts, companies, deals, pipelines, activities, and meetings imported from this integration.\n\n` +
-      `Click OK to delete data, or Cancel to keep the data.`
-    );
+  const executeDisconnect = async (provider: string, deleteData: boolean): Promise<void> => {
+    setDisconnectModal(null);
 
     // Set disconnecting state immediately for instant UI feedback
     setDisconnectingProviders((prev) => new Set(prev).add(provider));
@@ -739,19 +726,10 @@ export function DataSources(): JSX.Element {
       params.set('delete_data', 'true');
     }
     const url = `${API_BASE}/auth/integrations/${provider}?${params.toString()}`;
-    console.log('Disconnecting:', { provider, organizationId, userId, url });
 
     try {
       const response = await fetch(url, { method: 'DELETE' });
-      
-      console.log('Disconnect response:', {
-        status: response.status,
-        statusText: response.statusText,
-        ok: response.ok,
-      });
-
       const responseText = await response.text();
-      console.log('Disconnect response body:', responseText);
 
       if (!response.ok) {
         throw new Error(responseText);
@@ -778,21 +756,18 @@ export function DataSources(): JSX.Element {
         if (data.deleted_meetings)    counts.push(`${data.deleted_meetings} orphaned meetings`);
 
         if (counts.length > 0) {
-          alert(`Disconnected ${provider}.\n\nDeleted ${counts.join(', ')}.`);
+          setDisconnectSuccess(`Disconnected ${provider}. Deleted ${counts.join(', ')}.`);
+          setTimeout(() => setDisconnectSuccess(null), 6000);
         }
       } catch {
         // Response wasn't JSON or didn't have deletion info, that's fine
       }
 
-      console.log('Disconnect successful, invalidating integrations cache...');
-      // Invalidate cache to refetch integrations, keep UI in disconnecting state until refreshed
       try {
         await fetchIntegrations();
-        console.log('Integrations refreshed after disconnect for provider:', provider);
       } catch (fetchError) {
         console.error('Failed to refresh integrations after disconnect:', fetchError);
       }
-      console.log('Disconnect complete, restoring UI state for provider:', provider);
       setDisconnectingProviders((prev) => {
         if (!prev.has(provider)) return prev;
         const next = new Set(prev);
@@ -801,8 +776,8 @@ export function DataSources(): JSX.Element {
       });
     } catch (error) {
       console.error('Failed to disconnect:', error);
-      alert(`Failed to disconnect: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      // Remove from disconnecting state on error so user can retry
+      setDisconnectError(`Failed to disconnect: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setTimeout(() => setDisconnectError(null), 6000);
       setDisconnectingProviders((prev) => {
         const next = new Set(prev);
         next.delete(provider);
@@ -843,7 +818,8 @@ export function DataSources(): JSX.Element {
       void fetchIntegrations();
     } catch (error) {
       console.error('Failed to save sharing settings:', error);
-      alert(`Failed to save: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setSharingError(`Failed to save: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setTimeout(() => setSharingError(null), 6000);
     } finally {
       setSharingSaving(false);
     }
@@ -1872,6 +1848,71 @@ export function DataSources(): JSX.Element {
 
       </div>
 
+      {/* Disconnect / error / success banners */}
+      {disconnectError && (
+        <div className="fixed bottom-4 right-4 z-50 bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-lg text-sm max-w-sm shadow-lg">
+          {disconnectError}
+        </div>
+      )}
+      {disconnectSuccess && (
+        <div className="fixed bottom-4 right-4 z-50 bg-primary-500/10 border border-primary-500/30 text-primary-400 px-4 py-3 rounded-lg text-sm max-w-sm shadow-lg">
+          {disconnectSuccess}
+        </div>
+      )}
+
+      {/* Disconnect Confirmation Modal */}
+      {disconnectModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setDisconnectModal(null)}>
+          <div className="bg-surface-900 border border-surface-700 rounded-xl shadow-xl w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6">
+              {disconnectModal.step === 'confirm' ? (
+                <>
+                  <h2 className="text-lg font-semibold text-surface-100 mb-2">Disconnect {disconnectModal.provider}?</h2>
+                  <p className="text-sm text-surface-400 mb-6">
+                    This will remove the connection. You can reconnect later.
+                  </p>
+                  <div className="flex justify-end gap-3">
+                    <button
+                      onClick={() => setDisconnectModal(null)}
+                      className="px-4 py-2 text-sm font-medium text-surface-300 hover:text-surface-100 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => setDisconnectModal({ ...disconnectModal, step: 'ask-delete' })}
+                      className="px-4 py-2 text-sm font-medium bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors"
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h2 className="text-lg font-semibold text-surface-100 mb-2">Delete synced data?</h2>
+                  <p className="text-sm text-surface-400 mb-6">
+                    Do you also want to delete all data synced from {disconnectModal.provider}? This includes contacts, companies, deals, pipelines, activities, and meetings imported from this integration.
+                  </p>
+                  <div className="flex justify-end gap-3">
+                    <button
+                      onClick={() => void executeDisconnect(disconnectModal.provider, false)}
+                      className="px-4 py-2 text-sm font-medium text-surface-300 hover:text-surface-100 transition-colors"
+                    >
+                      Keep Data
+                    </button>
+                    <button
+                      onClick={() => void executeDisconnect(disconnectModal.provider, true)}
+                      className="px-4 py-2 text-sm font-medium bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors"
+                    >
+                      Delete Data
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Sharing Preferences Modal */}
       {sharingModal?.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -1949,6 +1990,10 @@ export function DataSources(): JSX.Element {
                   </div>
                 </label>
               </div>
+
+              {sharingError && (
+                <p className="text-sm text-red-400 mt-4">{sharingError}</p>
+              )}
 
               <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-surface-700">
                 <button
