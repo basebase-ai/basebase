@@ -5417,6 +5417,7 @@ async def _write_app_create(
             list(queries.keys()),
         )
 
+    app_url = f"{settings.FRONTEND_URL.rstrip('/')}/apps/{app_id_str}"
     return {
         "status": "success",
         "app_id": app_id_str,
@@ -5426,7 +5427,8 @@ async def _write_app_create(
             "description": description,
             "frontendCode": frontend_code,
         },
-        "message": f"Created interactive app: {title}",
+        "url": app_url,
+        "message": f"Created interactive app: {title}. View it at {app_url}",
     }
 
 
@@ -5491,10 +5493,12 @@ async def _write_app_update(
             app.title,
         )
 
+    app_url = f"{settings.FRONTEND_URL.rstrip('/')}/apps/{app_id}"
     return {
         "status": "success",
         "app_id": app_id,
-        "message": f"Updated app: {app.title}",
+        "url": app_url,
+        "message": f"Updated app: {app.title}. View it at {app_url}",
         "updated_fields": [
             f for f in ["queries", "frontend_code", "title", "description"]
             if params.get(f) is not None
