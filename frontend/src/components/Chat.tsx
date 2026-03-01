@@ -684,6 +684,23 @@ export function Chat({
     newConversationScope,
   ]);
 
+  // Handle retry: re-send the last user message
+  const handleRetry = useCallback(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg?.role === 'user') {
+        const text = (msg.contentBlocks ?? [])
+          .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+          .map((b) => b.text)
+          .join('');
+        if (text.trim()) {
+          sendChatMessage(text, 'input');
+          return;
+        }
+      }
+    }
+  }, [messages, sendChatMessage]);
+
   // Consume pending chat input (from Search "Ask about" button or pipeline deal click)
   useEffect(() => {
     if (!pendingChatInput) {
@@ -996,7 +1013,7 @@ export function Chat({
       {/* Content area with messages and optional artifact sidebar */}
       <div className="flex-1 flex overflow-hidden">
         {/* Messages */}
-        <div className={`relative ${currentArtifact || currentApp ? 'w-1/2' : 'flex-1'}`}>
+        <div className={`relative md:transition-all md:duration-300 md:ease-in-out ${currentArtifact || currentApp ? 'md:w-1/2' : ''} flex-1`}>
           <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto overflow-x-hidden p-3 md:p-6">
           {!userId && (
             <div className="mb-3 rounded-lg border border-amber-600/50 bg-amber-900/20 px-3 py-2 text-sm text-amber-200">
@@ -1043,6 +1060,7 @@ export function Chat({
                     result: block.result,
                     status: block.status === 'complete' ? 'complete' : 'running',
                   })}
+                  onRetry={handleRetry}
                   conversationScope={conversationScope}
                   currentUserId={userId}
                 />
@@ -1082,11 +1100,11 @@ export function Chat({
         {currentArtifact && (
           <>
             {/* Mobile backdrop */}
-            <div 
-              className="fixed inset-0 bg-black/50 z-40 md:hidden"
+            <div
+              className="fixed inset-0 bg-black/50 z-40 md:hidden animate-fade-in"
               onClick={() => setCurrentArtifact(null)}
             />
-            <div className="fixed inset-y-0 right-0 w-full max-w-md z-50 md:relative md:w-1/2 md:z-auto border-l border-surface-800 bg-surface-900 p-4 overflow-y-auto">
+            <div className="fixed inset-y-0 right-0 w-full max-w-md z-50 animate-slide-in-right md:relative md:w-1/2 md:z-auto md:animate-none md:transition-all md:duration-300 md:ease-in-out border-l border-surface-800 bg-surface-900 p-4 overflow-y-auto">
               <div className="flex items-center justify-between mb-2">
                 <h2 className="text-lg font-semibold text-surface-100 truncate">
                   {currentArtifact.title}
@@ -1109,10 +1127,10 @@ export function Chat({
         {currentApp && (
           <>
             <div
-              className="fixed inset-0 bg-black/50 z-40 md:hidden"
+              className="fixed inset-0 bg-black/50 z-40 md:hidden animate-fade-in"
               onClick={() => setCurrentApp(null)}
             />
-            <div className="fixed inset-y-0 right-0 w-full max-w-md z-50 md:relative md:w-1/2 md:z-auto border-l border-surface-800 bg-surface-900 p-4 overflow-y-auto">
+            <div className="fixed inset-y-0 right-0 w-full max-w-md z-50 animate-slide-in-right md:relative md:w-1/2 md:z-auto md:animate-none md:transition-all md:duration-300 md:ease-in-out border-l border-surface-800 bg-surface-900 p-4 overflow-y-auto">
               <div className="flex items-center justify-between mb-2">
                 <h2 className="text-lg font-semibold text-surface-100 truncate">
                   {currentApp.title}
@@ -1410,6 +1428,7 @@ function MessageWithBlocks({
   onToolApprove,
   onToolCancel,
   onToolClick,
+  onRetry,
   conversationScope,
   currentUserId,
 }: {
@@ -1420,6 +1439,7 @@ function MessageWithBlocks({
   onToolApprove: (operationId: string, options?: Record<string, unknown>) => void;
   onToolCancel: (operationId: string) => void;
   onToolClick: (block: ToolUseBlock) => void;
+  onRetry?: () => void;
   conversationScope: 'private' | 'shared';
   currentUserId?: string | null;
 }): JSX.Element {
@@ -1613,7 +1633,7 @@ function MessageWithBlocks({
           if (block.type === 'error') {
             return (
               <div key={`error-${index}`} className="my-0.5">
-                <ErrorBlockIndicator block={block} />
+                <ErrorBlockIndicator block={block} onRetry={onRetry} />
               </div>
             );
           }
@@ -1717,8 +1737,10 @@ function ToolBlockIndicator({
  */
 function ErrorBlockIndicator({
   block,
+  onRetry,
 }: {
   block: ErrorBlock;
+  onRetry?: () => void;
 }): JSX.Element {
   // Parse the error message to extract a user-friendly summary
   const errorSummary = getErrorSummary(block.message);
@@ -1729,6 +1751,14 @@ function ErrorBlockIndicator({
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
       </svg>
       <span className="italic">{errorSummary}</span>
+      {onRetry && (
+        <button
+          onClick={onRetry}
+          className="text-red-400 hover:text-red-300 underline ml-1"
+        >
+          Retry
+        </button>
+      )}
     </div>
   );
 }
