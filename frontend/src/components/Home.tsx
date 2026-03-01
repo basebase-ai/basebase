@@ -118,6 +118,49 @@ export function Home(): JSX.Element {
     void fetchHomeApp();
   }, [organization?.id]);
 
+  // Fetch pipeline data
+  const fetchData = useCallback(async (): Promise<void> => {
+    if (!organization?.id) return;
+    setLoading(true);
+    setError(null);
+
+    try {
+      const pipelinesRes = await fetch(
+        `${API_BASE}/deals/pipelines?organization_id=${organization.id}`,
+        { credentials: 'include' }
+      );
+
+      if (pipelinesRes.ok) {
+        const pipelinesData = await pipelinesRes.json() as PipelinesApiResponse;
+        setPipelines(pipelinesData.pipelines);
+      }
+
+      const dealsRes = await fetch(
+        `${API_BASE}/deals?organization_id=${organization.id}&limit=200&open_only=true`,
+        { credentials: 'include' }
+      );
+
+      if (!dealsRes.ok) {
+        throw new Error('Failed to fetch deals');
+      }
+
+      const dealsData = await dealsRes.json() as DealsApiResponse;
+      setDeals(
+        dealsData.deals.map(
+          (d): Deal => ({
+            ...d,
+            source_system: d.source_system ?? null,
+            source_id: d.source_id ?? null,
+          })
+        )
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setLoading(false);
+    }
+  }, [organization?.id]);
+
   // Fetch pipeline data (only when no home app is set)
   useEffect(() => {
     if (!organization?.id) return;
@@ -127,49 +170,8 @@ export function Home(): JSX.Element {
       return;
     }
 
-    const fetchData = async (): Promise<void> => {
-      setLoading(true);
-      setError(null);
-
-      try {
-        const pipelinesRes = await fetch(
-          `${API_BASE}/deals/pipelines?organization_id=${organization.id}`,
-          { credentials: 'include' }
-        );
-
-        if (pipelinesRes.ok) {
-          const pipelinesData = await pipelinesRes.json() as PipelinesApiResponse;
-          setPipelines(pipelinesData.pipelines);
-        }
-
-        const dealsRes = await fetch(
-          `${API_BASE}/deals?organization_id=${organization.id}&limit=200&open_only=true`,
-          { credentials: 'include' }
-        );
-
-        if (!dealsRes.ok) {
-          throw new Error('Failed to fetch deals');
-        }
-
-        const dealsData = await dealsRes.json() as DealsApiResponse;
-        setDeals(
-          dealsData.deals.map(
-            (d): Deal => ({
-              ...d,
-              source_system: d.source_system ?? null,
-              source_id: d.source_id ?? null,
-            })
-          )
-        );
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'An error occurred');
-      } finally {
-        setLoading(false);
-      }
-    };
-
     void fetchData();
-  }, [organization?.id, homeAppLoading, homeApp]);
+  }, [organization?.id, homeAppLoading, homeApp, fetchData]);
 
   // Group deals by pipeline
   const pipelinesWithDeals = useMemo((): PipelineWithDeals[] => {
@@ -336,6 +338,12 @@ export function Home(): JSX.Element {
         <div className="text-center">
           <div className="text-red-400 mb-2">Failed to load deals</div>
           <div className="text-surface-500 text-sm">{error}</div>
+          <button
+            onClick={() => void fetchData()}
+            className="btn-secondary mt-4"
+          >
+            Try again
+          </button>
         </div>
       </div>
     );

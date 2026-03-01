@@ -280,6 +280,7 @@ export function Sidebar({
         {/* Home */}
         <button
           onClick={() => onViewChange('home')}
+          title={collapsed ? 'Home' : undefined}
           className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
             currentView === 'home'
               ? 'bg-surface-800 text-surface-100'
@@ -295,6 +296,7 @@ export function Sidebar({
         {/* Connectors */}
         <button
           onClick={() => onViewChange('data-sources')}
+          title={collapsed ? 'Connectors' : undefined}
           className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
             currentView === 'data-sources'
               ? 'bg-surface-800 text-surface-100'
@@ -317,6 +319,7 @@ export function Sidebar({
         {/* Search Data */}
         <button
           onClick={() => onViewChange('data')}
+          title={collapsed ? 'Search Data' : undefined}
           className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
             currentView === 'data'
               ? 'bg-surface-800 text-surface-100'
@@ -332,6 +335,7 @@ export function Sidebar({
         {/* Workflows */}
         <button
           onClick={() => onViewChange('workflows')}
+          title={collapsed ? 'Workflows' : undefined}
           className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
             currentView === 'workflows'
               ? 'bg-surface-800 text-surface-100'
@@ -354,6 +358,7 @@ export function Sidebar({
         {/* Apps */}
         <button
           onClick={() => onViewChange('apps')}
+          title={collapsed ? 'Apps' : undefined}
           className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
             currentView === 'apps' || currentView === 'app-view'
               ? 'bg-surface-800 text-surface-100'
@@ -370,6 +375,7 @@ export function Sidebar({
         {pendingChangesCount > 0 && (
           <button
             onClick={() => onViewChange('pending-changes')}
+            title={collapsed ? 'Changes' : undefined}
             className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
               currentView === 'pending-changes'
                 ? 'bg-amber-500/20 text-amber-300'
@@ -392,6 +398,7 @@ export function Sidebar({
         {isGlobalAdmin && (
           <button
             onClick={() => onViewChange('admin')}
+            title={collapsed ? 'Admin' : undefined}
             className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
               currentView === 'admin'
                 ? 'bg-surface-800 text-surface-100'
