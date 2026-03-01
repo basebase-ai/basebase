@@ -53,7 +53,15 @@ def _make_pgbouncer_safe_connect_args() -> dict[str, Any]:
     try:
         from asyncpg import Connection
     except ImportError:
-        return {"statement_cache_size": 0}
+        return {
+            "statement_cache_size": 0,
+            "command_timeout": 30,
+            "server_settings": {
+                "tcp_keepalives_idle": "60",
+                "tcp_keepalives_interval": "5",
+                "tcp_keepalives_count": "5",
+            },
+        }
 
     class UniquePreparedStatementConnection(Connection):
         """Use a unique name per prepared statement so pgbouncer transaction pooling doesn't collide."""
@@ -64,6 +72,12 @@ def _make_pgbouncer_safe_connect_args() -> dict[str, Any]:
     return {
         "statement_cache_size": 0,
         "connection_class": UniquePreparedStatementConnection,
+        "command_timeout": 30,
+        "server_settings": {
+            "tcp_keepalives_idle": "60",
+            "tcp_keepalives_interval": "5",
+            "tcp_keepalives_count": "5",
+        },
     }
 
 
