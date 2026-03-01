@@ -902,7 +902,7 @@ async def get_organization_members(
                     id=str(u.id),
                     name=u.name,
                     email=u.email,
-                    role=u.role,
+                    role=membership.role if membership else u.role,
                     avatar_url=u.avatar_url,
                     job_title=membership.title if membership else None,
                     status=u.status,
