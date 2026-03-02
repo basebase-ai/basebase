@@ -1413,6 +1413,21 @@ async def _resolve_guest_user_for_org(organization_id: str) -> User | None:
         return guest_user
 
 
+async def _resolve_guest_user_after_unmapped_actor(
+    organization_id: str,
+    normalized_slack_user_id: str,
+    reason: str,
+) -> User | None:
+    """Resolve guest fallback after Slack actor lookup failed for a known reason."""
+    logger.info(
+        "[slack_conversations] Attempting guest fallback for Slack actor user=%s org=%s reason=%s",
+        normalized_slack_user_id,
+        organization_id,
+        reason,
+    )
+    return await _resolve_guest_user_for_org(organization_id)
+
+
 async def resolve_revtops_user_for_slack_actor(
     organization_id: str,
     slack_user_id: str,
@@ -1425,7 +1440,11 @@ async def resolve_revtops_user_for_slack_actor(
             "[slack_conversations] Cannot resolve Slack actor with empty user id org=%s",
             organization_id,
         )
-        return None
+        return await _resolve_guest_user_after_unmapped_actor(
+            organization_id=organization_id,
+            normalized_slack_user_id=normalized_slack_user_id,
+            reason="empty_slack_user_id",
+        )
 
     async with get_admin_session() as session:
         # Find users who belong to this org — either via their active org
@@ -1544,7 +1563,11 @@ async def resolve_revtops_user_for_slack_actor(
             organization_id,
             normalized_slack_user_id,
         )
-        return None
+        return await _resolve_guest_user_after_unmapped_actor(
+            organization_id=organization_id,
+            normalized_slack_user_id=normalized_slack_user_id,
+            reason="no_org_users",
+        )
 
     try:
         slack_user = slack_user or await _fetch_slack_user_info(
@@ -1552,7 +1575,11 @@ async def resolve_revtops_user_for_slack_actor(
             slack_user_id=slack_user_id,
         )
         if not slack_user:
-            return None
+            return await _resolve_guest_user_after_unmapped_actor(
+                organization_id=organization_id,
+                normalized_slack_user_id=normalized_slack_user_id,
+                reason="missing_slack_user_profile",
+            )
         profile = slack_user.get("profile", {})
         slack_email = (profile.get("email") or "").strip().lower()
         slack_names = {
@@ -1580,7 +1607,11 @@ async def resolve_revtops_user_for_slack_actor(
             exc,
             exc_info=True,
         )
-        return None
+        return await _resolve_guest_user_after_unmapped_actor(
+            organization_id=organization_id,
+            normalized_slack_user_id=normalized_slack_user_id,
+            reason="profile_lookup_error",
+        )
 
     # 1) email matching
     if slack_email:
@@ -1636,7 +1667,11 @@ async def resolve_revtops_user_for_slack_actor(
         normalized_slack_user_id,
         organization_id,
     )
-    guest_user = await _resolve_guest_user_for_org(organization_id)
+    guest_user = await _resolve_guest_user_after_unmapped_actor(
+        organization_id=organization_id,
+        normalized_slack_user_id=normalized_slack_user_id,
+        reason="no_mapping_match",
+    )
     if guest_user:
         return guest_user
     return None

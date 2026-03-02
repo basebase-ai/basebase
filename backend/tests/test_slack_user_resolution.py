@@ -295,6 +295,64 @@ def test_resolve_revtops_user_uses_existing_mapping(monkeypatch):
     assert resolved.id == jane_id
 
 
+def test_resolve_revtops_user_falls_back_to_guest_when_slack_profile_missing(monkeypatch):
+    org_id = "11111111-1111-1111-1111-111111111111"
+    member_id = UUID("22222222-2222-2222-2222-222222222222")
+    guest_id = UUID("33333333-3333-3333-3333-333333333333")
+    users = [
+        SimpleNamespace(id=member_id, email="member@acme.com", name="Member User"),
+    ]
+
+    monkeypatch.setattr(
+        slack_conversations,
+        "get_admin_session",
+        lambda: _FakeAdminSessionContext([users, [], []]),
+    )
+    async def _fake_fetch_slack_user_info(organization_id: str, slack_user_id: str):
+        return None
+
+    monkeypatch.setattr(
+        slack_conversations,
+        "_fetch_slack_user_info",
+        _fake_fetch_slack_user_info,
+    )
+    guest_user = SimpleNamespace(id=guest_id, is_guest=True)
+    async def _fake_resolve_guest(_organization_id: str):
+        return guest_user
+
+    monkeypatch.setattr(slack_conversations, "_resolve_guest_user_for_org", _fake_resolve_guest)
+
+    resolved = asyncio.run(
+        slack_conversations.resolve_revtops_user_for_slack_actor(
+            organization_id=org_id,
+            slack_user_id="U404",
+        )
+    )
+
+    assert resolved is not None
+    assert resolved.id == guest_id
+
+
+def test_resolve_revtops_user_falls_back_to_guest_for_empty_slack_id(monkeypatch):
+    org_id = "11111111-1111-1111-1111-111111111111"
+    guest_id = UUID("33333333-3333-3333-3333-333333333333")
+    guest_user = SimpleNamespace(id=guest_id, is_guest=True)
+    async def _fake_resolve_guest(_organization_id: str):
+        return guest_user
+
+    monkeypatch.setattr(slack_conversations, "_resolve_guest_user_for_org", _fake_resolve_guest)
+
+    resolved = asyncio.run(
+        slack_conversations.resolve_revtops_user_for_slack_actor(
+            organization_id=org_id,
+            slack_user_id="   ",
+        )
+    )
+
+    assert resolved is not None
+    assert resolved.id == guest_id
+
+
 def test_merge_participating_user_ids_adds_unique_uuid():
     existing = [UUID("11111111-1111-1111-1111-111111111111")]
 
@@ -485,7 +543,7 @@ def test_process_slack_thread_reply_applies_speaker_and_global_handoff_before_ot
     assert events.index("add_reaction") < events.index("find_or_create:U_NEW:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
 
-def test_process_slack_mention_clears_active_user_on_unresolved_speaker_handoff(monkeypatch):
+def test_process_slack_mention_returns_identity_unmapped_for_unresolved_speaker_handoff(monkeypatch):
     events: list[str] = []
     existing_conversation = SimpleNamespace(
         id=UUID("99999999-9999-9999-9999-999999999999"),
@@ -509,6 +567,9 @@ def test_process_slack_mention_clears_active_user_on_unresolved_speaker_handoff(
 
         async def remove_reaction(self, channel: str, timestamp: str):
             events.append("remove_reaction")
+
+        async def post_message(self, channel: str, text: str, thread_ts: str | None = None):
+            events.append(f"post_message:{thread_ts}")
 
     async def _fake_find_org(_team_id: str):
         return "11111111-1111-1111-1111-111111111111"
@@ -555,6 +616,5 @@ def test_process_slack_mention_clears_active_user_on_unresolved_speaker_handoff(
         )
     )
 
-    assert result["status"] == "success"
-    assert "find_or_create:U_NEW:None:True" in events
-    assert "stream_user_id:None" in events
+    assert result == {"status": "error", "error": "identity_unmapped"}
+    assert "post_message:111.222" in events
