@@ -561,7 +561,7 @@ async def trigger_workflow(
         trigger_data=None,
         conversation_id=conversation_id,
         organization_id=organization_id,
-        str(trigger_user_uuid) if trigger_user_uuid else None,
+        triggered_by_user_id=str(trigger_user_uuid) if trigger_user_uuid else None,
     )
 
     return TriggerWorkflowResponseV2(
