@@ -96,8 +96,9 @@ interface TriggerResponse {
   conversation_id?: string;
 }
 
-async function triggerWorkflow(orgId: string, workflowId: string): Promise<TriggerResponse> {
-  const { data, error } = await apiRequest<TriggerResponse>(`/workflows/${orgId}/${workflowId}/trigger`, {
+async function triggerWorkflow(orgId: string, workflowId: string, userId?: string): Promise<TriggerResponse> {
+  const triggerQuery = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
+  const { data, error } = await apiRequest<TriggerResponse>(`/workflows/${orgId}/${workflowId}/trigger${triggerQuery}`, {
     method: 'POST',
   });
   if (error || !data) throw new Error(error ?? 'Failed to trigger workflow');
@@ -1211,7 +1212,7 @@ export function Workflows(): JSX.Element {
   // Mutations
   const triggerMutation = useMutation({
     mutationFn: ({ workflowId }: { workflowId: string }) =>
-      triggerWorkflow(organization?.id ?? '', workflowId),
+      triggerWorkflow(organization?.id ?? '', workflowId, user?.id),
     onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: ['workflow-runs'] });
       
