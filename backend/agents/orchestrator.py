@@ -619,7 +619,7 @@ goes into the `memories` table as free-text.
 **When to use structured fields vs. memories:**
 - Job title → structured column (`org_members.title`)
 - Reporting relationship → structured column (`org_members.reports_to_membership_id`)
-- Phone number → `run_sql_write` to UPDATE users SET phone_number (E.164 format, e.g. +14155551234)
+- Phone number → store as `manage_memory` (never write to `users` table from agent tools)
 - Everything else (preferences, responsibilities, projects, company facts) → `manage_memory`
 
 ### When and what to ask
@@ -641,7 +641,7 @@ Use `manage_memory` with the appropriate `entity_type` to persist what you learn
 (check the Profile Completeness section), ask for it in a natural way — explain it allows you
 to send them urgent SMS alerts when a workflow detects something important. If they decline,
 save a memory with `entity_type="user"`: "User declined to share phone number" so you never ask again.
-Use `run_sql_write` (not `manage_memory`) to store the actual number: `UPDATE users SET phone_number = '+14155551234' WHERE id = '...'`. Always use E.164 format — for US 10-digit numbers, prepend +1.
+Store phone-sharing preferences using `manage_memory`; agent tools must not write to the `users` table. If a user asks to update account profile fields, direct them to profile settings.
 
 **Rules**:
 - Never ask context-gathering questions in group channels, thread replies, or workflow executions.

@@ -62,7 +62,7 @@ def test_link_identity_links_related_slack_mappings(monkeypatch):
     selected_mapping_id = UUID("44444444-4444-4444-4444-444444444444")
     related_mapping_id = UUID("55555555-5555-5555-5555-555555555555")
 
-    target_user = SimpleNamespace(id=target_user_id, organization_id=org_id, email="owner@acme.com")
+    target_user = SimpleNamespace(id=target_user_id, organization_id=org_id, email="owner@acme.com", is_guest=False)
     selected_mapping = SimpleNamespace(
         id=selected_mapping_id,
         organization_id=org_id,
@@ -117,7 +117,7 @@ def test_link_identity_non_slack_does_not_attempt_related_linking(monkeypatch):
     target_user_id = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
     selected_mapping_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
 
-    target_user = SimpleNamespace(id=target_user_id, organization_id=org_id, email="owner@acme.com")
+    target_user = SimpleNamespace(id=target_user_id, organization_id=org_id, email="owner@acme.com", is_guest=False)
     selected_mapping = SimpleNamespace(
         id=selected_mapping_id,
         organization_id=org_id,
@@ -148,3 +148,49 @@ def test_link_identity_non_slack_does_not_attempt_related_linking(monkeypatch):
     assert selected_mapping.match_source == "admin_manual_link"
     assert fake_session.execute_calls == 0
     assert fake_session.committed
+
+
+def test_link_identity_rejects_guest_target_user(monkeypatch):
+    org_id = UUID("11111111-1111-1111-1111-111111111111")
+    requester_id = UUID("22222222-2222-2222-2222-222222222222")
+    target_user_id = UUID("33333333-3333-3333-3333-333333333333")
+    selected_mapping_id = UUID("44444444-4444-4444-4444-444444444444")
+
+    target_user = SimpleNamespace(
+        id=target_user_id,
+        organization_id=org_id,
+        email="guest@acme.com",
+        is_guest=True,
+    )
+    selected_mapping = SimpleNamespace(
+        id=selected_mapping_id,
+        organization_id=org_id,
+        source="slack",
+        external_userid="U123",
+        external_email=None,
+        user_id=None,
+        revtops_email=None,
+        match_source="unmatched",
+    )
+
+    fake_session = _FakeSession(target_user, selected_mapping, [])
+    monkeypatch.setattr(auth, "get_session", lambda: _FakeSessionContext(fake_session))
+
+    try:
+        asyncio.run(
+            auth.link_identity(
+                org_id=str(org_id),
+                request=auth.LinkIdentityRequest(
+                    target_user_id=str(target_user_id),
+                    mapping_id=str(selected_mapping_id),
+                ),
+                user_id=str(requester_id),
+            )
+        )
+        raise AssertionError("Expected HTTPException")
+    except auth.HTTPException as exc:
+        assert exc.status_code == 403
+        assert "Guest user identities" in exc.detail
+
+    assert selected_mapping.user_id is None
+    assert fake_session.committed is False
