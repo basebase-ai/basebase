@@ -14,7 +14,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import type { OrganizationInfo, UserProfile } from './AppLayout';
 import { supabase } from '../lib/supabase';
 import { useAppStore } from '../store';
-import { useTeamMembers, useUpdateOrganization, useLinkIdentity, useUnlinkIdentity, useUpdateGuestUser } from '../hooks';
+import { useTeamMembers, useUpdateOrganization, useLinkIdentity, useUnlinkIdentity, useUpdateGuestUser, useRemoveTeamMember } from '../hooks';
 import type { TeamMember, IdentityMapping } from '../hooks';
 import { apiRequest } from '../lib/api';
 import { Avatar } from './Avatar';
@@ -141,12 +141,15 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
   const guestMember: TeamMember | undefined = members.find((member) => member.isGuest);
   const guestUserEnabled: boolean = Boolean(teamData?.guestUserEnabled);
   const canLinkIdentityInOrg: boolean = members.some((member) => member.id === currentUser.id);
+  const currentMember: TeamMember | undefined = members.find((member) => member.id === currentUser.id);
+  const isCurrentUserOrgAdmin: boolean = Boolean(currentMember && (currentMember.role === 'admin' || currentMember.canLoginAsAdmin));
 
   // React Query: Mutation for updating organization
   const updateOrgMutation = useUpdateOrganization();
   const linkIdentityMutation = useLinkIdentity();
   const unlinkIdentityMutation = useUnlinkIdentity();
   const updateGuestUserMutation = useUpdateGuestUser();
+  const removeTeamMemberMutation = useRemoveTeamMember();
 
   const sourceLabel = (source: string): string => {
     const labels: Record<string, string> = { slack: 'Slack', hubspot: 'HubSpot', salesforce: 'Salesforce' };
@@ -189,6 +192,25 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
     }
   };
 
+
+
+  const handleRemoveMember = async (member: TeamMember): Promise<void> => {
+    const confirmed = window.confirm(`Remove ${member.email} from this organization?`);
+    if (!confirmed) return;
+
+    try {
+      await removeTeamMemberMutation.mutateAsync({
+        orgId: organization.id,
+        userId: currentUser.id,
+        targetUserId: member.id,
+      });
+      if (expandedMemberId === member.id) {
+        setExpandedMemberId(null);
+      }
+    } catch (error) {
+      alert(`Failed to remove member: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
 
   const handleToggleGuestUser = async (): Promise<void> => {
     const nextEnabled = !guestUserEnabled;
@@ -492,6 +514,19 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                               )}
                               <p className="text-sm text-surface-400 truncate">{member.email}</p>
                             </div>
+                            {isCurrentUserOrgAdmin && member.id !== currentUser.id && !isGuest && (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void handleRemoveMember(member);
+                                }}
+                                disabled={removeTeamMemberMutation.isPending}
+                                className="text-xs px-2 py-1 rounded border border-rose-500/40 text-rose-300 hover:bg-rose-500/10 disabled:opacity-50"
+                              >
+                                Remove
+                              </button>
+                            )}
                             {/* Identity count badges */}
                             <div className="flex items-center gap-1">
                               {identities.length > 0 ? (

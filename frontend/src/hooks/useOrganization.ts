@@ -253,6 +253,50 @@ export function useUpdateGuestUser() {
 }
 
 /**
+ * Hook to remove a team member from an organization (admin action).
+ */
+export function useRemoveTeamMember() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (params: { orgId: string; userId: string; targetUserId: string }) => {
+      const { data, error } = await apiRequest<{ status: string }>(
+        `/auth/organizations/${encodeURIComponent(params.orgId)}/members/${encodeURIComponent(params.targetUserId)}?user_id=${encodeURIComponent(params.userId)}`,
+        {
+          method: 'DELETE',
+        }
+      );
+      if (error || !data) throw new Error(error ?? 'Failed to remove member');
+      return data;
+    },
+    onMutate: async (variables) => {
+      const queryKey = organizationKeys.members(variables.orgId);
+      await queryClient.cancelQueries({ queryKey });
+
+      const previousMembers = queryClient.getQueryData<TeamMembersResult>(queryKey);
+      if (previousMembers) {
+        queryClient.setQueryData<TeamMembersResult>(queryKey, {
+          ...previousMembers,
+          members: previousMembers.members.filter((member) => member.id !== variables.targetUserId),
+        });
+      }
+
+      return { previousMembers, queryKey };
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previousMembers) {
+        queryClient.setQueryData(context.queryKey, context.previousMembers);
+      }
+    },
+    onSettled: (_data, _error, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: organizationKeys.members(variables.orgId),
+      });
+    },
+  });
+}
+
+/**
  * Hook to update organization settings.
  * Automatically invalidates the organization cache on success.
  */
