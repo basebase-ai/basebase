@@ -72,22 +72,45 @@ export function AppsGallery(): JSX.Element {
 
   const handleArchive = async (appId: string): Promise<void> => {
     const resp = await apiRequest<{ status: string }>(`/apps/${appId}/archive`, { method: "POST" });
-    if (!resp.error) {
-      setApps((prev) => prev.filter((a) => a.id !== appId));
-      // Reset archived cache so next expand re-fetches
-      setArchivedFetched(false);
-      if (showArchived) {
-        void fetchArchivedApps();
+    if (resp.error) {
+      setError(resp.error);
+      return;
+    }
+
+    let archivedApp: AppItem | null = null;
+    setApps((prev) => {
+      const match = prev.find((a) => a.id === appId) ?? null;
+      if (match) {
+        archivedApp = {
+          ...match,
+          archived_at: new Date().toISOString(),
+        };
       }
+      return prev.filter((a) => a.id !== appId);
+    });
+
+    if (archivedApp) {
+      setArchivedApps((prev) => [archivedApp as AppItem, ...prev.filter((a) => a.id !== appId)]);
+      setArchivedFetched(true);
+    } else {
+      // Fallback when app was not in local state
+      setArchivedFetched(false);
+    }
+
+    if (showArchived) {
+      void fetchArchivedApps();
     }
   };
 
   const handleUnarchive = async (appId: string): Promise<void> => {
     const resp = await apiRequest<{ status: string }>(`/apps/${appId}/unarchive`, { method: "POST" });
-    if (!resp.error) {
-      setArchivedApps((prev) => prev.filter((a) => a.id !== appId));
-      void fetchApps();
+    if (resp.error) {
+      setError(resp.error);
+      return;
     }
+
+    setArchivedApps((prev) => prev.filter((a) => a.id !== appId));
+    void fetchApps();
   };
 
   const toggleArchived = (): void => {
