@@ -498,6 +498,7 @@ class TriggerWorkflowResponseV2(BaseModel):
 async def trigger_workflow(
     organization_id: str,
     workflow_id: str,
+    user_id: str | None = None,
 ) -> TriggerWorkflowResponseV2:
     """Manually trigger a workflow execution."""
     from models.conversation import Conversation
@@ -505,6 +506,7 @@ async def trigger_workflow(
     try:
         org_uuid = UUID(organization_id)
         wf_uuid = UUID(workflow_id)
+        trigger_user_uuid: UUID | None = UUID(user_id) if user_id else None
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
@@ -532,7 +534,7 @@ async def trigger_workflow(
         conversation_id: str | None = None
         if workflow.prompt and workflow.prompt.strip():
             conversation = Conversation(
-                user_id=workflow.created_by_user_id,
+                user_id=trigger_user_uuid or workflow.created_by_user_id,
                 organization_id=workflow.organization_id,
                 type="workflow",
                 workflow_id=workflow.id,
@@ -559,6 +561,7 @@ async def trigger_workflow(
         trigger_data=None,
         conversation_id=conversation_id,
         organization_id=organization_id,
+        str(trigger_user_uuid) if trigger_user_uuid else None,
     )
 
     return TriggerWorkflowResponseV2(
