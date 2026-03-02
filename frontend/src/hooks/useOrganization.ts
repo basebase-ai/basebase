@@ -33,6 +33,7 @@ export interface TeamMember {
   avatarUrl: string | null;
   jobTitle: string | null;
   status: string | null;
+  isGuest: boolean;
   canLoginAsAdmin: boolean;
   identities: IdentityMapping[];
 }
@@ -62,15 +63,18 @@ interface TeamMembersApiResponse {
     avatar_url: string | null;
     job_title: string | null;
     status: string | null;
+    is_guest: boolean;
     can_login_as_admin?: boolean;
     identities: IdentityMappingApiResponse[];
   }>;
   unmapped_identities: IdentityMappingApiResponse[];
+  guest_user_enabled: boolean;
 }
 
 export interface TeamMembersResult {
   members: TeamMember[];
   unmappedIdentities: IdentityMapping[];
+  guestUserEnabled: boolean;
 }
 
 interface UpdateOrganizationParams {
@@ -78,6 +82,12 @@ interface UpdateOrganizationParams {
   userId: string;
   name?: string;
   logoUrl?: string;
+}
+
+interface UpdateGuestUserParams {
+  orgId: string;
+  userId: string;
+  enabled: boolean;
 }
 
 // Query keys - centralized for easy invalidation
@@ -115,10 +125,12 @@ async function fetchTeamMembers(orgId: string, userId: string): Promise<TeamMemb
       avatarUrl: m.avatar_url,
       jobTitle: m.job_title ?? null,
       status: m.status ?? null,
+      isGuest: Boolean(m.is_guest),
       canLoginAsAdmin: Boolean(m.can_login_as_admin),
       identities: (m.identities ?? []).map(mapIdentity),
     })),
     unmappedIdentities: (data.unmapped_identities ?? []).map(mapIdentity),
+    guestUserEnabled: Boolean(data.guest_user_enabled),
   };
 }
 
@@ -145,6 +157,18 @@ async function updateOrganization(params: UpdateOrganizationParams): Promise<Org
   };
 }
 
+
+
+async function updateGuestUser(params: UpdateGuestUserParams): Promise<{ enabled: boolean }> {
+  const { data, error } = await apiRequest<{ enabled: boolean }>(
+    `/auth/organizations/${encodeURIComponent(params.orgId)}/guest-user?user_id=${encodeURIComponent(params.userId)}`,
+    { method: 'PATCH', body: JSON.stringify({ enabled: params.enabled }) }
+  );
+  if (error || !data) {
+    throw new Error(error ?? 'Failed to update guest user setting');
+  }
+  return data;
+}
 /**
  * Hook to fetch team members for an organization.
  * Automatically caches and refetches on window focus.
@@ -207,6 +231,19 @@ export function useUnlinkIdentity() {
       if (error || !data) throw new Error(error ?? 'Failed to unlink identity');
       return data;
     },
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: organizationKeys.members(variables.orgId),
+      });
+    },
+  });
+}
+
+export function useUpdateGuestUser() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: updateGuestUser,
     onSuccess: (_data, variables) => {
       void queryClient.invalidateQueries({
         queryKey: organizationKeys.members(variables.orgId),
