@@ -927,7 +927,19 @@ class SlackConnector(BaseConnector):
         if blocks:
             payload["blocks"] = blocks
         
-        data = await self._make_request("POST", "chat.postMessage", json_data=payload)
+        try:
+            data = await self._make_request("POST", "chat.postMessage", json_data=payload)
+        except ValueError as exc:
+            error_message = str(exc)
+            if "channel_not_found" not in error_message:
+                raise
+
+            logger.warning(
+                "[SlackConnector] chat.postMessage returned channel_not_found for channel=%s user_id=%s; retrying with org-level credentials",
+                channel,
+                self.user_id,
+            )
+            data = await self._retry_post_message_with_org_credentials(payload, original_error=exc)
         
         return {
             "ok": data.get("ok"),
@@ -935,6 +947,34 @@ class SlackConnector(BaseConnector):
             "ts": data.get("ts"),
             "message": data.get("message"),
         }
+
+    async def _retry_post_message_with_org_credentials(
+        self,
+        payload: dict[str, Any],
+        *,
+        original_error: ValueError,
+    ) -> dict[str, Any]:
+        """Retry chat.postMessage with non-user-scoped credentials for this org."""
+        original_user_id = self.user_id
+        original_token = self._token
+        original_integration = self._integration
+
+        try:
+            self.user_id = None
+            self._token = None
+            self._integration = None
+            return await self._make_request("POST", "chat.postMessage", json_data=payload)
+        except Exception:
+            logger.warning(
+                "[SlackConnector] Org-level credential retry failed for channel=%s after channel_not_found",
+                payload.get("channel"),
+                exc_info=True,
+            )
+            raise original_error
+        finally:
+            self.user_id = original_user_id
+            self._token = original_token
+            self._integration = original_integration
 
     async def _resolve_channel_for_post(self, channel: str) -> str:
         """Resolve a human channel name (e.g. #general) to a channel ID when possible."""

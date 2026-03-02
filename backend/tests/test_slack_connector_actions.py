@@ -121,3 +121,33 @@ def test_post_message_resolves_hash_channel_name(monkeypatch) -> None:
     assert captured["method"] == "POST"
     assert captured["endpoint"] == "chat.postMessage"
     assert captured["json_data"] == {"channel": "C999", "text": "hello"}
+
+
+def test_post_message_retries_with_org_credentials_on_channel_not_found(monkeypatch) -> None:
+    connector = SlackConnector(
+        organization_id="00000000-0000-0000-0000-000000000001",
+        user_id="11111111-1111-1111-1111-111111111111",
+    )
+
+    calls: list[str | None] = []
+
+    async def _fake_make_request(method: str, endpoint: str, **kwargs: object):
+        assert method == "POST"
+        assert endpoint == "chat.postMessage"
+        calls.append(connector.user_id)
+        if len(calls) == 1:
+            raise ValueError("Slack API error: channel_not_found")
+        return {
+            "ok": True,
+            "channel": str(kwargs.get("json_data", {}).get("channel")),
+            "ts": "2.3",
+            "message": {"text": "hello"},
+        }
+
+    monkeypatch.setattr(connector, "_make_request", _fake_make_request)
+
+    result = asyncio.run(connector.post_message("C0AEA4J556F", "hello"))
+
+    assert result["ok"] is True
+    assert calls == ["11111111-1111-1111-1111-111111111111", None]
+    assert connector.user_id == "11111111-1111-1111-1111-111111111111"
