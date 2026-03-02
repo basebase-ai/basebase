@@ -1,7 +1,7 @@
 """Add org guest users and guest toggle.
 
 Revision ID: 081_org_guest_user
-Revises: 080_app_archived_at
+Revises: 081_workflow_archive
 Create Date: 2026-03-01
 
 """
@@ -17,7 +17,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision: str = "081_org_guest_user"
-down_revision: Union[str, None] = "080_app_archived_at"
+down_revision: Union[str, None] = "081_workflow_archive"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
