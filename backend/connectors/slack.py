@@ -925,7 +925,19 @@ class SlackConnector(BaseConnector):
         if blocks:
             payload["blocks"] = blocks
         
-        data = await self._make_request("POST", "chat.postMessage", json_data=payload)
+        try:
+            data = await self._make_request("POST", "chat.postMessage", json_data=payload)
+        except ValueError as exc:
+            # In orgs with multiple Slack integrations, a connector created without
+            # team_id can select the wrong workspace token. Retry once per known
+            # Slack team when Slack reports channel_not_found.
+            if "channel_not_found" not in str(exc) or self.team_id:
+                raise
+
+            data = await self._retry_post_message_across_teams(
+                payload=payload,
+                original_error=exc,
+            )
         
         return {
             "ok": data.get("ok"),
@@ -933,6 +945,77 @@ class SlackConnector(BaseConnector):
             "ts": data.get("ts"),
             "message": data.get("message"),
         }
+
+    async def _list_org_team_ids(self) -> list[str]:
+        """Return unique Slack team IDs from active org integrations."""
+        async with get_session(organization_id=self.organization_id) as session:
+            result = await session.execute(
+                select(Integration.extra_data).where(
+                    Integration.organization_id == uuid.UUID(self.organization_id),
+                    Integration.provider == self.source_system,
+                    Integration.is_active == True,  # noqa: E712
+                )
+            )
+            rows = result.all()
+
+        team_ids: list[str] = []
+        for row in rows:
+            extra_data = row[0] or {}
+            if not isinstance(extra_data, dict):
+                continue
+            team_id = str(extra_data.get("team_id") or "").strip()
+            if team_id and team_id not in team_ids:
+                team_ids.append(team_id)
+        return team_ids
+
+    async def _retry_post_message_across_teams(
+        self,
+        payload: dict[str, Any],
+        original_error: ValueError,
+    ) -> dict[str, Any]:
+        """Retry posting message using each active Slack team token for this org."""
+        team_ids = await self._list_org_team_ids()
+        if len(team_ids) <= 1:
+            raise original_error
+
+        logger.warning(
+            "[SlackConnector] channel_not_found for channel=%s org=%s; retrying across %d Slack team token(s)",
+            payload.get("channel"),
+            self.organization_id,
+            len(team_ids),
+        )
+
+        last_error: ValueError = original_error
+        original_team_id = self.team_id
+        original_token = self._token
+        original_integration = self._integration
+        for candidate_team_id in team_ids:
+            if candidate_team_id == original_team_id:
+                continue
+
+            try:
+                self.team_id = candidate_team_id
+                self._token = None
+                self._integration = None
+                logger.info(
+                    "[SlackConnector] Retrying chat.postMessage with team_id=%s channel=%s",
+                    candidate_team_id,
+                    payload.get("channel"),
+                )
+                return await self._make_request("POST", "chat.postMessage", json_data=payload)
+            except ValueError as exc:
+                last_error = exc
+                logger.warning(
+                    "[SlackConnector] Retry failed for team_id=%s channel=%s error=%s",
+                    candidate_team_id,
+                    payload.get("channel"),
+                    exc,
+                )
+
+        self.team_id = original_team_id
+        self._token = original_token
+        self._integration = original_integration
+        raise last_error
 
     async def download_file(self, url_private: str) -> bytes:
         """

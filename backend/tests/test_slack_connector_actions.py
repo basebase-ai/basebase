@@ -71,3 +71,48 @@ def test_get_oauth_token_uses_inferred_team_bot_install(monkeypatch) -> None:
 
     assert token == "xoxb-bot-token"
     assert connector.team_id == "T999"
+
+
+def test_post_message_retries_across_team_ids_on_channel_not_found(monkeypatch) -> None:
+    connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
+    attempts: list[str] = []
+    connector.team_id = None
+
+    async def _fake_list_org_team_ids() -> list[str]:
+        return ["T_WRONG", "T_RIGHT"]
+
+    async def _fake_make_request(_method: str, endpoint: str, *, json_data=None, params=None):
+        assert endpoint == "chat.postMessage"
+        attempts.append(str(connector.team_id))
+        if connector.team_id != "T_RIGHT":
+            raise ValueError("Slack API error: channel_not_found")
+        return {"ok": True, "channel": "C0AEA4J556F", "ts": "123.456", "message": {"text": "ok"}}
+
+    monkeypatch.setattr(connector, "_list_org_team_ids", _fake_list_org_team_ids)
+    monkeypatch.setattr(connector, "_make_request", _fake_make_request)
+
+    result = asyncio.run(connector.post_message("C0AEA4J556F", "hello"))
+
+    assert result["ok"] is True
+    assert result["channel"] == "C0AEA4J556F"
+    assert attempts == ["None", "T_WRONG", "T_RIGHT"]
+    assert connector.team_id == "T_RIGHT"
+
+
+def test_post_message_no_retry_when_team_id_already_set(monkeypatch) -> None:
+    connector = SlackConnector(
+        organization_id="00000000-0000-0000-0000-000000000001",
+        team_id="T123",
+    )
+
+    async def _fake_make_request(_method: str, _endpoint: str, *, json_data=None, params=None):
+        raise ValueError("Slack API error: channel_not_found")
+
+    monkeypatch.setattr(connector, "_make_request", _fake_make_request)
+
+    try:
+        asyncio.run(connector.post_message("C0AEA4J556F", "hello"))
+    except ValueError as exc:
+        assert "channel_not_found" in str(exc)
+    else:
+        raise AssertionError("Expected channel_not_found to be raised")
