@@ -6,7 +6,7 @@ Provides CRUD operations for user-defined workflow automations.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
 
@@ -285,8 +285,15 @@ async def archive_workflow(organization_id: str, workflow_id: str) -> dict[str, 
                 detail="Cannot archive an active scheduled workflow or a workflow with running/pending scheduled/manual runs",
             )
 
-        workflow.archived_at = datetime.now(timezone.utc)
+        # workflows.archived_at is stored as a timestamp without timezone in Postgres.
+        # Use a naive UTC datetime to avoid asyncpg offset-naive/offset-aware coercion errors.
+        workflow.archived_at = datetime.utcnow()
         workflow.updated_at = datetime.utcnow()
+        logger.info(
+            "[Workflows API] Archived workflow %s at %s",
+            workflow.id,
+            workflow.archived_at.isoformat(),
+        )
         await session.commit()
 
     return {"status": "ok"}
@@ -317,6 +324,7 @@ async def unarchive_workflow(organization_id: str, workflow_id: str) -> dict[str
 
         workflow.archived_at = None
         workflow.updated_at = datetime.utcnow()
+        logger.info("[Workflows API] Unarchived workflow %s", workflow.id)
         await session.commit()
 
     return {"status": "ok"}
