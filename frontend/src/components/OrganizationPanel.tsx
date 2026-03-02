@@ -478,7 +478,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                                 </span>
                                 {isAdmin && (
                                   <span className="px-2 py-0.5 text-xs font-medium bg-primary-500/20 text-primary-400 rounded-full">
-                                    (admin)
+                                    admin
                                   </span>
                                 )}
                                 {isGuest && (
