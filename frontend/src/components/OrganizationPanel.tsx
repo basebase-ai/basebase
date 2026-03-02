@@ -195,7 +195,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
 
 
   const handleRemoveMember = async (member: TeamMember): Promise<void> => {
-    const confirmed = window.confirm(`Remove ${member.email} from this organization?`);
+    const confirmed = window.confirm(`Remove ${member.email} from this organization? This will deactivate their membership and unlink all connected identities.`);
     if (!confirmed) return;
 
     try {

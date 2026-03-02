@@ -1501,8 +1501,9 @@ async def remove_organization_member(
     target_user_id: str,
     user_id: Optional[str] = None,
 ) -> dict[str, str]:
-    """Remove a member from an organization (deactivate membership)."""
+    """Remove a member from an organization, and unlink all identities from that user."""
     from models.org_member import OrgMember
+    from models.slack_user_mapping import SlackUserMapping
 
     if not user_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -1515,7 +1516,7 @@ async def remove_organization_member(
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
     async with get_admin_session() as session:
-        # Verify requester is a member of the org
+        # Verify requester is an active admin member of the org
         result = await session.execute(
             select(OrgMember).where(
                 OrgMember.user_id == requester_uuid,
@@ -1524,8 +1525,8 @@ async def remove_organization_member(
             )
         )
         requester_membership: Optional[OrgMember] = result.scalar_one_or_none()
-        if not requester_membership:
-            raise HTTPException(status_code=403, detail="Not authorized")
+        if not requester_membership or requester_membership.role != "admin":
+            raise HTTPException(status_code=403, detail="Only organization admins can remove members")
 
         # Find target membership
         result = await session.execute(
@@ -1538,11 +1539,37 @@ async def remove_organization_member(
         if not target_membership:
             raise HTTPException(status_code=404, detail="Member not found")
 
+        # Load target user for guest-user guard and active-org cleanup
+        target_user: Optional[User] = await session.get(User, target_uuid)
+        if not target_user:
+            raise HTTPException(status_code=404, detail="Member not found")
+        if target_user.is_guest:
+            raise HTTPException(status_code=403, detail="Guest user cannot be removed")
+
         target_membership.status = "deactivated"
 
+        # Unlink all identity mappings associated to the removed user in this org
+        identities_result = await session.execute(
+            select(SlackUserMapping).where(
+                SlackUserMapping.organization_id == org_uuid,
+                SlackUserMapping.user_id == target_uuid,
+            )
+        )
+        linked_mappings: list[SlackUserMapping] = list(identities_result.scalars().all())
+        for mapping in linked_mappings:
+            mapping.user_id = None
+            mapping.revtops_email = None
+            mapping.match_source = "manual_unlink"
+
+        logger.info(
+            "Removing org member user=%s from org=%s and unlinking %s identities",
+            target_uuid,
+            org_uuid,
+            len(linked_mappings),
+        )
+
         # If this was the user's active org, clear it
-        target_user: Optional[User] = await session.get(User, target_uuid)
-        if target_user and target_user.organization_id == org_uuid:
+        if target_user.organization_id == org_uuid:
             target_user.organization_id = None
 
         await session.commit()
