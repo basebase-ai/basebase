@@ -14,7 +14,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import type { OrganizationInfo, UserProfile } from './AppLayout';
 import { supabase } from '../lib/supabase';
 import { useAppStore } from '../store';
-import { useTeamMembers, useUpdateOrganization, useLinkIdentity, useUnlinkIdentity, useUpdateGuestUser } from '../hooks';
+import { useTeamMembers, useUpdateOrganization, useLinkIdentity, useUnlinkIdentity, useUpdateGuestUser, useDeleteOrganization } from '../hooks';
 import type { TeamMember, IdentityMapping } from '../hooks';
 import { apiRequest } from '../lib/api';
 import { Avatar } from './Avatar';
@@ -155,6 +155,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
   const linkIdentityMutation = useLinkIdentity();
   const unlinkIdentityMutation = useUnlinkIdentity();
   const updateGuestUserMutation = useUpdateGuestUser();
+  const deleteOrganizationMutation = useDeleteOrganization();
 
   const sourceLabel = (source: string): string => {
     const labels: Record<string, string> = { slack: 'Slack', hubspot: 'HubSpot', salesforce: 'Salesforce' };
@@ -266,6 +267,32 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
       setTimeout(() => setSettingsSaved(false), 2000);
     } catch (error) {
       alert(`Failed to save: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const currentMember = members.find((member) => member.id === currentUser.id);
+  const isOrgAdmin = currentMember?.role === 'admin';
+
+  const handleDeleteOrganization = async (): Promise<void> => {
+    if (!isOrgAdmin) {
+      alert("You can't do that. Only organization admins can delete organizations.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete ${organization.name}? This permanently removes the organization and its data.`
+    );
+    if (!confirmed) return;
+
+    try {
+      await deleteOrganizationMutation.mutateAsync({
+        orgId: organization.id,
+        userId: currentUser.id,
+      });
+      alert('Organization deleted. You will be signed out.');
+      window.location.reload();
+    } catch (error) {
+      alert(`Failed to delete organization: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -950,8 +977,12 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
               {/* Danger Zone */}
               <div className="pt-6 border-t border-surface-800">
                 <h3 className="text-sm font-medium text-red-400 mb-3">Danger zone</h3>
-                <button className="px-4 py-2 text-sm font-medium text-red-400 border border-red-500/30 hover:bg-red-500/10 rounded-lg transition-colors">
-                  Delete organization
+                <button
+                  onClick={() => void handleDeleteOrganization()}
+                  disabled={deleteOrganizationMutation.isPending}
+                  className="px-4 py-2 text-sm font-medium text-red-400 border border-red-500/30 hover:bg-red-500/10 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {deleteOrganizationMutation.isPending ? 'Deleting...' : 'Delete organization'}
                 </button>
               </div>
             </div>
