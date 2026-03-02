@@ -1198,7 +1198,6 @@ export function Workflows(): JSX.Element {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['workflows'] });
       void queryClient.invalidateQueries({ queryKey: ['workflows', organization?.id, 'archived'] });
-      setSelectedWorkflow(null);
     },
   });
 
@@ -1417,7 +1416,11 @@ export function Workflows(): JSX.Element {
             toggleMutation.mutate({ workflowId: selectedWorkflow.id, enabled });
           }}
           onEdit={() => openEditModal(selectedWorkflow)}
-          onArchive={() => archiveMutation.mutate({ workflowId: selectedWorkflow.id })}
+          onArchive={() => {
+            const workflowId = selectedWorkflow.id;
+            setSelectedWorkflow(null);
+            archiveMutation.mutate({ workflowId });
+          }}
           isToggling={toggleMutation.isPending}
           isTriggering={triggerMutation.isPending}
         />
