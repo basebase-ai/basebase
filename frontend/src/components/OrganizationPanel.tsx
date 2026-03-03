@@ -70,6 +70,7 @@ interface OrganizationPanelProps {
 
 export function OrganizationPanel({ organization, currentUser, initialTab = 'team', onClose }: OrganizationPanelProps): JSX.Element {
   const setOrganization = useAppStore((state) => state.setOrganization);
+  const logout = useAppStore((state) => state.logout);
   const [activeTab, setActiveTab] = useState<'team' | 'billing' | 'settings'>(initialTab);
 
   useEffect(() => {
@@ -314,7 +315,18 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
   const isOrgAdmin = currentMember?.role === 'admin';
 
   const handleDeleteOrganization = async (): Promise<void> => {
-    if (!isOrgAdmin) {
+    console.info('[OrganizationPanel] Delete organization clicked', {
+      organizationId: organization.id,
+      userId: currentUser.id,
+      isOrgAdmin,
+      isGlobalAdmin,
+    });
+
+    if (!canAdministerOrg) {
+      console.warn('[OrganizationPanel] Delete organization blocked: user is not an org admin/global admin', {
+        organizationId: organization.id,
+        userId: currentUser.id,
+      });
       alert("You can't do that. Only organization admins can delete organizations.");
       return;
     }
@@ -325,13 +337,32 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
     if (!confirmed) return;
 
     try {
+      console.info('[OrganizationPanel] Confirmed organization deletion', {
+        organizationId: organization.id,
+        userId: currentUser.id,
+      });
       await deleteOrganizationMutation.mutateAsync({
         orgId: organization.id,
         userId: currentUser.id,
       });
+
+      console.info('[OrganizationPanel] Organization deleted; signing out user', {
+        organizationId: organization.id,
+        userId: currentUser.id,
+      });
+      await supabase.auth.signOut();
+      logout();
+      localStorage.clear();
+      sessionStorage.clear();
+
       alert('Organization deleted. You will be signed out.');
-      window.location.reload();
+      window.location.href = '/auth';
     } catch (error) {
+      console.error('[OrganizationPanel] Failed to delete organization', {
+        organizationId: organization.id,
+        userId: currentUser.id,
+        error,
+      });
       alert(`Failed to delete organization: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
