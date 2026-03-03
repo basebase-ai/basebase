@@ -374,10 +374,8 @@ export function DataSources(): JSX.Element {
           setSyncingProviders((prev) => new Set(prev).add(data.provider as string));
         }
         
-        // If sync completed, refresh integrations to get final data
-        if (data.status === 'completed') {
+        if (data.status === 'completed' || data.status === 'failed') {
           void fetchIntegrations();
-          // Clear the progress for this provider after a short delay
           setTimeout(() => {
             setSyncProgress((prev) => {
               const next = { ...prev };
