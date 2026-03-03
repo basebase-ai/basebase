@@ -636,8 +636,9 @@ export function AdminPanel(): JSX.Element {
       await fetchOrganizations();
       await fetchUserOrganizations();
       const remainingOrgs: { id: string }[] = useAppStore.getState().organizations;
-      if (remainingOrgs.length > 0) {
-        await switchActiveOrganization(remainingOrgs[0].id);
+      const nextOrg: { id: string } | undefined = remainingOrgs[0];
+      if (nextOrg) {
+        await switchActiveOrganization(nextOrg.id);
       } else {
         await import('../lib/supabase').then((m) => m.supabase.auth.signOut());
         useAppStore.getState().logout();

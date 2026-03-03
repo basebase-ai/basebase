@@ -351,8 +351,9 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
       await fetchUserOrganizations();
       const remainingOrgs: { id: string; name: string; logoUrl: string | null }[] =
         useAppStore.getState().organizations;
-      if (remainingOrgs.length > 0) {
-        await switchActiveOrganization(remainingOrgs[0].id);
+      const nextOrg: { id: string } | undefined = remainingOrgs[0];
+      if (nextOrg) {
+        await switchActiveOrganization(nextOrg.id);
         alert('Organization deleted.');
       } else {
         await supabase.auth.signOut();
@@ -369,8 +370,9 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
         onClose();
         await fetchUserOrganizations();
         const remainingOrgs: { id: string }[] = useAppStore.getState().organizations;
-        if (remainingOrgs.length > 0) {
-          await switchActiveOrganization(remainingOrgs[0].id);
+        const nextOrg: { id: string } | undefined = remainingOrgs[0];
+        if (nextOrg) {
+          await switchActiveOrganization(nextOrg.id);
           alert('Organization was already removed.');
         } else {
           await supabase.auth.signOut();
