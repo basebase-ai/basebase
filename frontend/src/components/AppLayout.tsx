@@ -962,6 +962,14 @@ export function AppLayout({ onLogout }: AppLayoutProps): JSX.Element {
     setCurrentChatId(null);
   }, [setCurrentChatId]);
 
+  const isGlobalAdmin: boolean = user?.roles.includes('global_admin') ?? false;
+
+  useEffect(() => {
+    if (currentView === 'admin' && !isGlobalAdmin) {
+      setCurrentView('home');
+    }
+  }, [currentView, isGlobalAdmin, setCurrentView]);
+
   // Guard against missing user/org (shouldn't happen, but be safe)
   if (!user || !organization) {
     return (
@@ -978,7 +986,7 @@ export function AppLayout({ onLogout }: AppLayoutProps): JSX.Element {
     'data-sources': 'Connectors',
     workflows: 'Workflows',
     memory: 'Memory',
-    admin: 'Admin',
+    admin: 'Global Admin',
     'pending-changes': 'Pending Changes',
   };
 
@@ -1126,7 +1134,7 @@ export function AppLayout({ onLogout }: AppLayoutProps): JSX.Element {
             <AppFullView appId={currentAppId} />
           </Suspense>
         )}
-        {currentView === 'admin' && (
+        {currentView === 'admin' && isGlobalAdmin && (
           <AdminPanel />
         )}
         {currentView === 'pending-changes' && (
