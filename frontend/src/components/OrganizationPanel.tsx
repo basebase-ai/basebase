@@ -460,7 +460,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                                   </span>
                                 )}
                                 {isGuest && (
-                                  <span className="px-2 py-0.5 text-xs font-medium bg-amber-500/20 text-amber-300 rounded-full">
+                                  <span className="px-2 py-0.5 text-xs font-medium bg-sky-500/20 text-sky-200 rounded-full">
                                     guest
                                   </span>
                                 )}
