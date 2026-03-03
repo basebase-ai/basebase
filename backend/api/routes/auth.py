@@ -1915,6 +1915,18 @@ async def delete_organization(
             "org_members",
         )
         for table_name in org_scoped_tables:
+            table_exists_result = await session.execute(
+                text("SELECT to_regclass(:table_name)"),
+                {"table_name": f"public.{table_name}"},
+            )
+            if table_exists_result.scalar_one_or_none() is None:
+                logger.warning(
+                    "Skipping delete for missing org-scoped table table=%s org=%s",
+                    table_name,
+                    org_uuid,
+                )
+                continue
+
             await session.execute(
                 text(f"DELETE FROM {table_name} WHERE organization_id = :org_id"),
                 {"org_id": org_uuid},

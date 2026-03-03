@@ -33,6 +33,11 @@ class _FakeSession:
 
         sql = str(query)
         self.statements.append((sql, params))
+        if "SELECT to_regclass(:table_name)" in sql:
+            table_name = (params or {}).get("table_name", "")
+            if table_name.endswith("crm_operations"):
+                return _ScalarResult(None)
+            return _ScalarResult(table_name)
         if "DELETE FROM users WHERE organization_id = :org_id AND is_guest IS TRUE" in sql:
             return _ExecResult(rowcount=1)
         if "UPDATE users SET organization_id = NULL WHERE organization_id = :org_id AND is_guest IS NOT TRUE" in sql:
@@ -80,3 +85,5 @@ def test_delete_organization_deletes_guest_users_before_detach(monkeypatch):
     guest_delete_ix = next(i for i, sql in enumerate(sql_statements) if "DELETE FROM users WHERE organization_id = :org_id AND is_guest IS TRUE" in sql)
     detach_ix = next(i for i, sql in enumerate(sql_statements) if "UPDATE users SET organization_id = NULL WHERE organization_id = :org_id AND is_guest IS NOT TRUE" in sql)
     assert guest_delete_ix < detach_ix
+    assert not any("DELETE FROM crm_operations" in sql for sql in sql_statements)
+    assert any("DELETE FROM pending_operations" in sql for sql in sql_statements)
