@@ -28,6 +28,7 @@ from fastapi.responses import RedirectResponse
 from api.auth_middleware import AuthContext, get_current_auth
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select, text
+from sqlalchemy.exc import IntegrityError
 
 from config import settings, get_nango_integration_id, get_provider_sharing_defaults, PROVIDER_SHARING_DEFAULTS
 from models.database import get_admin_session, get_session
@@ -836,7 +837,45 @@ async def sync_user(request: SyncUserRequest) -> SyncUserResponse:
         )
         session.add(new_user)
         global_commands = await _set_user_global_commands(session, new_user, request.agent_global_commands)
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            existing = await session.get(User, user_uuid)
+            if not existing:
+                existing_by_email = await session.execute(
+                    select(User).where(User.email == request.email)
+                )
+                existing = existing_by_email.scalar_one_or_none()
+            if existing:
+                existing.last_login = datetime.utcnow()
+                await session.commit()
+                await session.refresh(existing)
+                org_data_retry: Optional[SyncOrganizationData] = None
+                if existing.organization_id:
+                    org_retry = await session.get(Organization, existing.organization_id)
+                    if org_retry:
+                        _sub_ok = (org_retry.subscription_status or "") in ("active", "trialing")
+                        org_data_retry = SyncOrganizationData(
+                            id=str(org_retry.id),
+                            name=org_retry.name,
+                            logo_url=org_retry.logo_url,
+                            subscription_required=not _sub_ok,
+                        )
+                return SyncUserResponse(
+                    id=str(existing.id),
+                    email=existing.email,
+                    name=existing.name,
+                    avatar_url=existing.avatar_url,
+                    agent_global_commands=await _get_user_global_commands(session, existing),
+                    phone_number=existing.phone_number,
+                    job_title=None,
+                    organization_id=str(existing.organization_id) if existing.organization_id else None,
+                    organization=org_data_retry,
+                    status=existing.status,
+                    roles=existing.roles or [],
+                )
+            raise HTTPException(status_code=500, detail="User creation conflict; please retry")
         await session.refresh(new_user)
 
         return SyncUserResponse(
@@ -910,6 +949,30 @@ async def create_organization(
                 company_summary=existing.company_summary,
             )
 
+        # Dedup: if this user already owns an org with the same email_domain, return it
+        if creator_user_id and request.email_domain:
+            from models.org_member import OrgMember
+
+            existing_by_domain = await session.execute(
+                select(Organization)
+                .join(OrgMember, OrgMember.organization_id == Organization.id)
+                .where(
+                    Organization.email_domain == request.email_domain,
+                    OrgMember.user_id == creator_user_id,
+                    OrgMember.status == "active",
+                )
+                .limit(1)
+            )
+            dup: Organization | None = existing_by_domain.scalar_one_or_none()
+            if dup:
+                return OrganizationResponse(
+                    id=str(dup.id),
+                    name=dup.name,
+                    email_domain=dup.email_domain,
+                    logo_url=dup.logo_url,
+                    company_summary=dup.company_summary,
+                )
+
         # Create new organization with free tier auto-enrolled
         now = datetime.now(timezone.utc)
         new_org = Organization(
@@ -969,6 +1032,7 @@ async def create_organization(
                     organization_id=org_uuid,
                     provider="web_search",
                     user_id=creator_user_id,
+                    scope="user",
                     nango_connection_id="builtin",
                     connected_by_user_id=creator_user_id,
                     is_active=True,
@@ -1960,29 +2024,7 @@ async def delete_organization(
 
         logger.warning("Deleting organization org=%s requested_by=%s", org_uuid, auth.user_id)
 
-        # Delete guest users first: guest rows forbid organization_id updates.
-        deleted_guest_users = await session.execute(
-            text("DELETE FROM users WHERE organization_id = :org_id AND is_guest IS TRUE"),
-            {"org_id": org_uuid},
-        )
-        logger.info(
-            "Deleted guest users for organization org=%s count=%s",
-            org_uuid,
-            deleted_guest_users.rowcount,
-        )
-
-        # Remove org links from non-guest users so organization FK deletion succeeds.
-        detached_users = await session.execute(
-            text("UPDATE users SET organization_id = NULL WHERE organization_id = :org_id AND is_guest IS NOT TRUE"),
-            {"org_id": org_uuid},
-        )
-        logger.info(
-            "Detached non-guest users from organization org=%s count=%s",
-            org_uuid,
-            detached_users.rowcount,
-        )
-
-        # Delete org-scoped records in a deterministic order to avoid lock contention.
+        # Delete org-scoped records first (before touching users) in dependency order.
         org_scoped_tables: tuple[str, ...] = (
             "user_mappings_for_identity",
             "slack_bot_installs",
@@ -2006,8 +2048,8 @@ async def delete_organization(
             "tracker_projects",
             "tracker_teams",
             "meetings",
-            "workflows",
             "workflow_runs",
+            "workflows",
             "pending_operations",
             "agent_tasks",
             "bulk_operations",
@@ -2034,6 +2076,26 @@ async def delete_organization(
                 text(f"DELETE FROM {table_name} WHERE organization_id = :org_id"),
                 {"org_id": org_uuid},
             )
+
+        deleted_guest_users = await session.execute(
+            text("DELETE FROM users WHERE organization_id = :org_id AND is_guest IS TRUE"),
+            {"org_id": org_uuid},
+        )
+        logger.info(
+            "Deleted guest users for organization org=%s count=%s",
+            org_uuid,
+            deleted_guest_users.rowcount,
+        )
+
+        detached_users = await session.execute(
+            text("UPDATE users SET organization_id = NULL WHERE organization_id = :org_id AND is_guest IS NOT TRUE"),
+            {"org_id": org_uuid},
+        )
+        logger.info(
+            "Detached non-guest users from organization org=%s count=%s",
+            org_uuid,
+            detached_users.rowcount,
+        )
 
         await session.delete(org)
         await session.commit()
