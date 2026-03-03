@@ -1163,9 +1163,10 @@ export function DataSources(): JSX.Element {
 
       return (
         <div className="mt-4 pt-4 border-t border-surface-700/50 space-y-3">
-          <p className="text-xs text-surface-400">
-            Invite @Penny to more channels in Slack to sync more messages to Basebase.
-          </p>
+          <div className="text-xs text-surface-400 space-y-1">
+            <p><strong className="text-surface-300">To sync:</strong> Invite @Penny to channels—type <code className="text-surface-300">/invite @Penny</code> or add her from channel details.</p>
+            <p><strong className="text-surface-300">To chat:</strong> @mention Penny in any channel she’s in; she’ll reply in the thread.</p>
+          </div>
           <div className="flex items-center justify-between">
             <div>
               <h4 className="text-sm font-semibold text-surface-100">Slack Identity</h4>

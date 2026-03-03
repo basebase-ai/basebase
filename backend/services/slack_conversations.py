@@ -2253,6 +2253,7 @@ async def process_slack_mention(
     user_id: str,
     message_text: str,
     thread_ts: str,
+    event_ts: str,
     files: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
@@ -2265,7 +2266,8 @@ async def process_slack_mention(
         channel_id: Slack channel ID where mention occurred
         user_id: Slack user ID who mentioned the bot
         message_text: Message text (with @mention stripped)
-        thread_ts: Thread timestamp to reply in
+        thread_ts: Thread timestamp to reply in (parent message ts for thread replies)
+        event_ts: Timestamp of the user's message (for reactions)
         files: Optional list of Slack file objects attached to the message
         
     Returns:
@@ -2287,8 +2289,8 @@ async def process_slack_mention(
     
     connector = SlackConnector(organization_id=organization_id, team_id=team_id)
 
-    # Show a reaction so the user knows the bot is working
-    await connector.add_reaction(channel=channel_id, timestamp=thread_ts)
+    # Show a reaction so the user knows the bot is working (on their message, not the thread parent)
+    await connector.add_reaction(channel=channel_id, timestamp=event_ts)
     slack_user = await _fetch_slack_user_info(
         organization_id=organization_id,
         slack_user_id=user_id,
@@ -2345,7 +2347,7 @@ async def process_slack_mention(
             organization_id,
         )
         await connector.post_message(channel=channel_id, text=_unknown_identity_message(), thread_ts=thread_ts)
-        await connector.remove_reaction(channel=channel_id, timestamp=thread_ts)
+        await connector.remove_reaction(channel=channel_id, timestamp=event_ts)
         return {"status": "error", "error": "identity_unmapped"}
     conversation = await find_or_create_conversation(
         organization_id=organization_id,
@@ -2373,7 +2375,7 @@ async def process_slack_mention(
             text="You're out of credits or don't have an active subscription. Please add a payment method in Revtops to continue.",
             thread_ts=thread_ts,
         )
-        await connector.remove_reaction(channel=channel_id, timestamp=thread_ts)
+        await connector.remove_reaction(channel=channel_id, timestamp=event_ts)
         return {"status": "error", "error": "insufficient_credits"}
 
     # Process message through orchestrator
@@ -2412,7 +2414,7 @@ async def process_slack_mention(
             thread_ts,
             total_length,
         )
-        await connector.remove_reaction(channel=channel_id, timestamp=thread_ts)
+        await connector.remove_reaction(channel=channel_id, timestamp=event_ts)
         return {
             "status": "success",
             "conversation_id": str(conversation.id),
@@ -2441,7 +2443,7 @@ async def process_slack_mention(
                 e,
             )
         finally:
-            await connector.remove_reaction(channel=channel_id, timestamp=thread_ts)
+            await connector.remove_reaction(channel=channel_id, timestamp=event_ts)
 
     asyncio.create_task(_finish_slow_response())
     return {"status": "timeout_continuing", "conversation_id": str(conversation.id)}
