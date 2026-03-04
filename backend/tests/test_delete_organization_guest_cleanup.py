@@ -75,7 +75,8 @@ def test_delete_organization_deletes_guest_users_before_detach(monkeypatch):
     fake_session = _FakeSession(membership=membership, org=org)
     monkeypatch.setattr(auth, "get_admin_session", lambda: _FakeSessionContext(fake_session))
 
-    result = asyncio.run(auth.delete_organization(org_id=str(org_id), user_id=str(requester_id)))
+    fake_auth = SimpleNamespace(user_id=requester_id, organization_id=org_id, email="admin@test.com", role="admin", is_global_admin=True)
+    result = asyncio.run(auth.delete_organization(org_id=str(org_id), auth=fake_auth))
 
     assert result["status"] == "deleted"
     assert fake_session.committed
