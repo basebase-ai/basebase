@@ -252,6 +252,11 @@ function App(): JSX.Element {
     await fetchUserOrganizations();
     const organizations = useAppStore.getState().organizations;
     if (organizations.length > 0) {
+      // If onboarding was interrupted mid-flow, resume it instead of dropping into the app.
+      if (localStorage.getItem('onboarding_incomplete') === '1') {
+        setScreen('onboarding-wizard');
+        return;
+      }
       const activeOrg = organizations.find((o) => o.isActive) ?? organizations[0];
       if (activeOrg) {
         setOrganization({
@@ -436,7 +441,7 @@ function App(): JSX.Element {
       return (
         <OnboardingWizard
           emailDomain={emailDomain}
-          onComplete={() => setScreen('app')}
+          onComplete={() => { useAppStore.getState().startNewChat(); setScreen('app'); }}
           onBack={() => void handleLogout()}
         />
       );

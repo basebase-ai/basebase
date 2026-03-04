@@ -1025,20 +1025,19 @@ async def create_organization(
                     joined_at=datetime.utcnow(),
                 )
             )
-            # Auto-enable web_search so the Company Research workflow can run
-            sharing_defaults = get_provider_sharing_defaults("web_search")
+            # Auto-enable web_search (org-wide) so the Company Research workflow can run
             session.add(
                 Integration(
                     organization_id=org_uuid,
                     provider="web_search",
                     user_id=creator_user_id,
-                    scope="user",
+                    scope="organization",
                     nango_connection_id="builtin",
                     connected_by_user_id=creator_user_id,
                     is_active=True,
-                    share_synced_data=sharing_defaults.share_synced_data,
-                    share_query_access=sharing_defaults.share_query_access,
-                    share_write_access=sharing_defaults.share_write_access,
+                    share_synced_data=True,
+                    share_query_access=True,
+                    share_write_access=True,
                     pending_sharing_config=False,
                 )
             )

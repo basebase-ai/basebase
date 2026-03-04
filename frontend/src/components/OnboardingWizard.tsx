@@ -74,8 +74,17 @@ const SKIP_MESSAGES: Record<number, string> = {
   4: "You can invite teammates later from Organization settings. Skip?",
 };
 
-export function OnboardingWizard({ emailDomain, onComplete, onBack }: OnboardingWizardProps): JSX.Element {
-  const [step, setStep] = useState<number>(1);
+export function OnboardingWizard({ emailDomain, onComplete: rawOnComplete, onBack }: OnboardingWizardProps): JSX.Element {
+  const onComplete = (): void => {
+    localStorage.removeItem('onboarding_incomplete');
+    localStorage.removeItem('onboarding_step');
+    rawOnComplete();
+  };
+  const [step, setStep] = useState<number>(() => {
+    const saved: string | null = localStorage.getItem('onboarding_step');
+    const parsed: number = saved ? parseInt(saved, 10) : 1;
+    return parsed >= 1 && parsed <= TOTAL_STEPS ? parsed : 1;
+  });
   const [orgName, setOrgName] = useState<string>('');
   const [websiteUrl, setWebsiteUrl] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
@@ -94,6 +103,11 @@ export function OnboardingWizard({ emailDomain, onComplete, onBack }: Onboarding
 
   const orgId: string | null = organization?.id ?? null;
   const userId: string | null = user?.id ?? null;
+
+  useEffect(() => {
+    localStorage.setItem('onboarding_incomplete', '1');
+    localStorage.setItem('onboarding_step', String(step));
+  }, [step]);
 
   useEffect(() => {
     if (orgId && userId && step >= 2) {
@@ -631,58 +645,42 @@ export function OnboardingWizard({ emailDomain, onComplete, onBack }: Onboarding
                   <span className="text-sm">Your whole team can use Penny &mdash; in Slack, on the web, or both</span>
                 </div>
               </div>
-              {renderFooter('Start using Penny')}
+              {renderFooter()}
             </>
           )}
 
-          {/* Step 6: Success */}
+          {/* Step 6: Success — Penny's research + launch */}
           {step === 6 && (
             <>
               <div className="text-center mb-6">
                 <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-700 mb-5 shadow-lg shadow-emerald-500/20">
                   <span className="text-3xl">&#x1F680;</span>
                 </div>
-                <h2 className="text-2xl font-bold text-white">Penny is ready for you!</h2>
+                <h2 className="text-2xl font-bold text-white">Setup complete!</h2>
                 <p className="text-surface-300 mt-2 text-sm">
-                  Everything is set up. Here&apos;s what your new AI teammate can do from day one.
+                  While you were setting up, Penny got a head start.
                 </p>
               </div>
               {companySummary ? (
-                <div className="mb-6 p-4 rounded-xl bg-primary-500/10 border border-primary-500/20">
-                  <p className="text-xs font-medium text-primary-400 uppercase tracking-wider mb-2">
-                    Penny already did some homework
-                  </p>
+                <div className="mb-6 p-5 rounded-xl bg-primary-500/10 border border-primary-500/20">
                   <p className="text-surface-200 text-[15px] leading-relaxed">
                     {companySummary}
                   </p>
                 </div>
               ) : companySummaryLoading ? (
-                <div className="mb-6 p-4 rounded-xl bg-surface-800/50 border border-surface-700 animate-pulse">
+                <div className="mb-6 p-5 rounded-xl bg-surface-800/50 border border-surface-700 animate-pulse">
                   <p className="text-surface-400 text-sm">
-                    Penny is researching your company...
+                    Penny is researching your company&hellip;
                   </p>
                 </div>
-              ) : null}
-              <div className="space-y-3 mb-6">
-                <div className="flex items-start gap-3 text-surface-300">
-                  <HiGlobeAlt className="w-5 h-5 text-primary-500 flex-shrink-0 mt-0.5" />
-                  <span className="text-sm">
-                    <span className="text-white font-medium">In Slack:</span> @mention Penny in any channel for instant answers
-                  </span>
+              ) : (
+                <div className="mb-6 p-5 rounded-xl bg-surface-800/50 border border-surface-700">
+                  <p className="text-surface-300 text-sm">
+                    Penny is ready to learn about your business. Start a conversation and she&apos;ll
+                    get up to speed fast.
+                  </p>
                 </div>
-                <div className="flex items-start gap-3 text-surface-300">
-                  <HiUserGroup className="w-5 h-5 text-primary-500 flex-shrink-0 mt-0.5" />
-                  <span className="text-sm">
-                    <span className="text-white font-medium">On the web:</span> Chat, build dashboards, and set up automations in {APP_NAME}
-                  </span>
-                </div>
-                <div className="flex items-start gap-3 text-surface-300">
-                  <HiLightningBolt className="w-5 h-5 text-primary-500 flex-shrink-0 mt-0.5" />
-                  <span className="text-sm">
-                    <span className="text-white font-medium">Try asking:</span> &ldquo;What deals are closing this month?&rdquo; or &ldquo;Summarize my meetings this week&rdquo;
-                  </span>
-                </div>
-              </div>
+              )}
               <button
                 type="button"
                 onClick={onComplete}
