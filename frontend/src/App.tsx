@@ -441,7 +441,7 @@ function App(): JSX.Element {
       return (
         <OnboardingWizard
           emailDomain={emailDomain}
-          onComplete={() => { useAppStore.getState().startNewChat(); setScreen('app'); }}
+          onComplete={() => { useAppStore.getState().startNewChat(); window.history.replaceState({}, '', '/chat'); setScreen('app'); }}
           onBack={() => void handleLogout()}
         />
       );

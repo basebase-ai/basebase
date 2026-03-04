@@ -8,7 +8,7 @@ import Nango from '@nangohq/frontend';
 import type { IconType } from 'react-icons';
 import { SiSlack, SiHubspot, SiSalesforce, SiGmail, SiGooglecalendar, SiZoom } from 'react-icons/si';
 import { HiGlobeAlt, HiUserGroup, HiDeviceMobile, HiLightningBolt } from 'react-icons/hi';
-import { APP_NAME } from '../lib/brand';
+
 import { API_BASE } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import { useAppStore, useIntegrations } from '../store';
