@@ -133,6 +133,7 @@ export function Chat({
   // Attachment state
   const [pendingAttachments, setPendingAttachments] = useState<UploadResponse[]>([]);
   const [isUploading, setIsUploading] = useState<boolean>(false);
+  const [isDragOver, setIsDragOver] = useState<boolean>(false);
   
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -796,6 +797,80 @@ export function Chat({
     }
   }, []);
 
+  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>): Promise<void> => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const imageFiles: File[] = [];
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) imageFiles.push(file);
+      }
+    }
+    if (imageFiles.length === 0) return;
+
+    // Prevent the default paste (would insert garbled text for images)
+    e.preventDefault();
+
+    setIsUploading(true);
+    try {
+      const uploads: UploadResponse[] = [];
+      for (const file of imageFiles) {
+        const { data, error } = await uploadChatFile(file);
+        if (error || !data) {
+          console.error(`[Chat] Paste upload failed:`, error);
+          continue;
+        }
+        uploads.push(data);
+      }
+      if (uploads.length > 0) {
+        setPendingAttachments((prev) => [...prev, ...uploads]);
+      }
+    } finally {
+      setIsUploading(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>): Promise<void> => {
+    e.preventDefault();
+    setIsDragOver(false);
+
+    const files = Array.from(e.dataTransfer.files).filter(
+      (f) => f.type.startsWith('image/') || f.type === 'application/pdf' || f.type.startsWith('text/') || f.name.endsWith('.csv') || f.name.endsWith('.xlsx') || f.name.endsWith('.xls') || f.name.endsWith('.json'),
+    );
+    if (files.length === 0) return;
+
+    setIsUploading(true);
+    try {
+      const uploads: UploadResponse[] = [];
+      for (const file of files) {
+        const { data, error } = await uploadChatFile(file);
+        if (error || !data) {
+          console.error(`[Chat] Drop upload failed for ${file.name}:`, error);
+          continue;
+        }
+        uploads.push(data);
+      }
+      if (uploads.length > 0) {
+        setPendingAttachments((prev) => [...prev, ...uploads]);
+      }
+    } finally {
+      setIsUploading(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>): void => {
+    e.preventDefault();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>): void => {
+    // Only hide if leaving the container (not entering a child)
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setIsDragOver(false);
+  }, []);
+
   const removeAttachment = useCallback((uploadId: string): void => {
     setPendingAttachments((prev) => prev.filter((a) => a.upload_id !== uploadId));
   }, []);
@@ -1172,9 +1247,23 @@ export function Chat({
           />
 
           {/* Single container that looks like one input box */}
-          <div className={`rounded-2xl border bg-surface-900 transition-all duration-150 ${
-            (!isConnected || agentRunning) ? 'border-surface-700 opacity-50' : 'border-surface-700 focus-within:ring-2 focus-within:ring-primary-500 focus-within:border-transparent'
-          }`}>
+          <div
+            onDrop={(e) => void handleDrop(e)}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            className={`relative rounded-2xl border bg-surface-900 transition-all duration-150 ${
+              isDragOver
+                ? 'border-primary-500 ring-2 ring-primary-500/40'
+                : (!isConnected || agentRunning) ? 'border-surface-700 opacity-50' : 'border-surface-700 focus-within:ring-2 focus-within:ring-primary-500 focus-within:border-transparent'
+            }`}
+          >
+            {/* Drop zone overlay */}
+            {isDragOver && (
+              <div className="absolute inset-0 rounded-2xl bg-primary-500/10 flex items-center justify-center z-10 pointer-events-none">
+                <span className="text-sm font-medium text-primary-400">Drop files here</span>
+              </div>
+            )}
+
             {/* Attachment cards */}
             {pendingAttachments.length > 0 && (
               <div className="flex flex-wrap gap-2 px-3 pt-3">
@@ -1201,6 +1290,7 @@ export function Chat({
                 e.target.style.height = `${Math.min(e.target.scrollHeight, 240)}px`;
               }}
               onKeyDown={handleKeyDown}
+              onPaste={(e) => void handlePaste(e)}
               placeholder={agentRunning ? 'Agent working...' : 'Ask about your pipeline...'}
               className="w-full resize-none bg-transparent text-surface-100 px-4 pt-3 pb-1 text-sm placeholder-surface-500 focus:outline-none leading-5 scrollbar-none disabled:cursor-not-allowed"
               style={{ minHeight: '36px', maxHeight: '240px' }}
