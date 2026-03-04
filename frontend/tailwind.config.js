@@ -4,7 +4,7 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Brand colors from logo.svg (#FF9F1C -> #FFB347)
+        // Brand colors (#FF9F1C -> #FFB347)
         primary: {
           50: '#fff8ed',
           100: '#ffefd3',
