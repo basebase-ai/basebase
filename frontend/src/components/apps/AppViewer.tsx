@@ -78,6 +78,7 @@ export function AppViewer({ app, onAppError }: AppViewerProps): JSX.Element {
         <SandpackAppRenderer
           appId={app.id}
           frontendCode={app.frontendCode}
+          frontendCodeCompiled={app.frontendCodeCompiled}
           onError={onAppError}
         />
       </div>
