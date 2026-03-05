@@ -1988,6 +1988,13 @@ function getErrorSummary(errorMessage: string): string {
   if (errorMessage.includes('rate_limit')) {
     return 'Rate limit reached. Please wait a moment and try again.';
   }
+  if (
+    errorMessage.includes('prompt is too long') ||
+    errorMessage.includes('context window') ||
+    (errorMessage.includes('exceeds') && errorMessage.includes('context'))
+  ) {
+    return 'This conversation is too long. Please start a new conversation.';
+  }
   if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
     return 'Request timed out. Please try again.';
   }
