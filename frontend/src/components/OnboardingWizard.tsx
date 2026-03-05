@@ -345,7 +345,14 @@ export function OnboardingWizard({ emailDomain, onComplete: rawOnComplete, onBac
     else onComplete();
   };
 
-  const renderFooter = (nextLabel?: string): JSX.Element => (
+  const renderFooter = (nextLabel?: string, continueDisabled?: boolean): JSX.Element => {
+    const step3HasConnection = integrations.some((i) =>
+      INTEGRATION_KEYS_STEP3.includes(i.provider) && i.currentUserConnected
+    );
+    const isDisabled: boolean =
+      continueDisabled ??
+      (step === 2 ? !slackConnected : step === 3 ? !step3HasConnection : step === 4 ? invitedEmails.length === 0 : false);
+    return (
     <div className="mt-8 space-y-3">
       {SKIP_MESSAGES[step] !== undefined && (
         <button
@@ -360,7 +367,8 @@ export function OnboardingWizard({ emailDomain, onComplete: rawOnComplete, onBac
         <button
           type="button"
           onClick={handleNext}
-          className="w-full btn-primary py-3.5 text-base font-semibold"
+          disabled={isDisabled}
+          className="w-full btn-primary py-3.5 text-base font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {nextLabel ?? 'Continue'}
         </button>
@@ -379,6 +387,7 @@ export function OnboardingWizard({ emailDomain, onComplete: rawOnComplete, onBac
       </div>
     </div>
   );
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
