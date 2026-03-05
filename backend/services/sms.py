@@ -20,6 +20,7 @@ async def send_sms(
     body: str,
     from_number: Optional[str] = None,
     media_urls: Optional[list[str]] = None,
+    whatsapp: bool = False,
 ) -> dict[str, str | bool]:
     """
     Send an SMS (or MMS with media) via Twilio.
@@ -64,9 +65,11 @@ async def send_sms(
         try:
             # Build form params — use list of tuples + urlencode(doseq=True)
             # so we can repeat the MediaUrl key for multiple MMS attachments
+            to_value: str = f"whatsapp:{to}" if whatsapp else to
+            from_value: str = f"whatsapp:{from_phone}" if whatsapp else from_phone
             params: list[tuple[str, str]] = [
-                ("To", to),
-                ("From", from_phone),
+                ("To", to_value),
+                ("From", from_value),
                 ("Body", body),
             ]
             # Twilio accepts up to 10 repeated MediaUrl params for MMS
