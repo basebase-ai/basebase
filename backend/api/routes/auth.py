@@ -2511,6 +2511,29 @@ async def confirm_integration(
                         "[Confirm] Could not extract Slack team_id from Nango connection for connection_id=%s",
                         nango_connection_id,
                     )
+        # Prevent an org from connecting two different Slack workspaces.
+        if request.provider == "slack":
+            _incoming_team_id: str | None = (connection_metadata or {}).get("team_id")
+            if _incoming_team_id:
+                async with get_session(organization_id=str(org_uuid)) as _check_session:
+                    _existing_slack_rows = await _check_session.execute(
+                        select(Integration.extra_data).where(
+                            Integration.organization_id == org_uuid,
+                            Integration.provider == "slack",
+                            Integration.is_active.is_(True),
+                        )
+                    )
+                    for (_extra_data_row,) in _existing_slack_rows:
+                        _existing_team: str | None = (_extra_data_row or {}).get("team_id")
+                        if _existing_team and _existing_team != _incoming_team_id:
+                            raise HTTPException(
+                                status_code=409,
+                                detail=(
+                                    "This organization is already connected to a different Slack workspace. "
+                                    "All team members must connect to the same workspace."
+                                ),
+                            )
+
         # For Slack, extract the bot token from Nango and upsert into
         # slack_bot_installs so event-handling paths can look it up by team_id.
         # With bot scopes configured in Nango, the top-level access_token is
