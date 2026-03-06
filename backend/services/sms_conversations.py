@@ -16,11 +16,14 @@ Flow:
 from __future__ import annotations
 
 import base64
+import ipaddress
 import json
 import logging
 import re
+import socket
 from datetime import datetime, timedelta
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID
 
 import httpx
@@ -139,6 +142,58 @@ async def _clear_pending_org_choice(phone: str) -> None:
 # MMS media download
 # ---------------------------------------------------------------------------
 
+def _is_safe_twilio_media_url(url: str) -> bool:
+    """
+    Validate that a Twilio media URL is safe to fetch.
+
+    - Must be HTTPS.
+    - Hostname must be under the Twilio domain.
+    - Resolved IPs must not be private/loopback/link-local/etc.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+
+    if parsed.scheme.lower() != "https":
+        return False
+
+    hostname = parsed.hostname
+    if not hostname or not hostname.endswith(".twilio.com"):
+        return False
+
+    try:
+        addrinfo_list = socket.getaddrinfo(hostname, parsed.port or 443, type=socket.SOCK_STREAM)
+    except Exception as e:
+        logger.warning("[sms_conversations] Failed to resolve Twilio media host %s: %s", hostname, e)
+        return False
+
+    for family, _, _, _, sockaddr in addrinfo_list:
+        ip_str = sockaddr[0] if family in (socket.AF_INET, socket.AF_INET6) else None
+        if not ip_str:
+            continue
+        try:
+            ip_obj = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return False
+
+        if (
+            ip_obj.is_private
+            or ip_obj.is_loopback
+            or ip_obj.is_link_local
+            or ip_obj.is_multicast
+            or ip_obj.is_reserved
+        ):
+            logger.warning(
+                "[sms_conversations] Blocking Twilio media URL %s resolving to disallowed IP %s",
+                url,
+                ip_str,
+            )
+            return False
+
+    return True
+
+
 async def _download_twilio_media(
     media_items: list[dict[str, str]],
 ) -> list[str]:
@@ -166,12 +221,11 @@ async def _download_twilio_media(
             url: str = item["url"]
             content_type: str = item.get("content_type", "application/octet-stream")
 
-            # Validate URL points to Twilio CDN (defense-in-depth against SSRF)
-            from urllib.parse import urlparse
-            parsed_url = urlparse(url)
-            if not parsed_url.hostname or not parsed_url.hostname.endswith(".twilio.com"):
+            # Validate URL points to Twilio CDN and does not resolve to private IPs
+            if not _is_safe_twilio_media_url(url):
                 logger.warning(
-                    "[sms_conversations] Skipping non-Twilio media URL: %s", url,
+                    "[sms_conversations] Skipping unsafe Twilio media URL: %s",
+                    url,
                 )
                 continue
 
