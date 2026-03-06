@@ -522,8 +522,8 @@ function ChatAccordion({
 
   if (collapsed) return null;
 
-  const sharedChats = orderedChats.filter(c => c.scope === 'shared').slice(0, 20);
-  const privateChats = orderedChats.filter(c => c.scope === 'private').slice(0, 20);
+  const sharedChats = orderedChats.filter(c => c.scope === 'shared').slice(0, 50);
+  const privateChats = orderedChats.filter(c => c.scope === 'private').slice(0, 50);
 
   const renderChatItem = (chat: ChatSummary, showLockIcon: boolean) => {
     const hasActiveTask = chat.id in activeTasksByConversation;
