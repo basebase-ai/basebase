@@ -85,7 +85,30 @@ function OrgSwitcherSection({
             </div>
             <div className="text-[11px] text-surface-500">
               {memberCount} {memberCount !== 1 ? 'members' : 'member'}
-              {creditsDisplay != null && ` · ${creditsDisplay.balance}/${creditsDisplay.included}`}
+              {creditsDisplay != null && (() => {
+                const balance = creditsDisplay.balance;
+                const pct = creditsDisplay.included > 0 ? balance / creditsDisplay.included : 1;
+                const isOut = balance <= 0;
+                const isWarning = !isOut && pct <= 0.25 && pct > 0.05;
+                const isDanger = !isOut && pct <= 0.05;
+                return (
+                  <>
+                    {' · '}
+                    {isOut ? (
+                      <span className="text-red-400 font-semibold animate-pulse">No credits</span>
+                    ) : (
+                      <>
+                        {(isWarning || isDanger) && (
+                          <span className={`${isDanger ? 'text-red-400' : 'text-amber-400'} animate-pulse font-bold`}>! </span>
+                        )}
+                        <span className={isDanger ? 'text-red-400' : isWarning ? 'text-amber-400' : 'text-surface-400'}>
+                          {balance}/{creditsDisplay.included}
+                        </span>
+                      </>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </div>
         )}
