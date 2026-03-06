@@ -1352,6 +1352,7 @@ export function AppLayout({ onLogout }: AppLayoutProps): JSX.Element {
             connectionState={connectionState}
             crmApprovalResults={crmApprovalResults}
             onConversationNotFound={handleConversationNotFound}
+            creditsInfo={billingStatus ? { balance: billingStatus.credits_balance, included: billingStatus.credits_included } : null}
           />
         )}
         {currentView === 'data-sources' && (

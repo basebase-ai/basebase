@@ -58,6 +58,8 @@ interface ChatProps {
   crmApprovalResults: Map<string, unknown>;
   /** Called when the current conversation ID returns 404 (e.g. deleted or wrong org). Clears selection. */
   onConversationNotFound?: () => void;
+  /** Credits remaining and total included for the org. Null if billing not loaded. */
+  creditsInfo?: { balance: number; included: number } | null;
 }
 
 // Tool approval result type (received via parent component)
@@ -132,8 +134,15 @@ export function Chat({
   connectionState,
   crmApprovalResults,
   onConversationNotFound,
+  creditsInfo,
 }: ChatProps): JSX.Element {
   void _organizationId; // kept for API compatibility
+
+  // Credits status
+  const creditsPct = creditsInfo && creditsInfo.included > 0 ? creditsInfo.balance / creditsInfo.included : 1;
+  const outOfCredits = creditsInfo != null && creditsInfo.balance <= 0;
+  const lowCredits = creditsInfo != null && creditsPct <= 0.1 && !outOfCredits;
+
   // Get per-conversation state from Zustand
   const conversationState = useConversationState(chatId ?? null);
   const activeTasksByConversation = useActiveTasksByConversation();
@@ -1466,6 +1475,23 @@ export function Chat({
       {/* Input */}
       <div className="border-t border-surface-800 p-2 md:p-3">
         <div className="max-w-3xl mx-auto">
+          {/* Credits warnings */}
+          {outOfCredits && (
+            <div className="mb-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-sm flex items-center gap-2">
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              You&apos;re out of credits. Upgrade your plan to continue chatting.
+            </div>
+          )}
+          {lowCredits && (
+            <div className="mb-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 text-sm flex items-center gap-2">
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              Running low on credits ({creditsInfo?.balance} remaining).
+            </div>
+          )}
           {/* Hidden file input */}
           <input
             ref={fileInputRef}
@@ -1484,7 +1510,7 @@ export function Chat({
             className={`relative rounded-2xl border bg-surface-900 transition-all duration-150 ${
               isDragOver
                 ? 'border-primary-500 ring-2 ring-primary-500/40'
-                : (!isConnected || agentRunning) ? 'border-surface-700 opacity-50' : 'border-surface-700 focus-within:ring-2 focus-within:ring-primary-500 focus-within:border-transparent'
+                : (!isConnected || agentRunning || outOfCredits) ? 'border-surface-700 opacity-50' : 'border-surface-700 focus-within:ring-2 focus-within:ring-primary-500 focus-within:border-transparent'
             }`}
           >
             {/* Drop zone overlay */}
@@ -1521,11 +1547,11 @@ export function Chat({
               }}
               onKeyDown={handleKeyDown}
               onPaste={(e) => void handlePaste(e)}
-              placeholder={agentRunning ? 'Agent working...' : 'Ask about your pipeline...'}
+              placeholder={outOfCredits ? 'Out of credits — upgrade to continue' : agentRunning ? 'Agent working...' : 'Ask about your pipeline...'}
               className="w-full resize-none bg-transparent text-surface-100 px-4 pt-3 pb-1 text-sm placeholder-surface-500 focus:outline-none leading-5 scrollbar-none disabled:cursor-not-allowed"
               style={{ minHeight: '36px', maxHeight: '240px' }}
               rows={1}
-              disabled={!isConnected || agentRunning}
+              disabled={!isConnected || agentRunning || outOfCredits}
               autoFocus={chatId === null}
             />
 
@@ -1596,7 +1622,7 @@ export function Chat({
               ) : (
                 <button
                   onClick={handleSend}
-                  disabled={(!input.trim() && pendingAttachments.length === 0) || !isConnected}
+                  disabled={(!input.trim() && pendingAttachments.length === 0) || !isConnected || outOfCredits}
                   className="flex-shrink-0 w-8 h-8 rounded-lg bg-primary-600 text-white hover:bg-primary-500 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
