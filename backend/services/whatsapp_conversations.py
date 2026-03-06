@@ -168,13 +168,14 @@ def _redact_phone_number(phone_number: str) -> str:
     """
     Return a redacted representation of a phone number suitable for logging.
 
-    Keeps only the last 4 characters (if available) and masks the rest.
+    Does not include any portion of the original phone number value to avoid
+    leaking sensitive information into logs.
     """
     if not phone_number:
         return ""
-    visible = phone_number[-4:]
-    masked_length = max(0, len(phone_number) - len(visible))
-    return "*" * masked_length + visible
+    # Do not derive the return value from the input phone number to avoid
+    # logging any sensitive user data.
+    return "<redacted-phone>"
 
 
 async def _send_whatsapp_reply(
