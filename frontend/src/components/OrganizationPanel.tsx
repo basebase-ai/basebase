@@ -11,10 +11,11 @@
  */
 
 import { useState, useRef, useEffect, useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import type { OrganizationInfo, UserProfile } from './AppLayout';
 import { supabase } from '../lib/supabase';
 import { useAppStore } from '../store';
-import { useTeamMembers, useUpdateOrganization, useLinkIdentity, useUnlinkIdentity, useUpdateGuestUser, useUpdateMemberRole, useDeleteMember, useDeleteOrganization } from '../hooks';
+import { useTeamMembers, useUpdateOrganization, useLinkIdentity, useUnlinkIdentity, useUpdateGuestUser, useUpdateMemberRole, useDeleteMember, useDeleteOrganization, organizationKeys } from '../hooks';
 import type { TeamMember, IdentityMapping } from '../hooks';
 import { apiRequest } from '../lib/api';
 import { Avatar } from './Avatar';
@@ -69,6 +70,7 @@ interface OrganizationPanelProps {
 }
 
 export function OrganizationPanel({ organization, currentUser, initialTab = 'team', onClose }: OrganizationPanelProps): JSX.Element {
+  const queryClient = useQueryClient();
   const setOrganization = useAppStore((state) => state.setOrganization);
   const logout = useAppStore((state) => state.logout);
   const fetchUserOrganizations = useAppStore((state) => state.fetchUserOrganizations);
@@ -295,6 +297,8 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
       }
 
       setInviteEmail('');
+      await queryClient.invalidateQueries({ queryKey: organizationKeys.members(organization.id) });
+      await queryClient.refetchQueries({ queryKey: organizationKeys.members(organization.id), type: 'active' });
       alert('Invitation sent!');
     } catch (error) {
       console.error('Failed to invite:', error);
@@ -392,6 +396,8 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
       }
 
       const inviteData = (await inviteResponse.json()) as SlackMissingInviteSummary;
+      await queryClient.invalidateQueries({ queryKey: organizationKeys.members(organization.id) });
+      await queryClient.refetchQueries({ queryKey: organizationKeys.members(organization.id), type: 'active' });
       alert(`Sent ${inviteData.invited_count} invitation${inviteData.invited_count === 1 ? '' : 's'} from Slack users.`);
     } catch (error) {
       console.error('Failed to invite missing Slack users:', error);
@@ -650,7 +656,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                 >
                   {isInvitingMissingFromSlack
                     ? 'Checking Slack users...'
-                    : 'Invite all missing users from Slack'}
+                    : "Invite all Slack users that aren't yet in Basebase"}
                 </button>
               </div>
 
