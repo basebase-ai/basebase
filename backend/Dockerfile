@@ -32,5 +32,7 @@ ENV PYTHONPATH=/app
 # Expose port (Railway provides PORT env var)
 EXPOSE 8000
 
-# Run the application - use shell to expand $PORT
+# Run DB migrations before startup, then launch the API service
+ENTRYPOINT ["/app/scripts/entrypoint.sh"]
+# Use shell to expand $PORT
 CMD ["/bin/sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
