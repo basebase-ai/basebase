@@ -327,12 +327,12 @@ async def send_invitation_email(to_email: str, name: str) -> bool:
           <tr>
             <td style="padding:24px 36px 0;text-align:center;">
               <h1 style="margin:0 0 12px;font-size:24px;line-height:1.3;color:#111;font-weight:700;">{name}, you&apos;re invited to use Penny in your Slack workspace</h1>
-              <p style="margin:0;color:#6b7280;font-size:15px;line-height:1.6;">Install Basebase to get started.</p>
+              <p style="margin:0;color:#6b7280;font-size:15px;line-height:1.6;">Sign up for Basebase to get started.</p>
             </td>
           </tr>
           <tr>
             <td style="padding:28px 36px 0;text-align:center;">
-              <a href="{settings.FRONTEND_URL}" style="display:inline-block;background:#FF9F1C;color:#111111;text-decoration:none;font-size:16px;font-weight:600;padding:14px 32px;border-radius:10px;">Install Basebase</a>
+              <a href="{settings.FRONTEND_URL}" style="display:inline-block;background:#FF9F1C;color:#111111;text-decoration:none;font-size:16px;font-weight:600;padding:14px 32px;border-radius:10px;">Sign Up</a>
             </td>
           </tr>
           <tr>
@@ -363,7 +363,7 @@ async def send_invitation_email(to_email: str, name: str) -> bool:
     text_content: str = f"""
 {name}, you're invited to use Penny in your Slack workspace.
 
-Install Basebase to get started.
+Sign up for Basebase to get started.
 
 Penny lives in your Slack workspace. Ask her anything -- deal updates, meeting prep, customer research -- and she answers right in the thread. When one person learns something, the whole team benefits.
 
@@ -478,12 +478,12 @@ async def send_org_invitation_email(
           <tr>
             <td style="padding:24px 36px 0;text-align:center;">
               <h1 style="margin:0 0 12px;font-size:24px;line-height:1.3;color:#111;font-weight:700;">{headline}</h1>
-              <p style="margin:0;color:#6b7280;font-size:15px;line-height:1.6;">Install Basebase to accept.</p>
+              <p style="margin:0;color:#6b7280;font-size:15px;line-height:1.6;">Sign up for Basebase to accept.</p>
             </td>
           </tr>
           <tr>
             <td style="padding:28px 36px 0;text-align:center;">
-              <a href="{invite_url}" style="display:inline-block;background:#FF9F1C;color:#111111;text-decoration:none;font-size:16px;font-weight:600;padding:14px 32px;border-radius:10px;">Install Basebase</a>
+              <a href="{invite_url}" style="display:inline-block;background:#FF9F1C;color:#111111;text-decoration:none;font-size:16px;font-weight:600;padding:14px 32px;border-radius:10px;">Sign Up</a>
             </td>
           </tr>
           <tr>
@@ -520,7 +520,7 @@ async def send_org_invitation_email(
     text_content: str = f"""
 {headline_text}
 
-Install Basebase to accept.
+Sign up for Basebase to accept.
 
 Penny lives in your Slack workspace. Ask her anything -- deal updates, meeting prep, customer research -- and she answers right in the thread. When one person learns something, the whole team benefits.
 
