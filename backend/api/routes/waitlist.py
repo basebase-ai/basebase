@@ -19,7 +19,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 
 from api.auth_middleware import AuthContext, require_global_admin
-from models.database import get_admin_session, get_session
+from models.database import get_admin_session
 from models.user import User
 from services.email import send_invitation_email, send_waitlist_confirmation, send_waitlist_notification
 
@@ -91,7 +91,7 @@ async def submit_waitlist(request: WaitlistSubmitRequest) -> WaitlistSubmitRespo
     
     Creates a new user with status='waitlist' and stores the form data.
     """
-    async with get_session() as session:
+    async with get_admin_session() as session:
         # Check if email already exists
         result = await session.execute(
             select(User).where(User.email == request.email)
