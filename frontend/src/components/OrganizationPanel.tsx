@@ -334,6 +334,21 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
     }
   };
 
+  const handleRevokeInvite = async (targetUserId: string): Promise<void> => {
+    const confirmed = window.confirm('Revoke this pending invitation? The user will no longer be able to join from this invite.');
+    if (!confirmed) return;
+
+    try {
+      await deleteMemberMutation.mutateAsync({
+        orgId: organization.id,
+        userId: currentUser.id,
+        targetUserId,
+      });
+    } catch (error) {
+      alert(`Failed to revoke invite: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
   interface SlackMissingInviteSummary {
     total_slack_users_with_email: number;
     already_in_org: number;
@@ -709,6 +724,16 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                               >
                                 {resendingMemberId === member.id ? 'Sending...' : 'Resend'}
                               </button>
+                              {canAdministerOrg && (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleRevokeInvite(member.id)}
+                                  disabled={deleteMemberMutation.isPending}
+                                  className="px-3 py-1.5 text-sm font-medium rounded-lg border border-rose-700/70 text-rose-300 hover:text-rose-100 hover:border-rose-600 hover:bg-rose-900/30 transition-colors disabled:opacity-50 flex-shrink-0"
+                                >
+                                  {deleteMemberMutation.isPending ? 'Revoking...' : 'Revoke'}
+                                </button>
+                              )}
                             </div>
                           </div>
                         );
