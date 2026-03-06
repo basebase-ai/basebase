@@ -424,8 +424,9 @@ async def get_conversation(
     before_dt: Optional[datetime] = None
     if before is not None:
         try:
-            # Accept ISO 8601 with or without trailing 'Z'
-            before_dt = datetime.fromisoformat(before.replace("Z", "+00:00"))
+            # Accept ISO 8601 with or without trailing 'Z', strip tzinfo
+            # since the DB column is TIMESTAMP WITHOUT TIME ZONE
+            before_dt = datetime.fromisoformat(before.replace("Z", "+00:00")).replace(tzinfo=None)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid 'before' timestamp format")
 
