@@ -151,7 +151,7 @@ async def find_or_create_whatsapp_conversation(
         logger.info(
             "[whatsapp_conversations] Created new conversation %s for phone=%s org=%s",
             conversation.id,
-            phone_number,
+            _redact_phone_number(phone_number),
             organization_id,
         )
         return conversation
@@ -162,6 +162,19 @@ async def find_or_create_whatsapp_conversation(
 # ---------------------------------------------------------------------------
 
 _WA_MAX_LENGTH: int = 1600
+
+
+def _redact_phone_number(phone_number: str) -> str:
+    """
+    Return a redacted representation of a phone number suitable for logging.
+
+    Keeps only the last 4 characters (if available) and masks the rest.
+    """
+    if not phone_number:
+        return ""
+    visible = phone_number[-4:]
+    masked_length = max(0, len(phone_number) - len(visible))
+    return "*" * masked_length + visible
 
 
 async def _send_whatsapp_reply(
