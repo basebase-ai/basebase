@@ -1458,17 +1458,21 @@ function CreditDetailsModal({ details, loading, onClose }: CreditDetailsModalPro
               <div>
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <h3 className="text-sm font-medium text-surface-200">Credit Balance Over Time</h3>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      console.debug('[CreditDetails] Resetting credit usage chart range to full billing period');
-                      setChartRange(fullBillingPeriodRange);
-                    }}
-                    disabled={!fullBillingPeriodRange}
-                    className="px-3 py-1.5 rounded-md border border-surface-600 text-xs font-medium text-surface-200 hover:bg-surface-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    Reset graph
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-surface-400 hidden sm:inline">Snap to entire billing period</span>
+                    <button
+                      type="button"
+                      title="Reset chart zoom to entire billing period"
+                      onClick={() => {
+                        console.debug('[CreditDetails] Resetting credit usage chart range to full billing period');
+                        setChartRange(fullBillingPeriodRange);
+                      }}
+                      disabled={!fullBillingPeriodRange}
+                      className="px-3 py-1.5 rounded-md border border-surface-600 text-xs font-medium text-surface-200 hover:bg-surface-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Reset graph
+                    </button>
+                  </div>
                 </div>
                 {burndownData && PlotComponent ? (
                   <div className="bg-surface-800/50 rounded-lg p-4">
