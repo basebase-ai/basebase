@@ -1324,9 +1324,10 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
           currentChatId={currentChatId}
           onNewChat={startNewChat}
           organization={organization}
-          memberCount={teamData?.members.length ?? 0}
+          members={teamData?.members ?? []}
           creditsDisplay={billingStatus ? { balance: billingStatus.credits_balance, included: billingStatus.credits_included } : null}
           onOpenOrgPanel={() => { setOrgPanelTab('team'); setShowOrgPanel(true); }}
+          onOpenBilling={() => { setOrgPanelTab('billing'); setShowOrgPanel(true); }}
           onCreateNewOrg={onCreateNewOrg}
           onOpenProfilePanel={() => setShowProfilePanel(true)}
           isMobile={isMobile}
