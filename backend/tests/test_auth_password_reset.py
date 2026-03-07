@@ -1,4 +1,6 @@
-from fastapi.testclient import TestClient
+import types
+import httpx
+import pytest
 
 from api.main import app
 from config import settings
@@ -24,39 +26,47 @@ class _MockAsyncClient:
         return self.response
 
 
-def test_password_reset_request_success(monkeypatch):
+@pytest.mark.asyncio
+async def test_password_reset_request_success(monkeypatch):
     monkeypatch.setattr(settings, "SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setattr(settings, "SUPABASE_ANON_KEY", "anon-key")
 
     import api.routes.auth as auth_routes
 
     monkeypatch.setattr(
-        auth_routes.httpx,
-        "AsyncClient",
-        lambda *args, **kwargs: _MockAsyncClient(_response=_MockResponse(200)),
+        auth_routes,
+        "httpx",
+        types.SimpleNamespace(
+            AsyncClient=lambda *args, **kwargs: _MockAsyncClient(_response=_MockResponse(200))
+        ),
     )
 
-    client = TestClient(app)
-    response = client.post("/api/auth/password-reset/request", json={"email": "user@company.com"})
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post("/api/auth/password-reset/request", json={"email": "user@company.com"})
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["success"] is True
 
 
-def test_password_reset_request_upstream_failure(monkeypatch):
+@pytest.mark.asyncio
+async def test_password_reset_request_upstream_failure(monkeypatch):
     monkeypatch.setattr(settings, "SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setattr(settings, "SUPABASE_ANON_KEY", "anon-key")
 
     import api.routes.auth as auth_routes
 
     monkeypatch.setattr(
-        auth_routes.httpx,
-        "AsyncClient",
-        lambda *args, **kwargs: _MockAsyncClient(_response=_MockResponse(500, "boom")),
+        auth_routes,
+        "httpx",
+        types.SimpleNamespace(
+            AsyncClient=lambda *args, **kwargs: _MockAsyncClient(_response=_MockResponse(500, "boom"))
+        ),
     )
 
-    client = TestClient(app)
-    response = client.post("/api/auth/password-reset/request", json={"email": "user@company.com"})
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post("/api/auth/password-reset/request", json={"email": "user@company.com"})
 
     assert response.status_code == 502

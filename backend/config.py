@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from pydantic import AliasChoices, Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def to_iso8601(dt: datetime | date | None) -> str | None:
@@ -150,10 +150,11 @@ class Settings(BaseSettings):
         """Sync Postgres URL for E2B sandbox (strips SQLAlchemy asyncpg prefix)."""
         return self.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
 
-    class Config:
-        env_file = str(_env_file)
-        env_file_encoding = "utf-8"
-        extra = "ignore"  # Ignore extra env vars from shared .env files
+    model_config = SettingsConfigDict(
+        env_file=str(_env_file),
+        env_file_encoding="utf-8",
+        extra="ignore",  # Ignore extra env vars from shared .env files
+    )
 
 
 settings = Settings()
