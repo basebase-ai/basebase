@@ -41,6 +41,10 @@ The deployment consists of two services:
 
 5. Click "Deploy"
 
+5. On startup, the backend now automatically runs `alembic upgrade head` before launching the API process.
+   - This ensures Railway applies any unapplied migrations during deploy/startup.
+   - For non-API services (worker/beat) using the same image, set `RUN_DB_MIGRATIONS=0` to skip this step.
+
 ## Step 3: Deploy the Frontend
 
 1. Click "New Service" → "GitHub Repo" (same repo)
