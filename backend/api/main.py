@@ -10,6 +10,7 @@ Responsibilities:
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import logging
 import os
 import sys
@@ -20,7 +21,7 @@ from fastapi.responses import JSONResponse
 
 from api.websockets import websocket_endpoint
 from api.routes import apps, artifacts, auth, billing, change_sessions, chat, connectors, data, deals, drive, memories, search, slack_events, slack_user_mappings, sync, tool_settings, twilio_events, whatsapp_events, waitlist, workflows
-from models.database import init_db, close_db, get_pool_status
+from models.database import close_db, get_pool_status
 from services.task_manager import task_manager
 from config import log_missing_env_vars, settings
 from services.celery_health import ensure_celery_workers_available
@@ -34,7 +35,29 @@ logging.basicConfig(
 # Set agents module to DEBUG for detailed tool logging
 logging.getLogger("agents").setLevel(logging.DEBUG)
 
-app = FastAPI(title="Revenue Copilot API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application startup and shutdown lifecycle hooks."""
+    # Note: init_db() skipped - Alembic handles migrations
+    # await init_db()
+    log_missing_env_vars(logging.getLogger("config"))
+    await ensure_celery_workers_available()
+    task_manager._start_reaper()
+    logging.info("Database connection pool ready")
+
+    try:
+        yield
+    finally:
+        logging.info("Shutting down, closing database connections...")
+        task_manager._stop_reaper()
+        from connectors.code_sandbox import cleanup_all_sandboxes
+
+        await cleanup_all_sandboxes()
+        await close_db()
+        logging.info("Database connections closed")
+
+
+app = FastAPI(title="Revenue Copilot API", version="1.0.0", lifespan=lifespan)
 
 # CORS configuration - allow frontend origins
 def _normalize_origin(origin: str) -> str:
@@ -156,27 +179,6 @@ app.include_router(whatsapp_events.router, prefix="/api/whatsapp", tags=["whatsa
 # WebSocket - authenticated via JWT token in query parameter
 app.add_api_websocket_route("/ws/chat", websocket_endpoint)
 
-
-@app.on_event("startup")
-async def startup() -> None:
-    """Initialize database on startup."""
-    # Note: init_db() skipped - Alembic handles migrations
-    # await init_db()
-    log_missing_env_vars(logging.getLogger("config"))
-    await ensure_celery_workers_available()
-    task_manager._start_reaper()
-    logging.info("Database connection pool ready")
-
-
-@app.on_event("shutdown")
-async def shutdown() -> None:
-    """Clean up database connections and sandboxes on shutdown."""
-    logging.info("Shutting down, closing database connections...")
-    task_manager._stop_reaper()
-    from connectors.code_sandbox import cleanup_all_sandboxes
-    await cleanup_all_sandboxes()
-    await close_db()
-    logging.info("Database connections closed")
 
 
 @app.get("/")
