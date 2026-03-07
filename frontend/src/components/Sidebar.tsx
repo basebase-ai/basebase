@@ -315,7 +315,7 @@ function NavItem({
 
 export function Sidebar({
   collapsed,
-  onToggleCollapse: _onToggleCollapse,
+  // onToggleCollapse — kept in SidebarProps for future re-introduction
   currentView,
   onViewChange,
   connectedSourcesCount,
