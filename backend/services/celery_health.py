@@ -6,12 +6,45 @@ import logging
 import os
 from typing import Any
 
-from services.pagerduty import create_pagerduty_incident
+from services.pagerduty import create_pagerduty_incident_with_details
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_STARTUP_PING_ATTEMPTS = 3
 DEFAULT_STARTUP_RETRY_DELAY_SECONDS = 2.0
+
+
+def _emit_startup_incident_nonblocking(*, title: str, details: str) -> None:
+    """Trigger startup incident creation without blocking API startup."""
+
+    async def _create_and_log() -> None:
+        result = await create_pagerduty_incident_with_details(title=title, details=details)
+        if result.ok:
+            logger.info(
+                "Startup incident request accepted title=%s status=%s reason=%s",
+                title,
+                result.status_code,
+                result.reason,
+            )
+            return
+
+        logger.error(
+            "Startup incident request failed title=%s reason=%s status=%s body=%s",
+            title,
+            result.reason,
+            result.status_code,
+            result.response_body,
+        )
+
+    task = asyncio.create_task(_create_and_log())
+
+    def _on_done(completed_task: asyncio.Task[None]) -> None:
+        try:
+            completed_task.result()
+        except Exception:
+            logger.exception("Startup incident task crashed title=%s", title)
+
+    task.add_done_callback(_on_done)
 
 
 async def _inspect_celery_workers(timeout_seconds: float = 5.0) -> dict[str, Any] | None:
@@ -39,7 +72,7 @@ async def ensure_celery_workers_available() -> bool:
     )
 
     last_exception: Exception | None = None
-    ping_response: dict[str, Any] | None = None
+    saw_no_worker_responses = False
     for attempt in range(1, max_attempts + 1):
         try:
             ping_response = await _inspect_celery_workers()
@@ -62,6 +95,7 @@ async def ensure_celery_workers_available() -> bool:
                 )
                 return True
 
+            saw_no_worker_responses = True
             logger.warning(
                 "Celery startup health check attempt %s/%s received no worker responses",
                 attempt,
@@ -73,7 +107,7 @@ async def ensure_celery_workers_available() -> bool:
 
     if last_exception is not None:
         logger.exception("Celery startup health check failed after %s attempts", max_attempts, exc_info=last_exception)
-        await create_pagerduty_incident(
+        _emit_startup_incident_nonblocking(
             title="Celery startup check failed",
             details=(
                 "API startup could not verify Celery worker availability after "
@@ -82,13 +116,20 @@ async def ensure_celery_workers_available() -> bool:
         )
         return False
 
-    logger.error("No Celery workers responded to startup ping after %s attempts", max_attempts)
-    await create_pagerduty_incident(
-        title="Celery workers unavailable at startup",
-        details=(
-            "API startup pinged Celery workers but received no responses after "
-            f"{max_attempts} attempts. This usually means worker processes are "
-            "not running or cannot connect to the broker."
-        ),
+    if saw_no_worker_responses:
+        logger.error("No Celery workers responded to startup ping after %s attempts", max_attempts)
+        _emit_startup_incident_nonblocking(
+            title="Celery workers unavailable at startup",
+            details=(
+                "API startup pinged Celery workers but received no responses after "
+                f"{max_attempts} attempts. This usually means worker processes are "
+                "not running or cannot connect to the broker."
+            ),
+        )
+        return False
+
+    logger.error(
+        "Celery startup health check exhausted attempts=%s without clear signal; skipping incident",
+        max_attempts,
     )
     return False

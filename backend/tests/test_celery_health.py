@@ -6,15 +6,19 @@ from typing import Any
 from services import celery_health
 
 
+async def _drain_scheduled_tasks() -> None:
+    await asyncio.sleep(0)
+
+
 def test_ensure_celery_workers_available_success(monkeypatch: Any) -> None:
     async def _fake_inspect() -> dict[str, Any] | None:
         return {"worker@a": {"ok": "pong"}}
 
-    async def _fake_incident(*, title: str, details: str) -> bool:
+    async def _fake_incident(*, title: str, details: str) -> celery_health.PagerDutyIncidentResult:
         raise AssertionError("incident should not be called")
 
     monkeypatch.setattr(celery_health, "_inspect_celery_workers", _fake_inspect)
-    monkeypatch.setattr(celery_health, "create_pagerduty_incident", _fake_incident)
+    monkeypatch.setattr(celery_health, "create_pagerduty_incident_with_details", _fake_incident)
 
     ok = asyncio.run(celery_health.ensure_celery_workers_available())
     assert ok is True
@@ -33,11 +37,11 @@ def test_ensure_celery_workers_available_retries_before_success(monkeypatch: Any
             return None
         return {"worker@a": {"ok": "pong"}}
 
-    async def _fake_incident(*, title: str, details: str) -> bool:
+    async def _fake_incident(*, title: str, details: str) -> celery_health.PagerDutyIncidentResult:
         raise AssertionError("incident should not be called")
 
     monkeypatch.setattr(celery_health, "_inspect_celery_workers", _fake_inspect)
-    monkeypatch.setattr(celery_health, "create_pagerduty_incident", _fake_incident)
+    monkeypatch.setattr(celery_health, "create_pagerduty_incident_with_details", _fake_incident)
 
     ok = asyncio.run(celery_health.ensure_celery_workers_available())
     assert ok is True
@@ -57,14 +61,19 @@ def test_ensure_celery_workers_available_incidents_on_no_workers(monkeypatch: An
 
     incident_titles: list[str] = []
 
-    async def _fake_incident(*, title: str, details: str) -> bool:
+    async def _fake_incident(*, title: str, details: str) -> celery_health.PagerDutyIncidentResult:
         incident_titles.append(title)
-        return True
+        return celery_health.PagerDutyIncidentResult(ok=True, reason="created", status_code=201)
 
     monkeypatch.setattr(celery_health, "_inspect_celery_workers", _fake_inspect)
-    monkeypatch.setattr(celery_health, "create_pagerduty_incident", _fake_incident)
+    monkeypatch.setattr(celery_health, "create_pagerduty_incident_with_details", _fake_incident)
 
-    ok = asyncio.run(celery_health.ensure_celery_workers_available())
+    async def _run() -> bool:
+        ok = await celery_health.ensure_celery_workers_available()
+        await _drain_scheduled_tasks()
+        return ok
+
+    ok = asyncio.run(_run())
     assert ok is False
     assert attempts == 3
     assert incident_titles == ["Celery workers unavailable at startup"]
@@ -83,14 +92,19 @@ def test_ensure_celery_workers_available_incidents_on_check_error(monkeypatch: A
 
     incident_titles: list[str] = []
 
-    async def _fake_incident(*, title: str, details: str) -> bool:
+    async def _fake_incident(*, title: str, details: str) -> celery_health.PagerDutyIncidentResult:
         incident_titles.append(title)
-        return True
+        return celery_health.PagerDutyIncidentResult(ok=False, reason="http_error", status_code=500)
 
     monkeypatch.setattr(celery_health, "_inspect_celery_workers", _fake_inspect)
-    monkeypatch.setattr(celery_health, "create_pagerduty_incident", _fake_incident)
+    monkeypatch.setattr(celery_health, "create_pagerduty_incident_with_details", _fake_incident)
 
-    ok = asyncio.run(celery_health.ensure_celery_workers_available())
+    async def _run() -> bool:
+        ok = await celery_health.ensure_celery_workers_available()
+        await _drain_scheduled_tasks()
+        return ok
+
+    ok = asyncio.run(_run())
     assert ok is False
     assert attempts == 2
     assert incident_titles == ["Celery startup check failed"]
