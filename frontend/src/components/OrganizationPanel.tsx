@@ -865,7 +865,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                                           disabled={deleteMemberMutation.isPending}
                                           className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-surface-600/60 transition-colors disabled:opacity-50"
                                         >
-                                          Remove
+                                          Delete User
                                         </button>
                                       </>
                                     )}
