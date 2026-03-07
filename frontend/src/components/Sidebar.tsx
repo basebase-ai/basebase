@@ -15,23 +15,55 @@ import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import type { View, ChatSummary, OrganizationInfo } from './AppLayout';
 import { useAppStore, useIsGlobalAdmin, useActiveTasksByConversation, type UserOrganization } from '../store';
 import { updateConversation } from '../api/client';
-import { Avatar } from './Avatar';
+import { Avatar, type AvatarUser } from './Avatar';
 import { APP_NAME, LOGO_PATH } from '../lib/brand';
 
-/** Organization switcher in the sidebar bottom section. */
+/** Small SVG donut chart showing remaining credits as a ring. */
+function CreditDonut({ balance, total }: { balance: number; total: number }): JSX.Element {
+  const size = 22;
+  const strokeWidth = 2.5;
+  const radius: number = (size - strokeWidth) / 2;
+  const circumference: number = 2 * Math.PI * radius;
+  const pct: number = total > 0 ? Math.max(0, Math.min(1, balance / total)) : 0;
+  const dashOffset: number = circumference * (1 - pct);
+
+  const strokeColor = '#9ca3af';
+
+  return (
+    <svg width={size} height={size} className="flex-shrink-0">
+      <circle
+        cx={size / 2} cy={size / 2} r={radius}
+        fill="none" stroke="currentColor" strokeWidth={strokeWidth}
+        className="text-surface-700"
+      />
+      {pct > 0 && (
+        <circle
+          cx={size / 2} cy={size / 2} r={radius}
+          fill="none" stroke={strokeColor} strokeWidth={strokeWidth}
+          strokeDasharray={circumference}
+          strokeDashoffset={dashOffset}
+          strokeLinecap="round"
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        />
+      )}
+    </svg>
+  );
+}
+
+/** Organization switcher — displayed prominently at the top of the sidebar. */
 function OrgSwitcherSection({
-  collapsed,
   organization,
-  memberCount,
+  members,
   creditsDisplay,
   onOpenOrgPanel,
+  onOpenBilling,
   onCreateNewOrg,
 }: {
-  collapsed: boolean;
   organization: OrganizationInfo;
-  memberCount: number;
+  members: AvatarUser[];
   creditsDisplay: { balance: number; included: number } | null;
   onOpenOrgPanel: () => void;
+  onOpenBilling: () => void;
   onCreateNewOrg: () => void;
 }): JSX.Element {
   const organizations: UserOrganization[] = useAppStore((state) => state.organizations);
@@ -41,7 +73,6 @@ function OrgSwitcherSection({
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent): void => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
@@ -57,76 +88,92 @@ function OrgSwitcherSection({
   const handleSwitchOrg = async (orgId: string): Promise<void> => {
     setShowDropdown(false);
     await switchActiveOrganization(orgId);
-    // Refetch org-scoped data
     await Promise.all([fetchConversations(), fetchIntegrations()]);
   };
 
   return (
     <div className="relative" ref={dropdownRef}>
+      {/* Org identity row */}
       <button
         onClick={() => setShowDropdown((prev) => !prev)}
-        className={`w-full flex items-center gap-3 px-3 py-3 hover:bg-surface-800/50 transition-colors ${collapsed ? 'justify-center' : ''}`}
+        className="w-full flex items-center gap-3 px-3 pt-3 pb-1 hover:bg-surface-800/50 transition-colors"
       >
         {organization.logoUrl ? (
           <img
             src={organization.logoUrl}
             alt={organization.name}
-            className="w-8 h-8 rounded-lg object-cover"
+            className="w-9 h-9 rounded-lg object-cover flex-shrink-0"
           />
         ) : (
-          <div className="w-8 h-8 rounded-lg bg-surface-700 flex items-center justify-center text-surface-300 font-medium text-sm">
-            {organization.name.charAt(0).toUpperCase()}
+          <div className="w-9 h-9 rounded-lg bg-surface-800 flex items-center justify-center flex-shrink-0">
+            <img src={LOGO_PATH} alt={APP_NAME} className="w-6 h-6" />
           </div>
         )}
-        {!collapsed && (
-          <div className="flex-1 min-w-0 text-left">
-            <div className="text-sm font-medium text-surface-200 truncate">
-              {organization.name}
-            </div>
-            <div className="text-[11px] text-surface-500">
-              {memberCount} {memberCount !== 1 ? 'members' : 'member'}
-              {creditsDisplay != null && (() => {
-                const balance = creditsDisplay.balance;
-                const pct = creditsDisplay.included > 0 ? balance / creditsDisplay.included : 1;
-                const isOut = balance <= 0;
-                const isWarning = !isOut && pct <= 0.25 && pct > 0.05;
-                const isDanger = !isOut && pct <= 0.05;
-                return (
-                  <>
-                    {' · '}
-                    {isOut ? (
-                      <span className="text-red-400 font-semibold animate-pulse">No credits</span>
-                    ) : (
-                      <>
-                        {(isWarning || isDanger) && (
-                          <span className={`${isDanger ? 'text-red-400' : 'text-amber-400'} animate-pulse font-bold`}>! </span>
-                        )}
-                        <span className={isDanger ? 'text-red-400' : isWarning ? 'text-amber-400' : 'text-surface-400'}>
-                          {balance}/{creditsDisplay.included}
-                        </span>
-                      </>
-                    )}
-                  </>
-                );
-              })()}
-            </div>
-          </div>
-        )}
-        {!collapsed && (
-          <svg
-            className={`w-4 h-4 text-surface-400 transition-transform ${showDropdown ? 'rotate-90' : ''}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-        )}
+        <span className="text-lg font-semibold text-surface-100 truncate flex-1 text-left leading-tight">
+          {organization.name}
+        </span>
+        <svg className="w-4 h-4 text-surface-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
       </button>
 
+      {/* Team members row */}
+      {members.length > 0 && (
+        <button
+          onClick={onOpenOrgPanel}
+          className="w-full flex items-center px-3 py-1.5 hover:bg-surface-800/50 transition-colors"
+        >
+          <span className="text-xs text-surface-500">
+            {members.length} {members.length !== 1 ? 'members' : 'member'}
+          </span>
+          <div className="flex -space-x-1.5 ml-auto">
+            {members.filter((m) => m.avatarUrl && !m.isGuest).slice(0, 5).map((m, idx) => (
+              <img
+                key={m.id}
+                src={m.avatarUrl!}
+                alt={m.name ?? m.email ?? ''}
+                referrerPolicy="no-referrer"
+                className="w-6 h-6 rounded-full object-cover border border-surface-800"
+                style={{ zIndex: 5 - idx }}
+              />
+            ))}
+          </div>
+        </button>
+      )}
+
+      {/* Credits row */}
+      {creditsDisplay != null && (() => {
+        const balance: number = creditsDisplay.balance;
+        const isOut: boolean = balance <= 0;
+        const pct: number = creditsDisplay.included > 0 ? balance / creditsDisplay.included : 1;
+        const isDanger: boolean = !isOut && pct <= 0.05;
+        const isWarning: boolean = !isOut && pct <= 0.25 && pct > 0.05;
+        const textClass: string = isOut || isDanger ? 'text-red-400' : isWarning ? 'text-amber-400' : 'text-surface-500';
+        return (
+          <button
+            onClick={onOpenBilling}
+            className="w-full flex items-center px-3 py-1.5 hover:bg-surface-800/50 transition-colors"
+          >
+            <span className={`text-xs ${textClass}`}>
+              {isOut ? (
+                <span className="font-semibold animate-pulse">No credits remaining</span>
+              ) : (
+                <>{balance} / {creditsDisplay.included} credits</>
+              )}
+            </span>
+            <div className="ml-auto">
+              <CreditDonut balance={balance} total={creditsDisplay.included} />
+            </div>
+          </button>
+        );
+      })()}
+
+      {/* Bottom padding for the header block */}
+      <div className="pb-1" />
+
       {/* Org switcher dropdown */}
-      {showDropdown && !collapsed && (
-        <div className="absolute bottom-full left-0 right-0 mb-1 mx-2 bg-surface-800 border border-surface-700 rounded-lg shadow-xl overflow-hidden z-50">
+      {showDropdown && (
+        <div className="absolute top-full left-0 right-0 mt-1 mx-2 bg-surface-800 border border-surface-700 rounded-lg shadow-xl overflow-hidden z-50">
           <div className="py-1">
             {organizations.map((org) => (
               <div
@@ -144,8 +191,8 @@ function OrgSwitcherSection({
                   {org.logoUrl ? (
                     <img src={org.logoUrl} alt={org.name} className="w-6 h-6 rounded object-cover flex-shrink-0" />
                   ) : (
-                    <div className="w-6 h-6 rounded bg-surface-600 flex items-center justify-center text-surface-300 text-xs font-medium flex-shrink-0">
-                      {org.name.charAt(0).toUpperCase()}
+                    <div className="w-6 h-6 rounded bg-surface-700 flex items-center justify-center flex-shrink-0">
+                      <img src={LOGO_PATH} alt={APP_NAME} className="w-4 h-4" />
                     </div>
                   )}
                   <span className="text-sm truncate flex-1">{org.name}</span>
@@ -202,9 +249,10 @@ interface SidebarProps {
   currentChatId: string | null;
   onNewChat: () => void;
   organization: OrganizationInfo;
-  memberCount: number;
+  members: AvatarUser[];
   creditsDisplay: { balance: number; included: number } | null;
   onOpenOrgPanel: () => void;
+  onOpenBilling: () => void;
   onCreateNewOrg: () => void;
   onOpenProfilePanel: () => void;
   isMobile?: boolean;
@@ -279,9 +327,10 @@ export function Sidebar({
   currentChatId,
   onNewChat,
   organization,
-  memberCount,
+  members,
   creditsDisplay,
   onOpenOrgPanel,
+  onOpenBilling,
   onCreateNewOrg,
   onOpenProfilePanel,
   isMobile = false,
@@ -310,58 +359,27 @@ export function Sidebar({
       style={{ width: widthPx }}
       className="h-full bg-surface-900 border-r border-surface-800 flex flex-col transition-all duration-200 ease-in-out flex-shrink-0"
     >
-      {/* Header with logo and collapse toggle */}
-      <div className={`border-b border-surface-800 ${collapsed ? 'py-3' : 'h-14 flex items-center justify-between px-3'}`}>
-        {!collapsed && (
-          <>
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-surface-800 flex items-center justify-center">
-                <img src={LOGO_PATH} alt={APP_NAME} className="w-5 h-5" />
-              </div>
-              <span className="font-semibold text-surface-100">{APP_NAME}</span>
-              <span className="px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-primary-500/20 text-primary-400 rounded">
-                Alpha
-              </span>
-            </div>
-            {isMobile ? (
-              <button
-                onClick={onCloseMobile}
-                className="p-1.5 rounded-md text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors"
-                title="Close menu"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            ) : (
-              <button
-                onClick={onToggleCollapse}
-                className="p-1.5 rounded-md text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors"
-                title="Collapse sidebar"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-                </svg>
-              </button>
-            )}
-          </>
+      {/* Header: Organization identity */}
+      <div className="border-b border-surface-800 relative">
+        {isMobile && (
+          <button
+            onClick={onCloseMobile}
+            className="absolute right-2 top-3 z-10 p-1.5 rounded-md text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors"
+            title="Close menu"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         )}
-        {collapsed && (
-          <div className="flex flex-col items-center gap-2">
-            <div className="w-10 h-10 rounded-lg bg-surface-800 flex items-center justify-center">
-              <img src={LOGO_PATH} alt={APP_NAME} className="w-6 h-6" />
-            </div>
-            <button
-              onClick={onToggleCollapse}
-              className="p-1.5 rounded-md text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors"
-              title="Expand sidebar"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-              </svg>
-            </button>
-          </div>
-        )}
+        <OrgSwitcherSection
+          organization={organization}
+          members={members}
+          creditsDisplay={creditsDisplay}
+          onOpenOrgPanel={onOpenOrgPanel}
+          onOpenBilling={onOpenBilling}
+          onCreateNewOrg={onCreateNewOrg}
+        />
       </div>
 
       {/* New Chat Button */}
@@ -450,16 +468,6 @@ export function Sidebar({
 
       {/* Bottom Section */}
       <div className="mt-auto border-t border-surface-800">
-        {/* Organization */}
-        <OrgSwitcherSection
-          collapsed={collapsed}
-          organization={organization}
-          memberCount={memberCount}
-          creditsDisplay={creditsDisplay}
-          onOpenOrgPanel={onOpenOrgPanel}
-          onCreateNewOrg={onCreateNewOrg}
-        />
-
         {/* User Profile */}
         {user && (
           <button
