@@ -5,7 +5,6 @@ import { useAppStore } from '../store';
 
 const AGENT_GLOBAL_COMMANDS_MAX_LENGTH = 500;
 const USER_STORED_COLLAPSE_STATE_KEY = 'memory_user_stored_collapsed';
-const WORKFLOW_STORED_COLLAPSE_STATE_KEY = 'memory_workflow_stored_collapsed';
 
 interface StoredMemory {
   id: string;
@@ -17,21 +16,8 @@ interface StoredMemory {
   updated_at: string | null;
 }
 
-interface WorkflowNote {
-  note_id: string;
-  run_id: string;
-  workflow_id: string;
-  workflow_name: string | null;
-  note_index: number;
-  content: string;
-  created_by_user_id: string | null;
-  created_at: string | null;
-  run_started_at: string | null;
-}
-
 interface MemoryDashboardResponse {
   memories: StoredMemory[];
-  workflow_notes: WorkflowNote[];
 }
 
 function formatTime(value: string | null): string {
@@ -49,9 +35,6 @@ export function Memories(): JSX.Element {
   const [isUserStoredExpanded, setIsUserStoredExpanded] = useState<boolean>(() => {
     return localStorage.getItem(USER_STORED_COLLAPSE_STATE_KEY) === 'false';
   });
-  const [isWorkflowStoredExpanded, setIsWorkflowStoredExpanded] = useState<boolean>(() => {
-    return localStorage.getItem(WORKFLOW_STORED_COLLAPSE_STATE_KEY) === 'false';
-  });
 
   useEffect(() => {
     setAgentGlobalCommands(user?.agentGlobalCommands ?? '');
@@ -60,10 +43,6 @@ export function Memories(): JSX.Element {
   useEffect(() => {
     localStorage.setItem(USER_STORED_COLLAPSE_STATE_KEY, String(!isUserStoredExpanded));
   }, [isUserStoredExpanded]);
-
-  useEffect(() => {
-    localStorage.setItem(WORKFLOW_STORED_COLLAPSE_STATE_KEY, String(!isWorkflowStoredExpanded));
-  }, [isWorkflowStoredExpanded]);
 
   const orgId = organization?.id;
   const userId = user?.id;
@@ -102,19 +81,6 @@ export function Memories(): JSX.Element {
   const deleteMemory = useMutation({
     mutationFn: async (memoryId: string) => {
       const { error } = await apiRequest(`/memories/${orgId}/user/${memoryId}?user_id=${userId}`, {
-        method: 'DELETE',
-      });
-      if (error) throw new Error(error);
-    },
-    onSuccess: () => {
-      setEditingMemoryId(null);
-      void queryClient.invalidateQueries({ queryKey });
-    },
-  });
-
-  const deleteWorkflowNote = useMutation({
-    mutationFn: async ({ runId, noteIndex }: { runId: string; noteIndex: number }) => {
-      const { error } = await apiRequest(`/memories/${orgId}/workflow-notes/${runId}/${noteIndex}?user_id=${userId}`, {
         method: 'DELETE',
       });
       if (error) throw new Error(error);
@@ -175,7 +141,7 @@ export function Memories(): JSX.Element {
     <div className="flex-1 overflow-hidden flex flex-col">
       <header className="sticky top-0 bg-surface-950 border-b border-surface-800 px-4 md:px-8 py-4 md:py-6">
         <h1 className="text-xl md:text-2xl font-bold text-surface-50">Memory</h1>
-        <p className="text-surface-400 mt-1 text-sm md:text-base">A shared place to manage workflow notes and user-saved memories.</p>
+        <p className="text-surface-400 mt-1 text-sm md:text-base">A shared place to manage user-saved memories.</p>
       </header>
 
       <div className="flex-1 overflow-y-auto px-4 md:px-8 py-4 md:py-6 space-y-6">
@@ -253,37 +219,6 @@ export function Memories(): JSX.Element {
                     </div>
                   </div>
                 )) : <p className="text-sm text-surface-500">No user memories found yet.</p>}
-              </div>}
-            </section>
-
-            <section className="rounded-xl border border-surface-800 bg-surface-900/40 p-4 md:p-6">
-              <div className="flex items-center justify-between gap-4">
-                <button
-                  className="flex items-center gap-2 text-left text-primary-400 hover:text-primary-300 transition-colors"
-                  onClick={() => setIsWorkflowStoredExpanded((value) => !value)}
-                  aria-expanded={isWorkflowStoredExpanded}
-                >
-                  <span className="text-xs leading-none">{isWorkflowStoredExpanded ? '▾' : '▸'}</span>
-                  <h2 className="text-lg font-semibold">Workflow stored</h2>
-                </button>
-                <span className="text-xs text-surface-500">Deletable</span>
-              </div>
-              {isWorkflowStoredExpanded && <div className="mt-4 space-y-3">
-                {data?.workflow_notes.length ? data.workflow_notes.map((note) => (
-                  <div key={note.note_id} className="rounded-lg border border-surface-800 bg-surface-900 p-3">
-                    <div className="flex flex-col gap-3">
-                      <div className="w-full">
-                        <div className="text-xs text-surface-500 mb-2">
-                          {note.workflow_name ?? 'Workflow'} • Run {formatTime(note.run_started_at)}
-                        </div>
-                        <p className="text-sm text-surface-200 whitespace-pre-wrap">{note.content}</p>
-                      </div>
-                      <div className="flex justify-end">
-                        <button className="px-3 py-1.5 text-xs rounded-md bg-red-600/20 hover:bg-red-600/30 text-red-300" onClick={() => deleteWorkflowNote.mutate({ runId: note.run_id, noteIndex: note.note_index })}>Delete</button>
-                      </div>
-                    </div>
-                  </div>
-                )) : <p className="text-sm text-surface-500">No workflow notes saved yet.</p>}
               </div>}
             </section>
           </>
