@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+import logging
 from datetime import timedelta
 from pathlib import Path
 
@@ -28,7 +29,41 @@ if env_file.exists():
 
 from celery import Celery
 from celery.schedules import crontab
-from celery.signals import worker_process_init, worker_process_shutdown
+from celery.signals import setup_logging, worker_process_init, worker_process_shutdown
+
+
+class _WorkerLogFormatter(logging.Formatter):
+    """Align Celery worker logs with API pipe-delimited format."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        record.levelname = record.levelname.lower()
+        return super().format(record)
+
+
+def _configure_worker_logging(log_level: int = logging.INFO) -> None:
+    """Configure root logger format so worker/beat logs match API style."""
+    formatter = _WorkerLogFormatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(formatter)
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(log_level)
+    root_logger.addHandler(handler)
+
+    logging.captureWarnings(True)
+
+
+@setup_logging.connect
+def _on_celery_setup_logging(loglevel=None, **kwargs) -> None:
+    """Override Celery defaults so workers emit consistent structured text logs."""
+    if isinstance(loglevel, int):
+        level = loglevel
+    else:
+        level = logging.getLevelName(str(loglevel).upper()) if loglevel else logging.INFO
+        if not isinstance(level, int):
+            level = logging.INFO
+    _configure_worker_logging(level)
 
 # Get Redis URL from environment
 REDIS_URL: str = os.environ.get("REDIS_URL", "redis://localhost:6379")
