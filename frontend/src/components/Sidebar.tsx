@@ -359,14 +359,14 @@ export function Sidebar({
   return (
     <aside
       style={{ width: widthPx }}
-      className="h-full bg-surface-900 border-r border-surface-800 flex flex-col transition-all duration-200 ease-in-out flex-shrink-0"
+      className="h-full bg-surface-900 border-r border-surface-800 flex flex-col transition-all duration-200 ease-in-out flex-shrink-0 overflow-hidden"
     >
       {/* Header: Organization identity */}
-      <div className="border-b border-surface-800 relative">
+      <div className="border-b border-surface-800 relative min-w-0 overflow-hidden flex-shrink-0">
         {isMobile && (
           <button
             onClick={onCloseMobile}
-            className="absolute right-2 top-3 z-10 p-1.5 rounded-md text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors"
+            className="absolute right-2 top-3 z-10 p-1.5 rounded-md text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors shrink-0"
             title="Close menu"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
