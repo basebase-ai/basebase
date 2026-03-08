@@ -162,14 +162,37 @@ need to verify a connector is connected before using it.""",
 
 
 register_tool(
+    name="get_system_docs",
+    description="""Get detailed usage documentation for a connected system (connector).
+
+Call this before using query_system, write_to_system, or run_action for a connector
+you haven't used yet. Returns rich usage guides (query formats, action parameters,
+examples) written by the connector author. Use the system slug (e.g. 'google_drive',
+'hubspot', 'slack') from the Connected Connectors manifest.""",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "system": {
+                "type": "string",
+                "description": "Connector slug (e.g. 'google_drive', 'hubspot', 'slack')",
+            },
+        },
+        "required": ["system"],
+    },
+    category=ToolCategory.LOCAL_READ,
+    default_requires_approval=False,
+)
+
+
+register_tool(
     name="query_system",
     description="""Query a connected connector for on-demand data retrieval.
 
 Use this for any QUERY-capable connector: web search (web_search), Apollo enrichment,
 Google Drive file search/read, or any future connector with query capability.
 
-The query string format depends on the connector — check the Connected Connectors manifest
-in the system prompt for each connector's query_description.""",
+The query string format depends on the connector. Call `get_system_docs(system)` for
+detailed query formats, parameters, and examples before using a connector.""",
     input_schema={
         "type": "object",
         "properties": {

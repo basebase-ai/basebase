@@ -61,6 +61,38 @@ class GitHubConnector(BaseConnector):
         ],
         nango_integration_id="github",
         description="GitHub – repositories, commits, pull requests, and issues",
+        usage_guide="""# GitHub Usage Guide
+
+## create_issue write operation
+
+Create a new issue in a GitHub repository. Use `write_to_system` with `operation: "create_issue"`.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| repo_full_name | string | Yes | Repository in `owner/repo` format (e.g. `basebase-ai/basebase`) |
+| title | string | Yes | Issue title |
+| body | string | No | Issue body — GitHub Markdown supported |
+| labels | array | No | Label names to add (e.g. `["bug", "priority:high"]`) |
+| assignees | array | No | GitHub usernames to assign (e.g. `["octocat"]`) |
+
+### Repository names
+
+Use the exact `owner/repo` format. For tracked repos, get `full_name` from the `github_repositories` table. Repos can be renamed (e.g. `basebase-ai/revtops` → `basebase-ai/basebase`); the connector follows redirects.
+
+### Examples
+
+**Basic issue:**
+```json
+{"operation": "create_issue", "record": {"repo_full_name": "basebase-ai/basebase", "title": "Fix login redirect", "body": "## Problem\\nUsers are redirected to wrong page.\\n\\n## Steps\\n1. Login\\n2. Observe redirect"}}
+```
+
+**With labels and assignee:**
+```json
+{"operation": "create_issue", "record": {"repo_full_name": "owner/repo", "title": "Bug: API timeout", "body": "Description...", "labels": ["bug", "api"], "assignees": ["teammate"]}}
+```
+
+**Querying data:** Use `run_sql_query` on `github_repositories`, `github_commits`, `github_pull_requests` — all synced from connected repos.
+""",
     )
 
     def __init__(

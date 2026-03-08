@@ -123,6 +123,7 @@ class ConnectorMeta:
     auth_fields: list[AuthField] = field(default_factory=list)
     nango_integration_id: str | None = None
     description: str = ""
+    usage_guide: str = ""
     icon: str = ""
     # For LISTEN: key in integration.extra_data holding the webhook signing secret
     webhook_secret_extra_data_key: str | None = None
