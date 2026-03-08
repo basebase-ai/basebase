@@ -2357,6 +2357,23 @@ function getToolStatusText(
       }
       return `Running ${workflowName}...`;
     }
+    case 'get_connector_docs': {
+      const docsConnector: string = typeof input?.connector === 'string' ? input.connector : '';
+      const docsLabel: string = docsConnector
+        ? docsConnector.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
+        : 'connector';
+      if (isComplete) {
+        return result?.error ? `Failed to load ${docsLabel} docs` : `Completed ${docsLabel.toLowerCase()} docs`;
+      }
+      return `Loading ${docsLabel.toLowerCase()} docs...`;
+    }
+    case 'list_connected_connectors': {
+      if (isComplete) {
+        const connectorCount: number = Array.isArray(result?.connectors) ? result.connectors.length : 0;
+        return `Found ${connectorCount} connected connector${connectorCount === 1 ? '' : 's'}`;
+      }
+      return 'Listing connected connectors...';
+    }
     case 'query_on_connector': {
       const connectorSlug: string = typeof input?.connector === 'string' ? input.connector : '';
       const connectorLabel: string = connectorSlug
