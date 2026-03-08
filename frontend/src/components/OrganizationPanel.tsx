@@ -1396,19 +1396,27 @@ function CreditDetailsModal({ details, loading, onClose }: CreditDetailsModalPro
     return { timestamps, balances };
   }, [details]);
 
-  const fullBillingPeriodRange = useMemo<[string, string] | null>(() => {
+  const availableBillingPeriodRange = useMemo<[string, string] | null>(() => {
     if (!burndownData || burndownData.timestamps.length === 0) return null;
 
-    const start = details?.period_start || burndownData.timestamps[0];
-    const end = details?.period_end || burndownData.timestamps[burndownData.timestamps.length - 1];
-    if (!start || !end) return null;
+    const firstDataTimestamp = burndownData.timestamps[0];
+    const lastDataTimestamp = burndownData.timestamps[burndownData.timestamps.length - 1];
+    if (!firstDataTimestamp || !lastDataTimestamp) return null;
+
+    const start = details?.period_start
+      ? (firstDataTimestamp < details.period_start ? details.period_start : firstDataTimestamp)
+      : firstDataTimestamp;
+
+    const end = details?.period_end
+      ? (lastDataTimestamp > details.period_end ? details.period_end : lastDataTimestamp)
+      : lastDataTimestamp;
 
     return [start, end];
   }, [burndownData, details?.period_end, details?.period_start]);
 
   useEffect(() => {
-    setChartRange(fullBillingPeriodRange);
-  }, [fullBillingPeriodRange]);
+    setChartRange(availableBillingPeriodRange);
+  }, [availableBillingPeriodRange]);
 
   const userUsageData = useMemo(() => {
     if (!details?.usage_by_user.length) return null;
@@ -1461,10 +1469,10 @@ function CreditDetailsModal({ details, loading, onClose }: CreditDetailsModalPro
                   <button
                     type="button"
                     onClick={() => {
-                      console.debug('[CreditDetails] Resetting credit usage chart range to full billing period');
-                      setChartRange(fullBillingPeriodRange);
+                      console.debug('[CreditDetails] Resetting credit usage chart range to billing period data range');
+                      setChartRange(availableBillingPeriodRange);
                     }}
-                    disabled={!fullBillingPeriodRange}
+                    disabled={!availableBillingPeriodRange}
                     className="px-3 py-1.5 rounded-md border border-surface-600 text-xs font-medium text-surface-200 hover:bg-surface-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
                     Reset graph
@@ -1515,7 +1523,7 @@ function CreditDetailsModal({ details, loading, onClose }: CreditDetailsModalPro
                           return;
                         }
                         if (eventWithRange['xaxis.autorange'] === true) {
-                          setChartRange(fullBillingPeriodRange);
+                          setChartRange(availableBillingPeriodRange);
                         }
                       }}
                       style={{ width: '100%' }}
