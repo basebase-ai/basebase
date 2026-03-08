@@ -123,6 +123,51 @@ class HubSpotConnector(BaseConnector):
         ],
         nango_integration_id="hubspot",
         description="HubSpot CRM – deals, contacts, companies, and activities",
+        usage_guide="""# HubSpot Usage Guide
+
+## Write operations (write_to_system)
+
+Use `write_to_system` with `operation` set to one of: `create_deal`, `update_deal`, `create_contact`, `update_contact`, `create_company`, `update_company`.
+
+### Deals
+
+**create_deal** — Required: `dealname`. Optional: `amount`, `dealstage`, `closedate`, `pipeline`, `hubspot_owner_id`.
+
+**update_deal** — Required: `id` (HubSpot deal ID, use `source_id` from the `deals` table). Optional: same fields as create.
+
+**Pipeline/stage IDs:** Query `pipelines` and `pipeline_stages` tables to get valid `pipeline` and `dealstage` values. `dealstage` is the stage ID (e.g. from `pipeline_stages.source_id`), not the stage name.
+
+### Contacts
+
+**create_contact** — Required: `email`. Optional: `firstname`, `lastname`, `company`, `jobtitle`, `phone`.
+
+**update_contact** — Required: `id` (HubSpot contact ID). Optional: same fields as create.
+
+### Companies
+
+**create_company** — Required: `name`. Optional: `domain`, `industry`, `numberofemployees`.
+
+**update_company** — Required: `id` (HubSpot company ID). Optional: same fields as create.
+
+### Examples
+
+**Create a deal:**
+```json
+{"operation": "create_deal", "record": {"dealname": "Acme Corp - Enterprise", "amount": 50000, "closedate": "2025-06-30"}}
+```
+
+**Update deal stage:** Get `dealstage` from `SELECT source_id FROM pipeline_stages WHERE pipeline_id = '...'`.
+```json
+{"operation": "update_deal", "record": {"id": "123456789", "dealstage": "closedwon"}}
+```
+
+**Create contact:**
+```json
+{"operation": "create_contact", "record": {"email": "jane@acme.com", "firstname": "Jane", "lastname": "Doe", "company": "Acme Inc"}}
+```
+
+**Querying data:** Use `run_sql_query` on `deals`, `contacts`, `accounts`, `activities` — all synced from HubSpot.
+""",
     )
 
     def __init__(self, organization_id: str, user_id: Optional[str] = None) -> None:

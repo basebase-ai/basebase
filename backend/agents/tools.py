@@ -316,6 +316,7 @@ async def execute_tool(
         "initiate_connector": lambda: _initiate_connector(tool_input, organization_id, user_id),
         # Connector-driven generic tools
         "list_connected_systems": lambda: _list_connected_systems(organization_id),
+        "get_system_docs": lambda: _get_system_docs(tool_input, organization_id),
         "query_system": lambda: _query_system(tool_input, organization_id, user_id),
         "write_to_system": lambda: _write_to_system(tool_input, organization_id, user_id, skip_approval, conversation_id),
         "run_action": lambda: _run_action(tool_input, organization_id, user_id, skip_approval, context),
@@ -647,6 +648,71 @@ async def _list_connected_systems(organization_id: str) -> dict[str, Any]:
         connectors.append(entry)
 
     return {"connectors": connectors, "count": len(connectors)}
+
+
+async def _get_system_docs(
+    params: dict[str, Any], organization_id: str
+) -> dict[str, Any]:
+    """Return detailed usage documentation for a connected connector.
+
+    Returns the connector's usage_guide if present, plus auto-generated
+    parameter reference from actions, write_operations, and query_description.
+    """
+    from connectors.registry import Capability, ConnectorMeta, discover_connectors
+    from models.integration import Integration
+
+    system: str = (params.get("system") or "").strip().lower()
+    if not system:
+        return {"error": "system is required (connector slug, e.g. 'google_drive', 'hubspot')"}
+
+    async with get_session(organization_id=organization_id) as session:
+        result = await session.execute(
+            select(Integration.connector).where(
+                Integration.organization_id == UUID(organization_id),
+                Integration.is_active == True,  # noqa: E712
+            )
+        )
+        active_providers: set[str] = {row[0] for row in result.all()}
+
+    if system not in active_providers:
+        return {
+            "error": f"'{system}' is not connected. Use list_connected_systems to see available connectors.",
+        }
+
+    registry = discover_connectors()
+    connector_cls = registry.get(system)
+    if not connector_cls:
+        return {"error": f"Unknown connector: {system}"}
+
+    meta: ConnectorMeta = connector_cls.meta  # type: ignore[attr-defined]
+    sections: list[str] = []
+
+    if meta.usage_guide:
+        sections.append(meta.usage_guide)
+
+    # Auto-generated parameter reference as fallback/supplement
+    param_lines: list[str] = []
+
+    if Capability.QUERY in meta.capabilities and meta.query_description:
+        param_lines.append(f"## Query format\n{meta.query_description}")
+
+    if meta.write_operations:
+        param_lines.append("## Write operations")
+        for op in meta.write_operations:
+            param_parts: list[str] = [f"- **{p['name']}** ({p.get('type', 'string')})" for p in op.parameters]
+            param_lines.append(f"### {op.name}\n{op.description}\n" + "\n".join(param_parts))
+
+    if meta.actions:
+        param_lines.append("## Actions")
+        for act in meta.actions:
+            param_parts = [f"- **{p['name']}** ({p.get('type', 'string')})" for p in act.parameters]
+            param_lines.append(f"### {act.name}\n{act.description}\n" + "\n".join(param_parts))
+
+    if param_lines:
+        sections.append("\n\n---\n\n# Parameter reference\n\n" + "\n\n".join(param_lines))
+
+    docs: str = "\n\n".join(sections) if sections else f"No documentation available for {meta.name}."
+    return {"system": system, "name": meta.name, "docs": docs}
 
 
 async def _query_system(

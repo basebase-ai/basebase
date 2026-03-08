@@ -91,6 +91,55 @@ class LinearConnector(BaseConnector):
         nango_integration_id="linear",
         description="Linear – teams, projects, and issue tracking",
         webhook_secret_extra_data_key="linear_webhook_secret",
+        usage_guide="""# Linear Usage Guide
+
+## Write operations (write_to_system)
+
+Use `write_to_system` with `operation` set to `create_issue` or `update_issue`.
+
+### create_issue
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| team_key | string | Yes | Team key (e.g. `ENG`, `DESIGN`). Get from `tracker_teams` table (`key` column, filter `source_system='linear'`). |
+| title | string | Yes | Issue title |
+| description | string | No | Issue description — Markdown supported |
+| priority | integer | No | 0=none, 1=urgent, 2=high, 3=medium, 4=low |
+| assignee_name | string | No | Assignee's display name (matched to Linear user) |
+| project_name | string | No | Project name (matched to project in the team) |
+| labels | array | No | Label names to add |
+
+### update_issue
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| issue_identifier | string | Yes | Issue ID (e.g. `ENG-123`, `DESIGN-45`) |
+| title | string | No | New title |
+| description | string | No | New description |
+| state_name | string | No | New state (e.g. `Done`, `In Progress`) |
+| priority | integer | No | 0-4 |
+| assignee_name | string | No | New assignee display name |
+
+### Finding team keys and identifiers
+
+- **Team keys:** `SELECT key, name FROM tracker_teams WHERE source_system = 'linear'`
+- **Issue identifiers:** `SELECT identifier, title FROM tracker_issues WHERE source_system = 'linear'`
+- **State names:** Vary by team workflow; common: `Backlog`, `Todo`, `In Progress`, `Done`, `Canceled`
+
+### Examples
+
+**Create issue:**
+```json
+{"operation": "create_issue", "record": {"team_key": "ENG", "title": "Add API rate limiting", "description": "## Context\\nWe need to throttle requests.", "priority": 2}}
+```
+
+**Update issue state:**
+```json
+{"operation": "update_issue", "record": {"issue_identifier": "ENG-123", "state_name": "Done"}}
+```
+
+**Querying data:** Use `run_sql_query` on `tracker_teams`, `tracker_projects`, `tracker_issues` (filter `source_system = 'linear'`).
+""",
     )
 
     def __init__(

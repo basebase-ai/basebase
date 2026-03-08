@@ -840,12 +840,11 @@ class ChatOrchestrator:
             self._phone_number = None
 
     async def _build_systems_manifest(self) -> str | None:
-        """Build a rich manifest of connected systems with capabilities, operations, and parameters.
+        """Build a compact manifest of connected systems (names, capabilities, action names only).
 
-        Cross-references ``discover_connectors()`` metadata with active
-        Integration rows to produce the text block injected into the system prompt.
+        Full parameter docs are fetched on demand via get_system_docs(system).
         """
-        from connectors.registry import Capability, ConnectorMeta, discover_connectors
+        from connectors.registry import ConnectorMeta, discover_connectors
         from models.integration import Integration
 
         try:
@@ -873,7 +872,10 @@ class ChatOrchestrator:
 
             registry = discover_connectors()
 
-            lines: list[str] = []
+            lines: list[str] = [
+                "Call `get_system_docs(system)` to get detailed usage instructions and parameter reference before using a system for the first time.",
+                "",
+            ]
             for slug, connector_cls in sorted(registry.items()):
                 if slug not in active_providers:
                     continue
@@ -889,35 +891,19 @@ class ChatOrchestrator:
                     elif provider_info["last_sync"]:
                         sync_status = f" (synced {provider_info['last_sync'].strftime('%Y-%m-%d %H:%M')} UTC)"
 
-                label: str = f"- **{meta.slug}** ({meta.name}) [{caps}]{sync_status}"
+                summary: str = meta.description or ""
+                action_names: list[str] = []
+                if meta.write_operations:
+                    action_names.extend(op.name for op in meta.write_operations)
+                if meta.actions:
+                    action_names.extend(act.name for act in meta.actions)
+                action_str: str = f" Actions: {', '.join(action_names)}" if action_names else ""
+                label: str = f"- **{meta.slug}** ({meta.name}) [{caps}]{sync_status} – {summary}{action_str}"
                 lines.append(label)
 
-                if Capability.QUERY in meta.capabilities and meta.query_description:
-                    lines.append(f"  Query: {meta.query_description}")
-
-                if Capability.WRITE in meta.capabilities and meta.write_operations:
-                    lines.append("  Write operations:")
-                    for op in meta.write_operations:
-                        param_parts: list[str] = []
-                        for p in op.parameters:
-                            req: str = ", required" if p.get("required") else ""
-                            param_parts.append(f"{p['name']} ({p.get('type', 'string')}{req})")
-                        params_str: str = "; ".join(param_parts) if param_parts else "see docs"
-                        lines.append(f"    - {op.name}: {op.description}  params: {params_str}")
-
-                if Capability.ACTION in meta.capabilities and meta.actions:
-                    lines.append("  Actions:")
-                    for act in meta.actions:
-                        param_parts = []
-                        for p in act.parameters:
-                            req = ", required" if p.get("required") else ""
-                            param_parts.append(f"{p['name']} ({p.get('type', 'string')}{req})")
-                        params_str = "; ".join(param_parts) if param_parts else "see docs"
-                        lines.append(f"    - {act.name}: {act.description}  params: {params_str}")
-
-            connected_block = "\n".join(lines) if lines else ""
-            if not lines:
-                connected_block = "No connectors are currently connected."
+            connected_block: str = (
+                "\n".join(lines) if len(lines) > 2 else "No connectors are currently connected."
+            )
 
             # List connectors that exist but are not enabled for this org (no active Integration).
             not_enabled_slugs: list[str] = sorted(

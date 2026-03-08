@@ -275,6 +275,91 @@ class GoogleDriveConnector(BaseConnector):
         ],
         nango_integration_id="google-drive",
         description="Google Drive – file metadata sync, search, read, create, and edit",
+        usage_guide="""# Google Drive Usage Guide
+
+## Query format (query_system)
+
+Use the `query` parameter with one of these prefixes:
+
+| Prefix | Example | Description |
+|--------|---------|-------------|
+| `search:` | `search:quarterly report` | Search files by name (partial match) |
+| `search:` | `search:spreadsheet`, `search:document`, `search:presentation` | List files of that type |
+| `type:` | `type:spreadsheet`, `type:document` | List all files of that type |
+| `file:` | `file:abc123xyz` | Read file content by Drive file ID (external_id) |
+
+**Examples:**
+- `search:Q4 budget` — find files with "Q4 budget" in the name
+- `type:spreadsheet` — list all spreadsheets
+- `file:1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms` — read that file's content
+
+---
+
+## create_file action
+
+Creates a new Google Doc, Sheet, or Slides presentation.
+
+| Param | Type | Required | Description |
+|-------|------|---------|-------------|
+| file_type | string | Yes | One of: `document`, `spreadsheet`, `presentation` |
+| title | string | Yes | Display name for the new file |
+| content | string | Yes | Content — format depends on file_type (see below) |
+| folder_id | string | No | Drive folder ID to place the file in |
+
+### Content format by file type
+
+**Documents** — Markdown:
+- Headings: `#`, `##`, `###`, `####`
+- Inline: `**bold**`, `*italic*`, `` `code` ``
+- Lists: `- item` or `* item` for bullets; `1. item` for numbered
+
+**Spreadsheets** — JSON:
+```json
+{"sheets": [{"title": "Sheet1", "data": [["Name", "Amount"], ["Acme", 1000], ["Beta", 2500]]}]}
+```
+Each row is an array of cell values. Use `{"data": [[...]]}` as shorthand for a single sheet named "Sheet1".
+
+**Presentations** — JSON:
+```json
+{"slides": [{"title": "Slide 1 Title", "body": "Body text here"}, {"title": "Slide 2", "body": "More content"}]}
+```
+
+---
+
+## edit_file action
+
+Edits an existing Google Doc, Sheet, or Slides. Requires edit permission on the file.
+
+| Param | Type | Required | Description |
+|-------|------|---------|-------------|
+| external_id | string | Yes | Google Drive file ID (from search results or shared_files table) |
+| content | string | Yes | New content — same format as create_file |
+| mode | string | No | `replace` (default) or `append` — **append is documents only** |
+
+**Mode support:**
+- **Documents**: `replace` (overwrites all) or `append` (adds to end)
+- **Spreadsheets**: `replace` only — append not supported
+- **Presentations**: `replace` only — append not supported
+
+---
+
+## Examples
+
+**Create a meeting notes doc:**
+```json
+{"file_type": "document", "title": "Q1 Planning Notes", "content": "# Q1 Planning\\n\\n## Attendees\\n- Alice\\n- Bob\\n\\n## Action items\\n1. Review budget\\n2. Schedule follow-up"}
+```
+
+**Create a simple spreadsheet:**
+```json
+{"file_type": "spreadsheet", "title": "Sales Pipeline", "content": "{\\\"sheets\\\": [{\\\"title\\\": \\\"Deals\\\", \\\"data\\\": [[\\\"Company\\\", \\\"Amount\\\", \\\"Stage\\\"], [\\\"Acme\\\", 5000, \\\"Proposal\\\"]]}]}"}
+```
+
+**Edit a doc (append):**
+```json
+{"external_id": "1abc...", "content": "\\n## Additional notes\\n- New item", "mode": "append"}
+```
+""",
     )
 
     def __init__(self, organization_id: str, user_id: str) -> None:

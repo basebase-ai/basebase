@@ -97,6 +97,49 @@ class SlackConnector(BaseConnector):
         ],
         nango_integration_id="slack",
         description="Slack workspace – messages, channels, and real-time events",
+        usage_guide="""# Slack Usage Guide
+
+## send_message action
+
+Send a message to a Slack channel, DM, or user.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| channel | string | No* | Channel ID (C123), DM ID (D123), or MPIM ID (G123). Use for channels or existing DMs. |
+| user_id | string | No* | Slack user ID (U123). If provided without channel, opens a DM to this user and sends. |
+| text | string | Yes | Message content in Slack mrkdwn format |
+| thread_ts | string | No | Thread timestamp to reply in-thread (only when channel is provided) |
+
+*Provide either `channel` or `user_id` (or both — channel takes precedence).
+
+### Slack mrkdwn format
+
+- **Bold**: `*text*`
+- **Italic**: `_text_`
+- **Strikethrough**: `~text~`
+- **Links**: `<https://example.com|link text>`
+- **Code**: `` `code` `` (inline) or ``` ```code block``` ``` (multiline)
+- **Headers**: Use `*Header*` for emphasis (Slack has no native headers)
+
+**Note:** Standard Markdown (`**bold**`, `[text](url)`) is automatically converted to mrkdwn when possible.
+
+### Examples
+
+**Send to a channel:**
+```json
+{"channel": "C01234ABCD", "text": "*Reminder:* Standup in 5 minutes!"}
+```
+
+**Send to a user (opens DM):**
+```json
+{"user_id": "U01234ABCD", "text": "Here's the report you asked for."}
+```
+
+**Reply in a thread:**
+```json
+{"channel": "C01234ABCD", "text": "Got it, will follow up.", "thread_ts": "1234567890.123456"}
+```
+""",
     )
 
     def __init__(

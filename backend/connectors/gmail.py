@@ -52,6 +52,36 @@ class GmailConnector(BaseConnector):
         ],
         nango_integration_id="gmail",
         description="Gmail – email sync and send",
+        usage_guide="""# Gmail Usage Guide
+
+## send_email action
+
+Send an email via the user's connected Gmail account. Emails are sent from the authenticated user's Gmail address.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| to | string | Yes | Recipient email address (single address) |
+| subject | string | Yes | Email subject line |
+| body | string | Yes | Email body — plain text only |
+| cc | array | No | CC recipients (list of email strings) |
+| bcc | array | No | BCC recipients (list of email strings) |
+
+**Note:** The body is plain text. HTML is not supported. For formatted content, use simple formatting (line breaks, bullet points with `-`).
+
+### Examples
+
+**Simple email:**
+```json
+{"to": "alice@example.com", "subject": "Meeting follow-up", "body": "Hi Alice,\\n\\nHere are the notes from our call.\\n\\n- Action 1\\n- Action 2"}
+```
+
+**With CC:**
+```json
+{"to": "client@example.com", "subject": "Proposal", "body": "Please find attached...", "cc": ["manager@company.com"]}
+```
+
+**Querying email data:** Synced emails appear in the `activities` table. Use `run_sql_query` with `WHERE source_system = 'gmail'` to search by subject, description, or date.
+""",
     )
 
     async def _get_headers(self) -> dict[str, str]:
