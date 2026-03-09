@@ -604,7 +604,7 @@ register_tool(
 - All SQL must be SELECT-only. No INSERT/UPDATE/DELETE.
 - Do NOT add organization_id to WHERE clauses (RLS handles it).
 - frontend_code must export a default React component.
-- When creating or updating app UI, include iframe-friendly CSS resets/layout safeguards (e.g., `html, body, #root { margin: 0; padding: 0; width: 100%; max-width: 100%; overflow-x: hidden; }` and `box-sizing: border-box`) so embeds render correctly across host pages.
+- When creating or updating app UI, NEVER use `<style>` tags or standard CSS classes, as strict Content Security Policies in the sandboxed iframes block them. You MUST use inline CSS for ALL styling directly on the elements (e.g. `style={{ margin: 0, padding: 0, width: "100%", overflowX: "hidden" }}`). Do NOT use generic class names except those provided by standard Basebase SDK components.
 
 **Example create:**
 {
