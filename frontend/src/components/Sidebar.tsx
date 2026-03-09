@@ -16,7 +16,7 @@ import type { View, ChatSummary, OrganizationInfo } from './AppLayout';
 import { useAppStore, useIsGlobalAdmin, useActiveTasksByConversation, type UserOrganization } from '../store';
 import { updateConversation } from '../api/client';
 import { Avatar, type AvatarUser } from './Avatar';
-import { APP_NAME, LOGO_PATH } from '../lib/brand';
+import { APP_NAME, LOGO_PATH, RELEASE_STAGE } from '../lib/brand';
 
 /** Small SVG donut chart showing remaining credits as a ring. */
 function CreditDonut({ balance, total }: { balance: number; total: number }): JSX.Element {
@@ -52,7 +52,6 @@ function CreditDonut({ balance, total }: { balance: number; total: number }): JS
 
 /** Organization switcher — displayed prominently at the top of the sidebar. */
 function OrgSwitcherSection({
-  collapsed: _collapsed,
   organization,
   members,
   creditsDisplay,
@@ -60,7 +59,6 @@ function OrgSwitcherSection({
   onOpenBilling,
   onCreateNewOrg,
 }: {
-  collapsed: boolean;
   organization: OrganizationInfo;
   members: AvatarUser[];
   creditsDisplay: { balance: number; included: number } | null;
@@ -105,16 +103,25 @@ function OrgSwitcherSection({
             <img
               src={organization.logoUrl}
               alt={organization.name}
-              className="w-9 h-9 rounded-lg object-cover flex-shrink-0"
+              className="w-9 h-9 rounded-lg object-cover flex-shrink-0 self-start mt-0.5"
             />
           ) : (
-            <div className="w-9 h-9 rounded-lg bg-surface-800 flex items-center justify-center flex-shrink-0">
+            <div className="w-9 h-9 rounded-lg bg-surface-800 flex items-center justify-center flex-shrink-0 self-start mt-0.5">
               <img src={LOGO_PATH} alt={APP_NAME} className="w-6 h-6" />
             </div>
           )}
-          <span className="text-lg font-semibold text-surface-100 truncate flex-1 text-left leading-tight">
-            {organization.name}
-          </span>
+          <div className="flex-1 min-w-0 text-left">
+            <div className="text-lg font-semibold text-surface-100 truncate leading-tight">
+              {organization.name}
+            </div>
+            {RELEASE_STAGE.stage && (
+              <div className="">
+                <span className="px-1.5 py-0.5 rounded bg-primary-500/15 text-primary-400/80 font-medium text-[10px] uppercase tracking-wide" title={RELEASE_STAGE.description}>
+                  {RELEASE_STAGE.message}
+                </span>
+              </div>
+            )}
+          </div>
           <svg className="w-4 h-4 text-surface-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
           </svg>
@@ -377,7 +384,6 @@ export function Sidebar({
           </button>
         )}
         <OrgSwitcherSection
-          collapsed={collapsed}
           organization={organization}
           members={members}
           creditsDisplay={creditsDisplay}
