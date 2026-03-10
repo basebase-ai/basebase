@@ -50,17 +50,24 @@ def _redis_key(operation_id: str, field: str) -> str:
     return f"bulk_op:{operation_id}:{field}"
 
 
-def run_async(coro: Any) -> Any:
-    """Run an async function in a sync Celery task context."""
-    from models.database import dispose_engine
+_worker_loop: asyncio.AbstractEventLoop | None = None
 
-    dispose_engine()
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
+
+def run_async(coro: Any) -> Any:
+    """Run an async function in a sync Celery task context.
+
+    Reuses a single event loop per worker process so that asyncpg connections
+    remain valid across task invocations.
+    """
+    global _worker_loop
+
+    if _worker_loop is None or _worker_loop.is_closed():
+        from models.database import dispose_engine
+        dispose_engine()
+        _worker_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_worker_loop)
+
+    return _worker_loop.run_until_complete(coro)
 
 
 async def _mark_operation_failed(operation_id: str, organization_id: str, error: str) -> None:
