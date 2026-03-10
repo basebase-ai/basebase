@@ -918,6 +918,8 @@ export const useChatStore = create<ChatState>()(
       const current = conversations[conversationId];
       if (!current) return;
 
+      const isUpdate = (artifact as { updated?: boolean }).updated === true;
+
       const updated: ChatMessage[] = current.messages.map(
         (msg, idx, arr) => {
           const isLastAssistant =
@@ -926,13 +928,26 @@ export const useChatStore = create<ChatState>()(
 
           if (isLastAssistant) {
             const blocks = msg.contentBlocks ?? [];
-            return {
-              ...msg,
-              contentBlocks: [
-                ...blocks,
-                { type: "artifact" as const, artifact },
-              ],
-            };
+            let newBlocks: ContentBlock[];
+            if (isUpdate) {
+              let lastIdx = -1;
+              for (let i = blocks.length - 1; i >= 0; i--) {
+                const b = blocks[i];
+                if (b && b.type === "artifact" && b.artifact.id === artifact.id) {
+                  lastIdx = i;
+                  break;
+                }
+              }
+              if (lastIdx >= 0) {
+                newBlocks = [...blocks];
+                newBlocks[lastIdx] = { type: "artifact" as const, artifact };
+              } else {
+                newBlocks = [...blocks, { type: "artifact" as const, artifact }];
+              }
+            } else {
+              newBlocks = [...blocks, { type: "artifact" as const, artifact }];
+            }
+            return { ...msg, contentBlocks: newBlocks };
           }
           return msg;
         },

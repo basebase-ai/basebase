@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { apiRequest } from "../lib/api";
-import { useAppStore } from "../store";
+import { useAppStore, useUIStore } from "../store";
 import { ArtifactViewer } from "./ArtifactViewer";
 
 interface ArtifactApiResponse {
@@ -80,6 +80,15 @@ export function ArtifactFullView({
   useEffect(() => {
     void fetchArtifact();
   }, [fetchArtifact]);
+
+  // Refetch when this artifact is updated by the agent (real-time update)
+  const lastArtifactUpdateId = useUIStore((s) => s.lastArtifactUpdateId);
+  useEffect(() => {
+    if (lastArtifactUpdateId === artifactId) {
+      useUIStore.getState().consumeArtifactUpdate();
+      void fetchArtifact();
+    }
+  }, [lastArtifactUpdateId, artifactId, fetchArtifact]);
 
   const organization = useAppStore((s) => s.organization);
   const organizations = useAppStore((s) => s.organizations);

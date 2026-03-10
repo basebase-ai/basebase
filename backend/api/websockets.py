@@ -172,7 +172,7 @@ async def broadcast_tool_progress(
         organization_id: The organization UUID
         conversation_id: The conversation containing the tool call
         tool_id: The tool_use block ID
-        tool_name: Name of the tool (e.g., "create_artifact")
+        tool_name: Name of the tool (e.g., "write_on_connector")
         result: Progress result dict
         status: "running" for progress, "complete" when done
     """

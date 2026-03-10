@@ -1,12 +1,12 @@
 """
-Unified Tool Registry for Revtops Agent.
+Unified Tool Registry for Basebase Agent.
 
 This module defines all tools available to the agent with:
 - Categories (local_read, local_write, external_read, external_write)
 - Default approval requirements
 - Tool metadata for Claude
 
-Mental Model ("Cursor for GTM"):
+Mental Model ("Cursor for your business"):
 - LOCAL_READ: Query synced data - always safe (like reading files)
 - LOCAL_WRITE: Modify synced data - tracked, reversible (like editing files)
 - EXTERNAL_READ: Web search, enrichment - may cost $ (like API calls)
@@ -336,55 +336,6 @@ Rules:
             },
         },
         "required": ["query"],
-    },
-    category=ToolCategory.LOCAL_WRITE,
-    default_requires_approval=False,
-)
-
-
-register_tool(
-    name="create_artifact",
-    description="""Create a downloadable artifact (file) for the user.
-
-Use this to create files the user can view, interact with, and download:
-- Text files (.txt) - plain text content
-- Markdown documents (.md) - formatted documentation, reports  
-- PDF documents (.pdf) - provide content as markdown, will be converted
-- Charts (.html) - interactive Plotly charts
-
-The artifact appears as a clickable tile in the chat. When clicked, it opens 
-in a side panel where the user can view and download it.
-
-For charts, provide a valid Plotly JSON specification as the content.
-Example chart content:
-{
-  "data": [{"type": "bar", "x": ["Q1", "Q2", "Q3"], "y": [10, 20, 30]}],
-  "layout": {"title": "Quarterly Sales"}
-}
-
-For PDFs, write the content in markdown format - it will be converted to PDF.""",
-    input_schema={
-        "type": "object",
-        "properties": {
-            "title": {
-                "type": "string",
-                "description": "Display title for the artifact",
-            },
-            "filename": {
-                "type": "string",
-                "description": "Filename with extension (e.g., 'report.pdf', 'summary.md', 'chart.html')",
-            },
-            "content_type": {
-                "type": "string",
-                "enum": ["text", "markdown", "pdf", "chart"],
-                "description": "Type of artifact to create",
-            },
-            "content": {
-                "type": "string",
-                "description": "File content: text/markdown for text types, Plotly JSON for charts",
-            },
-        },
-        "required": ["title", "filename", "content_type", "content"],
     },
     category=ToolCategory.LOCAL_WRITE,
     default_requires_approval=False,

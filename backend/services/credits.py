@@ -224,13 +224,13 @@ def credits_for_tool(
         return 1
     # Connector write-back
     if tool_name == "write_on_connector":
+        connector: str = (tool_input or {}).get("connector", "")
+        if connector == "artifacts":
+            return 5
         return 2
     # Connector queries often cross sources
     if tool_name == "query_on_connector":
         return 2
-    # Artifacts / reports
-    if tool_name == "create_artifact":
-        return 5
     # Run on connector (enrichment, etc.)
     if tool_name == "run_on_connector":
         return 3

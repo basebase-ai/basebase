@@ -209,10 +209,10 @@ All external connectors (HubSpot, Linear, Gmail, Slack, etc.) are **user-scoped*
 
 ### Writing & Modifying Data
 - **write_to_system_of_record**: Universal tool for creating or updating records in ANY connected external connector — CRMs (HubSpot, Salesforce), issue trackers (Linear, Jira, Asana), code repos (GitHub, GitLab), and more. Accepts target_system, record_type, operation, and records array. Single-record writes execute immediately; bulk CRM writes go through the Pending Changes panel.
-- **run_sql_write**: Execute INSERT/UPDATE/DELETE SQL. Use this for **internal tables** (workflows, artifacts) or **ad-hoc single-record CRM edits**. CRM table writes (contacts, deals, accounts) also go through the Pending Changes review flow. Prefer write_to_system_of_record for external connector operations.
+- **run_sql_write**: Execute INSERT/UPDATE/DELETE SQL. Use this for **internal tables** (workflows) or **ad-hoc single-record CRM edits**. For artifacts, use **write_on_connector** (connector="artifacts"). CRM table writes (contacts, deals, accounts) also go through the Pending Changes review flow. Prefer write_to_system_of_record for external connector operations.
 
 ### Creating Outputs
-- **create_artifact**: Save a file the user can view and download — reports (.md/.pdf), charts (.html with Plotly), or data exports (.txt).
+- **Artifacts (write_on_connector, connector="artifacts")**: When the user asks to **edit, revise, update, change, or add to** an artifact from this conversation — use **operation="update"** with the `artifact_id` from the prior create/update tool result. The same URL stays; do not create a new artifact. Use **operation="create"** only for brand-new content. If unsure of the artifact_id, use **query_on_connector** with `query="read <artifact_id>"` to fetch it.
 - **write_app**: Create or update an **interactive mini-app** with live data. Use this when the user wants a dashboard, chart with filters/dropdowns, or any interactive data view. The app has server-side SQL queries and client-side React code that calls them via the `useAppQuery` SDK hook. Apps appear in the Apps gallery and can be shared/embedded.
   - Operations: `create` (new app), `update` (modify existing), `read` (inspect code), `test_query` (verify data)
   - **Best practice**: After creating an app, use `test_query` to verify the SQL returns correct data before considering it done.
@@ -273,7 +273,8 @@ When the user provides a CSV or file for import, include ALL available fields fr
 | Enrich contacts then save results | **enrich_with_apollo** → **write_to_system_of_record** |
 | Create a Linear/Jira issue | **write_to_system_of_record** (target_system="linear", record_type="issue") |
 | File a GitHub issue | **write_to_system_of_record** (target_system="github", record_type="issue") |
-| Create a report or chart | **run_sql_query** → **create_artifact** |
+| Create a report or chart | **run_sql_query** → **write_on_connector** (connector="artifacts", operation="create") |
+| Edit/update an existing artifact | **write_on_connector** (connector="artifacts", operation="update", data={artifact_id: "…", content: "…"}) |
 | Create an interactive dashboard or chart with filters | **run_sql_query** (inspect data) → **write_app** (create) → **write_app** (test_query to verify) |
 | Complex multi-step data analysis, statistical modeling, or ML | **run_on_connector** (connector=code_sandbox, action=execute_command) — only if code_sandbox is enabled in Connected Connectors |
 | Generate a chart programmatically (matplotlib, seaborn) | **run_on_connector** (code_sandbox, execute_command) — only if enabled |
@@ -1673,12 +1674,14 @@ WHERE scheduled_start >= '2026-01-27'::date AND scheduled_start < '2026-01-28'::
                     self.user_id,
                 )
 
-                # Build context with conversation_id and tool_id for progress updates
+                # Build context with conversation_id, message_id, tool_id for progress updates and connectors
                 tool_context: dict[str, Any] = {}
                 if self.workflow_context:
                     tool_context.update(self.workflow_context)
                 if self.conversation_id:
                     tool_context["conversation_id"] = self.conversation_id
+                if self._current_message_id:
+                    tool_context["message_id"] = str(self._current_message_id)
                 tool_context["tool_id"] = tool_id
 
                 # Execute tool with hard timeout so we always yield a result and the UI can stop "Running"
@@ -1729,7 +1732,7 @@ WHERE scheduled_start >= '2026-01-27'::date AND scheduled_start < '2026-01-28'::
                 })
 
                 # Emit artifact or app block for frontend rendering
-                if tool_name == "create_artifact" and tool_result.get("status") == "success":
+                if tool_result.get("status") == "success":
                     artifact_data: dict[str, Any] | None = tool_result.get("artifact")
                     if artifact_data:
                         yield json.dumps({
