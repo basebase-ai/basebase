@@ -37,7 +37,7 @@ const AppFullView = lazy(() => import('./apps/AppFullView').then(m => ({ default
 const ArtifactFullView = lazy(() => import('./ArtifactFullView').then(m => ({ default: m.ArtifactFullView })));
 import { APP_NAME, LOGO_PATH, RELEASE_STAGE } from '../lib/brand';
 import { ProfilePanel } from './ProfilePanel';
-import { useAppStore, useMasquerade, useIntegrations, type ActiveTask, type ToolCallData, type ChatMessage, type ContentBlock } from '../store';
+import { useAppStore, useUIStore, useMasquerade, useIntegrations, type ActiveTask, type ToolCallData, type ChatMessage, type ContentBlock } from '../store';
 import { useTeamMembers, useWebSocket } from '../hooks';
 import { apiRequest } from '../lib/api';
 
@@ -779,16 +779,20 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
                 return next;
               });
             } else if (data.type === 'artifact') {
-              // Artifact created - add artifact block to the message
+              // Artifact created or updated - add artifact block to the message
               const artifact = data.artifact as {
                 id: string;
                 title: string;
                 filename: string;
                 contentType: "text" | "markdown" | "pdf" | "chart";
                 mimeType: string;
+                updated?: boolean;
               } | undefined;
               if (artifact) {
                 addConversationArtifactBlock(conversation_id, artifact);
+                if (artifact.updated) {
+                  useUIStore.getState().notifyArtifactUpdated(artifact.id);
+                }
               }
             } else if (data.type === 'app') {
               // App created - add app block to the message
@@ -1014,8 +1018,14 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
                     filename: string;
                     contentType: 'text' | 'markdown' | 'pdf' | 'chart';
                     mimeType: string;
+                    updated?: boolean;
                   } | undefined;
-                  if (artifact) addConversationArtifactBlock(conversationId, artifact);
+                  if (artifact) {
+                    addConversationArtifactBlock(conversationId, artifact);
+                    if (artifact.updated) {
+                      useUIStore.getState().notifyArtifactUpdated(artifact.id);
+                    }
+                  }
                 } else if (data.type === 'app') {
                   const app = data.app as {
                     id: string;

@@ -273,6 +273,7 @@ PROVIDER_SHARING_DEFAULTS: dict[str, SharingDefaults] = {
     "web_search": SharingDefaults(share_synced_data=True),
     "code_sandbox": SharingDefaults(share_synced_data=True),
     "twilio": SharingDefaults(share_synced_data=True),
+    "artifacts": SharingDefaults(share_synced_data=True),
 }
 
 

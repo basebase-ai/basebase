@@ -22,9 +22,13 @@ export interface UIState {
   currentAppId: string | null;
   currentArtifactId: string | null;
   pinnedChatIds: string[];
+  /** Last artifact id that was updated (from stream). Cleared after consumed. */
+  lastArtifactUpdateId: string | null;
 
   // Actions
   setSidebarCollapsed: (collapsed: boolean) => void;
+  notifyArtifactUpdated: (artifactId: string) => void;
+  consumeArtifactUpdate: () => string | null;
   setSidebarWidth: (width: number) => void;
   setCurrentView: (view: View) => void;
   setCurrentAppId: (id: string | null) => void;
@@ -49,8 +53,15 @@ export const useUIStore = create<UIState>()(
       currentAppId: null,
       currentArtifactId: null,
       pinnedChatIds: [],
+      lastArtifactUpdateId: null,
 
       // Actions
+      notifyArtifactUpdated: (artifactId) => set({ lastArtifactUpdateId: artifactId }),
+      consumeArtifactUpdate: () => {
+        const id = get().lastArtifactUpdateId;
+        if (id) set({ lastArtifactUpdateId: null });
+        return id ?? null;
+      },
       setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
       setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
       setCurrentView: (currentView) => {

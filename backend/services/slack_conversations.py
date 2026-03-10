@@ -2171,7 +2171,8 @@ async def _stream_and_post_responses(
                 f"{base}{prefix}/artifacts/{artifact_id}" if artifact_id else ""
             )
             if view_url:
-                return f"📎 Created: *{title}* — <{view_url}|View on Basebase>"
+                action: str = "Updated" if artifact.get("updated") else "Created"
+                return f"📎 {action}: *{title}* — <{view_url}|View on Basebase>"
         elif chunk_type == "app":
             app: dict[str, Any] | None = payload.get("app")
             if not app:

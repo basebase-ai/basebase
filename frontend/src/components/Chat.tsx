@@ -164,7 +164,7 @@ export function Chat({
   
   // Local state
   const [input, setInput] = useState<string>('');
-  const [currentArtifact, setCurrentArtifact] = useState<AnyArtifact | null>(null);
+  const [currentArtifactId, setCurrentArtifactId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
   // App preview panel state
@@ -284,6 +284,20 @@ export function Chat({
     return apps;
   }, [messages]);
 
+  // Derive current artifact from messages (latest block with matching id) so updates propagate in real time
+  const currentArtifact = useMemo((): AnyArtifact | null => {
+    if (!currentArtifactId) return null;
+    let latest: AnyArtifact | null = null;
+    for (const msg of messages) {
+      for (const block of msg.contentBlocks) {
+        if (block.type === "artifact" && block.artifact.id === currentArtifactId) {
+          latest = block.artifact as AnyArtifact;
+        }
+      }
+    }
+    return latest;
+  }, [messages, currentArtifactId]);
+
   // Auto-switch to latest app when a new one appears
   useEffect(() => {
     if (conversationApps.length > prevAppCountRef.current && conversationApps.length > 0) {
@@ -386,7 +400,7 @@ export function Chat({
   // Reset local state when chatId changes
   useEffect(() => {
     setLocalConversationId(chatId ?? null);
-    setCurrentArtifact(null);
+    setCurrentArtifactId(null);
     // Reset preview state for new conversation
     setPreviewDismissed(false);
     setPreviewAppId(null);
@@ -1460,8 +1474,8 @@ export function Chat({
                     key={msg.id}
                     message={msg}
                     toolApprovals={toolApprovals}
-                    onArtifactClick={setCurrentArtifact}
-                    onAppClick={(app: AppBlock["app"]) => { setPreviewAppId(app.id); setPreviewCollapsed(false); setPreviewDismissed(false); setCurrentArtifact(null); }}
+                    onArtifactClick={(a) => setCurrentArtifactId(a.id)}
+                    onAppClick={(app: AppBlock["app"]) => { setPreviewAppId(app.id); setPreviewCollapsed(false); setPreviewDismissed(false); setCurrentArtifactId(null); }}
                     onToolApprove={handleToolApprove}
                     onToolCancel={handleToolCancel}
                     onToolClick={(block) => setSelectedToolCall({
@@ -1514,7 +1528,7 @@ export function Chat({
             {/* Mobile backdrop */}
             <div
               className="fixed inset-0 bg-black/50 z-40 md:hidden animate-fade-in"
-              onClick={() => setCurrentArtifact(null)}
+              onClick={() => setCurrentArtifactId(null)}
             />
             <div className="fixed inset-y-0 right-0 w-full max-w-md z-50 animate-slide-in-right md:relative md:w-1/2 md:z-auto md:animate-none md:transition-all md:duration-300 md:ease-in-out border-l border-surface-800 bg-surface-900 p-4 overflow-y-auto">
               <div className="flex items-center justify-between mb-2">
@@ -1522,7 +1536,7 @@ export function Chat({
                   {currentArtifact.title}
                 </h2>
                 <button
-                  onClick={() => setCurrentArtifact(null)}
+                  onClick={() => setCurrentArtifactId(null)}
                   className="text-surface-400 hover:text-surface-200 p-1 -mr-1"
                 >
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -2283,22 +2297,6 @@ function getToolStatusText(
       }
       return `Querying ${tableDesc}...`;
     }
-    case 'create_artifact': {
-      const artifactTitle = typeof input?.title === 'string' ? input.title : 'artifact';
-      const artifactType = typeof input?.content_type === 'string' ? input.content_type : 'file';
-      if (isComplete) {
-        return `Created ${artifactType}: ${artifactTitle}`;
-      }
-      // Show progress message from result if available
-      const progressMsg = typeof result?.message === 'string' ? result.message : null;
-      const charsProcessed = typeof result?.chars_processed === 'number' ? result.chars_processed : 0;
-      const totalChars = typeof result?.total_chars === 'number' ? result.total_chars : 0;
-      if (progressMsg && totalChars > 0) {
-        const progress = Math.round((charsProcessed / totalChars) * 100);
-        return `${progressMsg} (${progress}%)`;
-      }
-      return progressMsg || `Creating ${artifactType}...`;
-    }
     case 'write_to_system_of_record': {
       const targetSystem = typeof input?.target_system === 'string' ? input.target_system : '';
       const recordType = typeof input?.record_type === 'string' ? input.record_type : 'record';
@@ -2394,6 +2392,12 @@ function getToolStatusText(
     case 'write_on_connector': {
       const writeConnector: string = typeof input?.connector === 'string' ? input.connector : '';
       const writeOp: string = typeof input?.operation === 'string' ? input.operation : 'write';
+      if (writeConnector === 'artifacts') {
+        if (isComplete) {
+          return result?.error ? 'Artifact update failed' : (writeOp === 'update' ? 'Updated artifact' : 'Created artifact');
+        }
+        return writeOp === 'update' ? 'Updating artifact...' : 'Creating artifact...';
+      }
       const connectorLabel: string = writeConnector ? writeConnector.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()) : 'connector';
       const opLabel: string = writeOp.replace(/_/g, ' ');
       if (isComplete) {

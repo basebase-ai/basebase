@@ -3,7 +3,7 @@ Tool definitions and execution for Claude.
 
 Tools are organized by category (see registry.py):
 - LOCAL_READ: run_sql_query
-- LOCAL_WRITE: create_artifact, run_sql_write, run_workflow, write_app, keep_notes, manage_memory, foreach, initiate_connector
+- LOCAL_WRITE: run_sql_write, run_workflow, write_app, keep_notes, manage_memory, foreach, initiate_connector
 - EXTERNAL_READ: query_on_connector, list_connected_connectors
 - EXTERNAL_WRITE: write_on_connector, run_on_connector, trigger_sync
 
@@ -33,7 +33,6 @@ from sqlalchemy import select, text
 from config import settings
 from models.account import Account
 from models.app import App
-from models.artifact import Artifact
 from models.conversation import Conversation
 from models.contact import Contact
 from models.pending_operation import PendingOperation, CrmOperation  # CrmOperation is alias
@@ -307,7 +306,6 @@ async def execute_tool(
         "run_sql_query": lambda: _run_sql_query(tool_input, organization_id, user_id),
         "run_sql_write": lambda: _run_sql_write(tool_input, organization_id, user_id, context),
         "run_workflow": lambda: _run_workflow(tool_input, organization_id, user_id, context),
-        "create_artifact": lambda: _create_artifact(tool_input, organization_id, user_id, context),
         "write_app": lambda: _write_app(tool_input, organization_id, user_id, context),
         "keep_notes": lambda: _keep_notes(tool_input, organization_id, user_id, context, skip_approval),
         "manage_memory": lambda: _manage_memory(tool_input, organization_id, user_id, skip_approval),
@@ -318,7 +316,7 @@ async def execute_tool(
         "list_connected_connectors": lambda: _list_connected_connectors(organization_id),
         "get_connector_docs": lambda: _get_connector_docs(tool_input, organization_id),
         "query_on_connector": lambda: _query_on_connector(tool_input, organization_id, user_id),
-        "write_on_connector": lambda: _write_on_connector(tool_input, organization_id, user_id, skip_approval, conversation_id),
+        "write_on_connector": lambda: _write_on_connector(tool_input, organization_id, user_id, skip_approval, context),
         "run_on_connector": lambda: _run_on_connector(tool_input, organization_id, user_id, skip_approval, context),
     }
 
@@ -365,8 +363,6 @@ def _log_tool_execution_result(
         logger.info("[Tools] read_cloud_file completed: %s", result.get("file_name", "unknown"))
     elif executed_tool_name == "edit_cloud_file":
         logger.info("[Tools] edit_cloud_file completed: %s", result.get("status", result.get("error", "unknown")))
-    elif executed_tool_name == "create_artifact":
-        logger.info("[Tools] create_artifact completed: %s", result.get("artifact_id"))
     elif executed_tool_name == "keep_notes":
         logger.info("[Tools] keep_notes completed: %s", result.get("note_id", result.get("error", result.get("status"))))
     elif executed_tool_name == "manage_memory":
@@ -752,12 +748,19 @@ async def _write_on_connector(
     organization_id: str,
     user_id: str | None,
     skip_approval: bool,
-    conversation_id: str | None,
+    context: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Dispatch a write to a WRITE-capable connector."""
     connector: str = (params.get("connector") or "").strip()
     operation: str = (params.get("operation") or "").strip()
-    data: dict[str, Any] = params.get("data") or {}
+    data: dict[str, Any] = dict(params.get("data") or {})
+
+    if connector == "artifacts":
+        ctx: dict[str, Any] = context or {}
+        if ctx.get("conversation_id"):
+            data["conversation_id"] = ctx["conversation_id"]
+        if ctx.get("message_id"):
+            data["message_id"] = str(ctx["message_id"]) if ctx["message_id"] else None
 
     if not connector:
         return {"error": "connector is required"}
@@ -4914,7 +4917,7 @@ async def _initiate_connector(
             }
 
     # Handle built-in connectors (no OAuth needed)
-    builtin_connectors = {"web_search", "code_sandbox", "twilio"}
+    builtin_connectors = {"web_search", "code_sandbox", "twilio", "artifacts"}
     if provider in builtin_connectors:
         return {
             "action": "connect_builtin",
@@ -5133,159 +5136,6 @@ async def _run_workflow(
     except Exception as e:
         logger.error("[Tools._run_workflow] Failed: %s", str(e))
         return {"error": f"Failed to run workflow: {str(e)}", "status": "failed"}
-
-
-# =============================================================================
-# Artifact Creation Tool
-# =============================================================================
-
-# Mapping of content_type to MIME type
-CONTENT_TYPE_TO_MIME: dict[str, str] = {
-    "text": "text/plain",
-    "markdown": "text/markdown",
-    "pdf": "application/pdf",
-    "chart": "application/json",
-}
-
-
-async def _create_artifact(
-    params: dict[str, Any],
-    organization_id: str,
-    user_id: str | None,
-    context: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """
-    Create a downloadable artifact (file) for the user.
-    
-    Args:
-        params: Tool input with title, filename, content_type, content
-        organization_id: Organization UUID
-        user_id: User UUID
-        context: Optional context with conversation_id, message_id
-        
-    Returns:
-        Artifact metadata for frontend display
-    """
-    title: str = params.get("title", "Untitled")
-    filename: str = params.get("filename", "artifact.txt")
-    content_type: str = params.get("content_type", "text")
-    content: str = params.get("content", "")
-    
-    # Centralized progress updater
-    progress = ToolProgressUpdater(context, organization_id)
-    content_len = len(content)
-    
-    # Send initial progress
-    await progress.update({
-        "message": f"Validating {content_type} content...",
-        "title": title,
-        "content_type": content_type,
-        "chars_processed": 0,
-        "total_chars": content_len,
-    })
-    
-    # Validate content_type
-    valid_types: set[str] = {"text", "markdown", "pdf", "chart"}
-    if content_type not in valid_types:
-        return {
-            "error": f"Invalid content_type '{content_type}'. Must be one of: {', '.join(valid_types)}"
-        }
-    
-    # Validate content is not empty
-    if not content.strip():
-        return {"error": "Content cannot be empty"}
-    
-    # For charts, validate JSON
-    if content_type == "chart":
-        try:
-            chart_spec = json.loads(content)
-            # Ensure it has the basic Plotly structure
-            if not isinstance(chart_spec, dict):
-                return {"error": "Chart content must be a JSON object"}
-            if "data" not in chart_spec:
-                return {"error": "Chart content must have a 'data' field with Plotly traces"}
-        except json.JSONDecodeError as e:
-            return {"error": f"Invalid JSON for chart: {str(e)}"}
-    
-    # Get MIME type
-    mime_type: str = CONTENT_TYPE_TO_MIME.get(content_type, "application/octet-stream")
-    
-    # For PDF, we'll store markdown content and generate PDF on download
-    # This avoids storing large base64 content in the database
-    stored_content: str = content
-    if content_type == "pdf":
-        # Store markdown source - PDF will be generated on demand
-        mime_type = "text/markdown"  # Source is markdown
-    
-    # Get context for linking (already extracted above, but get message_id)
-    message_id: str | None = context.get("message_id") if context else None
-    conversation_id: str | None = progress.conversation_id
-    
-    # Update progress before database save
-    await progress.update({
-        "message": f"Saving {content_type} artifact...",
-        "title": title,
-        "content_type": content_type,
-        "chars_processed": content_len,
-        "total_chars": content_len,
-    })
-    
-    # Create artifact in database
-    artifact_uuid: UUID = uuid4()
-    artifact_id_str: str = str(artifact_uuid)
-    user_uuid: UUID | None = UUID(user_id) if user_id else None
-
-    async with get_session(organization_id=organization_id) as session:
-        artifact = Artifact(
-            id=artifact_uuid,
-            user_id=user_uuid,
-            organization_id=organization_id,
-            type="file",  # Use 'file' type to distinguish from dashboards/reports
-            title=title,
-            content=stored_content,
-            content_type=content_type,
-            mime_type=mime_type,
-            filename=filename,
-            conversation_id=UUID(conversation_id) if conversation_id else None,
-            message_id=message_id,
-        )
-        session.add(artifact)
-        await session.commit()
-        
-        logger.info(
-            "[Tools._create_artifact] Created artifact: id=%s, type=%s, title=%s",
-            artifact_id_str,
-            content_type,
-            title,
-        )
-    
-    # Send final completion update
-    await progress.update({
-        "message": f"Created {content_type} artifact: {title}",
-        "status": "complete",
-        "title": title,
-        "content_type": content_type,
-        "chars_processed": content_len,
-        "total_chars": content_len,
-    }, status="complete")
-    
-    # Return metadata for frontend (content excluded to keep response small)
-    # Use camelCase for frontend compatibility
-    view_url: str = f"{settings.FRONTEND_URL.rstrip('/')}/artifacts/{artifact_id_str}"
-    return {
-        "status": "success",
-        "artifact_id": artifact_id_str,
-        "artifact": {
-            "id": artifact_id_str,
-            "title": title,
-            "filename": filename,
-            "contentType": content_type,  # camelCase for frontend
-            "mimeType": CONTENT_TYPE_TO_MIME.get(content_type, "application/octet-stream"),  # camelCase
-            "viewUrl": view_url,
-        },
-        "view_url": view_url,
-        "message": f"Created {content_type} artifact: {title}",
-    }
 
 
 # =============================================================================

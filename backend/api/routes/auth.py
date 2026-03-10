@@ -1095,6 +1095,22 @@ async def create_organization(
                     pending_sharing_config=False,
                 )
             )
+            # Auto-enable artifacts so the agent can create and update downloadable files
+            session.add(
+                Integration(
+                    organization_id=org_uuid,
+                    connector="artifacts",
+                    user_id=creator_user_id,
+                    scope="organization",
+                    nango_connection_id="builtin",
+                    connected_by_user_id=creator_user_id,
+                    is_active=True,
+                    share_synced_data=True,
+                    share_query_access=True,
+                    share_write_access=True,
+                    pending_sharing_config=False,
+                )
+            )
 
         await session.commit()
         await session.refresh(new_org)
@@ -3086,7 +3102,7 @@ async def patch_integration_sharing(
     }
 
 
-_BUILTIN_CONNECTORS: frozenset[str] = frozenset({"web_search", "code_sandbox", "twilio"})
+_BUILTIN_CONNECTORS: frozenset[str] = frozenset({"web_search", "code_sandbox", "twilio", "artifacts"})
 
 
 class ConnectBuiltinRequest(BaseModel):
