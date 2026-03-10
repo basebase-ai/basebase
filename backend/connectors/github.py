@@ -9,6 +9,7 @@ OAuth is handled through Nango (GitHub App or OAuth App).
 """
 from __future__ import annotations
 
+import base64
 import logging
 import uuid as uuid_mod
 from datetime import datetime
@@ -44,8 +45,17 @@ class GitHubConnector(BaseConnector):
         slug="github",
         auth_type=AuthType.OAUTH2,
         scope=ConnectorScope.USER,
-        entity_types=["repositories", "commits", "pull_requests"],
-        capabilities=[Capability.SYNC, Capability.WRITE],
+        entity_types=["repositories", "commits", "pull_requests", "issues", "files", "branches"],
+        capabilities=[Capability.SYNC, Capability.QUERY, Capability.WRITE],
+        query_description=(
+            "Read GitHub resources on demand. "
+            "Prefix with 'file:' to read a file (e.g. 'file:README.md repo:owner/repo'). "
+            "Prefix with 'dir:' to list a directory (e.g. 'dir:src/ repo:owner/repo'). "
+            "Prefix with 'issue:' to read an issue with comments (e.g. 'issue:42 repo:owner/repo'). "
+            "Prefix with 'pr:' to read a pull request with reviews (e.g. 'pr:99 repo:owner/repo'). "
+            "Prefix with 'commit:' to read a commit with diff (e.g. 'commit:abc123 repo:owner/repo'). "
+            "Add 'ref:branch_name' to read files/dirs from a specific branch."
+        ),
         write_operations=[
             WriteOperation(
                 name="create_issue", entity_type="issue",
@@ -58,40 +68,125 @@ class GitHubConnector(BaseConnector):
                     {"name": "assignees", "type": "array", "required": False, "description": "GitHub usernames to assign"},
                 ],
             ),
+            WriteOperation(
+                name="create_branch", entity_type="branch",
+                description="Create a new branch in a GitHub repository",
+                parameters=[
+                    {"name": "repo_full_name", "type": "string", "required": True, "description": "Repository (owner/repo)"},
+                    {"name": "branch_name", "type": "string", "required": True, "description": "New branch name"},
+                    {"name": "from_branch", "type": "string", "required": False, "description": "Source branch (defaults to repo default branch)"},
+                ],
+            ),
+            WriteOperation(
+                name="create_or_update_file", entity_type="file",
+                description="Create or update a file (produces a git commit)",
+                parameters=[
+                    {"name": "repo_full_name", "type": "string", "required": True, "description": "Repository (owner/repo)"},
+                    {"name": "path", "type": "string", "required": True, "description": "File path (e.g. docs/README.md)"},
+                    {"name": "content", "type": "string", "required": True, "description": "File content (plain text)"},
+                    {"name": "message", "type": "string", "required": True, "description": "Commit message"},
+                    {"name": "branch", "type": "string", "required": False, "description": "Target branch (defaults to repo default branch)"},
+                    {"name": "sha", "type": "string", "required": False, "description": "SHA of existing file (required for updates; get via query 'file:path repo:owner/repo')"},
+                ],
+            ),
+            WriteOperation(
+                name="create_pull_request", entity_type="pull_request",
+                description="Open a pull request",
+                parameters=[
+                    {"name": "repo_full_name", "type": "string", "required": True, "description": "Repository (owner/repo)"},
+                    {"name": "title", "type": "string", "required": True, "description": "PR title"},
+                    {"name": "head", "type": "string", "required": True, "description": "Source branch name"},
+                    {"name": "base", "type": "string", "required": False, "description": "Target branch (defaults to repo default branch)"},
+                    {"name": "body", "type": "string", "required": False, "description": "PR description (markdown)"},
+                    {"name": "draft", "type": "boolean", "required": False, "description": "Create as draft PR"},
+                ],
+            ),
         ],
         nango_integration_id="github",
-        description="GitHub – repositories, commits, pull requests, and issues",
+        description="GitHub – repositories, commits, pull requests, issues, file read/write, branches",
         usage_guide="""# GitHub Usage Guide
 
-## create_issue write operation
+## Reading data (query_on_connector)
 
-Create a new issue in a GitHub repository. Use `write_on_connector(connector='github', operation='create_issue', data={...})`.
+Use `query_on_connector(connector='github', query='<prefix>:<value> repo:<owner/repo>')`.
+
+Every query requires `repo:owner/repo`. Optional: `ref:branch_name` for files/dirs.
+
+| Prefix | Example query | What it returns |
+|--------|--------------|-----------------|
+| `file:` | `file:README.md repo:owner/repo` | Decoded file content, SHA, size |
+| `file:` | `file:src/main.py repo:owner/repo ref:develop` | File from a specific branch |
+| `dir:` | `dir:src/ repo:owner/repo` | Directory listing (names, types, sizes) |
+| `issue:` | `issue:42 repo:owner/repo` | Issue details + all comments |
+| `pr:` | `pr:99 repo:owner/repo` | PR details + reviews + review comments |
+| `commit:` | `commit:abc123 repo:owner/repo` | Commit message, diff stats, changed files with patches |
+
+---
+
+## Writing data (write_on_connector)
+
+Use `write_on_connector(connector='github', operation='<name>', data={...})`.
+
+### create_issue
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
-| repo_full_name | string | Yes | Repository in `owner/repo` format (e.g. `basebase-ai/basebase`) |
+| repo_full_name | string | Yes | Repository in `owner/repo` format |
 | title | string | Yes | Issue title |
-| body | string | No | Issue body — GitHub Markdown supported |
-| labels | array | No | Label names to add (e.g. `["bug", "priority:high"]`) |
-| assignees | array | No | GitHub usernames to assign (e.g. `["octocat"]`) |
+| body | string | No | Issue body (GitHub Markdown) |
+| labels | array | No | Label names (e.g. `["bug"]`) |
+| assignees | array | No | GitHub usernames to assign |
+
+### create_branch
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| repo_full_name | string | Yes | Repository in `owner/repo` format |
+| branch_name | string | Yes | New branch name |
+| from_branch | string | No | Source branch (defaults to repo default branch) |
+
+### create_or_update_file
+
+Creates/updates a file and produces a git commit. For updates, pass the file's current `sha` (get it from a `file:` query). For new files, omit `sha`.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| repo_full_name | string | Yes | Repository in `owner/repo` format |
+| path | string | Yes | File path (e.g. `docs/README.md`) |
+| content | string | Yes | File content (plain text — base64 handled automatically) |
+| message | string | Yes | Commit message |
+| branch | string | No | Target branch (defaults to repo default branch) |
+| sha | string | No | SHA of existing file (required for updates) |
+
+### create_pull_request
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| repo_full_name | string | Yes | Repository in `owner/repo` format |
+| title | string | Yes | PR title |
+| head | string | Yes | Source branch name |
+| base | string | No | Target branch (defaults to repo default branch) |
+| body | string | No | PR description (GitHub Markdown) |
+| draft | boolean | No | Create as draft PR (default false) |
+
+---
+
+## Typical workflow: modify a file and open a PR
+
+```
+1. query_on_connector  query='file:README.md repo:owner/repo'  → read file, note its sha
+2. write_on_connector  operation='create_branch'                → branch off default
+3. write_on_connector  operation='create_or_update_file'        → push changes (pass sha from step 1)
+4. write_on_connector  operation='create_pull_request'          → open PR from branch
+```
 
 ### Repository names
 
-Use the exact `owner/repo` format. For tracked repos, get `full_name` from the `github_repositories` table. Repos can be renamed (e.g. `basebase-ai/revtops` → `basebase-ai/basebase`); the connector follows redirects.
+Use `owner/repo` format. Get `full_name` from the `github_repositories` table. The connector follows redirects for renamed repos.
 
-### Examples
+### Querying synced data
 
-**Basic issue:**
-```json
-{"operation": "create_issue", "record": {"repo_full_name": "basebase-ai/basebase", "title": "Fix login redirect", "body": "## Problem\\nUsers are redirected to wrong page.\\n\\n## Steps\\n1. Login\\n2. Observe redirect"}}
-```
-
-**With labels and assignee:**
-```json
-{"operation": "create_issue", "record": {"repo_full_name": "owner/repo", "title": "Bug: API timeout", "body": "Description...", "labels": ["bug", "api"], "assignees": ["teammate"]}}
-```
-
-**Querying data:** Use `run_sql_query` on `github_repositories`, `github_commits`, `github_pull_requests` — all synced from connected repos.
+Use `run_sql_query` on `github_repositories`, `github_commits`, `github_pull_requests` for aggregate queries across synced data.
 """,
     )
 
@@ -139,6 +234,22 @@ Use the exact `owner/repo` format. For tracked repos, get `full_name` from the `
         headers: dict[str, str] = await self._get_headers()
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             resp: httpx.Response = await client.post(
+                f"{GITHUB_API_BASE}{path}",
+                headers=headers,
+                json=payload,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def _gh_put(
+        self,
+        path: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        """PUT to the GitHub REST API. Returns parsed JSON."""
+        headers: dict[str, str] = await self._get_headers()
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            resp: httpx.Response = await client.put(
                 f"{GITHUB_API_BASE}{path}",
                 headers=headers,
                 json=payload,
@@ -477,11 +588,300 @@ Use the exact `owner/repo` format. For tracked repos, get `full_name` from the `
         ]
         return repos
 
+    # ── QUERY capability ───────────────────────────────────────────────
+
+    @staticmethod
+    def _parse_query(request: str) -> tuple[str, str, dict[str, str]]:
+        """Parse a query string into (prefix, value, params).
+
+        Format: ``<prefix>:<value> repo:<owner/repo> [ref:<branch>]``
+        Returns (prefix, value, {repo, ref?, ...}).
+        """
+        parts: list[str] = request.strip().split()
+        prefix: str = ""
+        value: str = ""
+        params: dict[str, str] = {}
+
+        for part in parts:
+            if ":" in part:
+                key, _, val = part.partition(":")
+                key_lower: str = key.lower()
+                if not prefix and key_lower in ("file", "dir", "issue", "pr", "commit"):
+                    prefix = key_lower
+                    value = val
+                else:
+                    params[key_lower] = val
+            elif not prefix:
+                value = part
+            else:
+                value += f" {part}"
+
+        return prefix, value.strip(), params
+
+    async def query(self, request: str) -> dict[str, Any]:
+        """Dispatch an on-demand read query (QUERY capability).
+
+        Supported prefixes: file:, dir:, issue:, pr:, commit:.
+        All queries require ``repo:owner/repo``.
+        """
+        prefix, value, params = self._parse_query(request)
+        repo: str | None = params.get("repo")
+        if not repo or "/" not in repo:
+            return {"error": "Query must include 'repo:owner/repo'."}
+
+        dispatch: dict[str, Any] = {
+            "file": self._query_file,
+            "dir": self._query_dir,
+            "issue": self._query_issue,
+            "pr": self._query_pr,
+            "commit": self._query_commit,
+        }
+        handler = dispatch.get(prefix)
+        if handler is None:
+            return {
+                "error": (
+                    f"Unknown query prefix '{prefix}:'. "
+                    "Supported: file:, dir:, issue:, pr:, commit:"
+                ),
+            }
+        return await handler(repo, value, params)
+
+    async def _query_file(
+        self, repo: str, path: str, params: dict[str, str]
+    ) -> dict[str, Any]:
+        """Read a single file's contents."""
+        return await self.get_file_contents(
+            repo_full_name=repo,
+            path=path,
+            ref=params.get("ref"),
+        )
+
+    async def _query_dir(
+        self, repo: str, path: str, params: dict[str, str]
+    ) -> dict[str, Any]:
+        """List directory contents."""
+        clean_repo: str = self._validate_repo(repo)
+        clean_path: str = path.strip().lstrip("/").rstrip("/")
+        api_params: dict[str, str] = {}
+        ref: str | None = params.get("ref")
+        if ref:
+            api_params["ref"] = ref
+
+        data: Any = await self._gh_get(
+            f"/repos/{clean_repo}/contents/{clean_path}",
+            params=api_params or None,
+        )
+
+        if isinstance(data, dict):
+            return {
+                "error": f"Path '{clean_path}' is a file, not a directory. Use 'file:{clean_path}' instead.",
+                "repo_full_name": clean_repo,
+            }
+
+        entries: list[dict[str, Any]] = [
+            {
+                "name": item["name"],
+                "path": item["path"],
+                "type": item["type"],
+                "size": item.get("size"),
+                "sha": item["sha"],
+            }
+            for item in data
+        ]
+        return {
+            "path": clean_path or "/",
+            "repo_full_name": clean_repo,
+            "entry_count": len(entries),
+            "entries": entries,
+        }
+
+    async def _query_issue(
+        self, repo: str, issue_number: str, params: dict[str, str]
+    ) -> dict[str, Any]:
+        """Fetch an issue and its comments."""
+        clean_repo: str = self._validate_repo(repo)
+        num: str = issue_number.strip().lstrip("#")
+
+        issue: dict[str, Any] = await self._gh_get(
+            f"/repos/{clean_repo}/issues/{num}"
+        )
+        raw_comments: list[dict[str, Any]] = await self._gh_get_paginated(
+            f"/repos/{clean_repo}/issues/{num}/comments"
+        )
+
+        comments: list[dict[str, Any]] = [
+            {
+                "id": c["id"],
+                "author": c.get("user", {}).get("login", "unknown"),
+                "body": c.get("body", ""),
+                "created_at": c.get("created_at"),
+                "updated_at": c.get("updated_at"),
+            }
+            for c in raw_comments
+        ]
+
+        labels: list[str] = [
+            lbl["name"] for lbl in issue.get("labels", []) if "name" in lbl
+        ]
+        assignees: list[str] = [
+            a["login"] for a in issue.get("assignees", []) if "login" in a
+        ]
+
+        return {
+            "number": issue["number"],
+            "title": issue.get("title", ""),
+            "state": issue.get("state", ""),
+            "author": issue.get("user", {}).get("login", "unknown"),
+            "body": issue.get("body", ""),
+            "labels": labels,
+            "assignees": assignees,
+            "created_at": issue.get("created_at"),
+            "updated_at": issue.get("updated_at"),
+            "closed_at": issue.get("closed_at"),
+            "url": issue.get("html_url", ""),
+            "comment_count": len(comments),
+            "comments": comments,
+            "repo_full_name": clean_repo,
+        }
+
+    async def _query_pr(
+        self, repo: str, pr_number: str, params: dict[str, str]
+    ) -> dict[str, Any]:
+        """Fetch a PR with reviews and review comments."""
+        clean_repo: str = self._validate_repo(repo)
+        num: str = pr_number.strip().lstrip("#")
+
+        pr: dict[str, Any] = await self._gh_get(
+            f"/repos/{clean_repo}/pulls/{num}"
+        )
+        raw_reviews: list[dict[str, Any]] = await self._gh_get_paginated(
+            f"/repos/{clean_repo}/pulls/{num}/reviews"
+        )
+        raw_comments: list[dict[str, Any]] = await self._gh_get_paginated(
+            f"/repos/{clean_repo}/pulls/{num}/comments"
+        )
+
+        reviews: list[dict[str, Any]] = [
+            {
+                "id": r["id"],
+                "author": r.get("user", {}).get("login", "unknown"),
+                "state": r.get("state", ""),
+                "body": r.get("body", ""),
+                "submitted_at": r.get("submitted_at"),
+            }
+            for r in raw_reviews
+        ]
+        review_comments: list[dict[str, Any]] = [
+            {
+                "id": c["id"],
+                "author": c.get("user", {}).get("login", "unknown"),
+                "body": c.get("body", ""),
+                "path": c.get("path"),
+                "line": c.get("line") or c.get("original_line"),
+                "diff_hunk": c.get("diff_hunk", ""),
+                "created_at": c.get("created_at"),
+            }
+            for c in raw_comments
+        ]
+
+        state: str
+        if pr.get("merged_at"):
+            state = "merged"
+        elif pr.get("state") == "closed":
+            state = "closed"
+        else:
+            state = pr.get("state", "open")
+
+        labels: list[str] = [
+            lbl["name"] for lbl in pr.get("labels", []) if "name" in lbl
+        ]
+
+        return {
+            "number": pr["number"],
+            "title": pr.get("title", ""),
+            "state": state,
+            "draft": pr.get("draft", False),
+            "author": pr.get("user", {}).get("login", "unknown"),
+            "body": pr.get("body", ""),
+            "head": pr.get("head", {}).get("ref", ""),
+            "base": pr.get("base", {}).get("ref", ""),
+            "labels": labels,
+            "additions": pr.get("additions"),
+            "deletions": pr.get("deletions"),
+            "changed_files": pr.get("changed_files"),
+            "commits": pr.get("commits"),
+            "merged_by": (pr.get("merged_by") or {}).get("login"),
+            "created_at": pr.get("created_at"),
+            "updated_at": pr.get("updated_at"),
+            "merged_at": pr.get("merged_at"),
+            "closed_at": pr.get("closed_at"),
+            "url": pr.get("html_url", ""),
+            "review_count": len(reviews),
+            "reviews": reviews,
+            "review_comment_count": len(review_comments),
+            "review_comments": review_comments,
+            "repo_full_name": clean_repo,
+        }
+
+    async def _query_commit(
+        self, repo: str, sha: str, params: dict[str, str]
+    ) -> dict[str, Any]:
+        """Fetch a commit with diff stats and file patches."""
+        clean_repo: str = self._validate_repo(repo)
+        clean_sha: str = sha.strip()
+
+        commit: dict[str, Any] = await self._gh_get(
+            f"/repos/{clean_repo}/commits/{clean_sha}"
+        )
+
+        commit_data: dict[str, Any] = commit.get("commit", {})
+        author_info: dict[str, Any] = commit_data.get("author", {})
+        stats: dict[str, Any] = commit.get("stats", {})
+
+        files: list[dict[str, Any]] = [
+            {
+                "filename": f["filename"],
+                "status": f.get("status", ""),
+                "additions": f.get("additions", 0),
+                "deletions": f.get("deletions", 0),
+                "changes": f.get("changes", 0),
+                "patch": f.get("patch", ""),
+            }
+            for f in commit.get("files", [])
+        ]
+
+        return {
+            "sha": commit["sha"],
+            "message": commit_data.get("message", ""),
+            "author_name": author_info.get("name", ""),
+            "author_email": author_info.get("email", ""),
+            "author_login": (commit.get("author") or {}).get("login"),
+            "date": author_info.get("date"),
+            "stats": {
+                "additions": stats.get("additions", 0),
+                "deletions": stats.get("deletions", 0),
+                "total": stats.get("total", 0),
+            },
+            "file_count": len(files),
+            "files": files,
+            "url": commit.get("html_url", ""),
+            "repo_full_name": clean_repo,
+        }
+
+    # ── WRITE capability ─────────────────────────────────────────────
+
     async def write(self, operation: str, data: dict[str, Any]) -> dict[str, Any]:
         """Dispatch a record-level write operation."""
-        if operation == "create_issue":
-            return await self.create_issue(**data)
-        raise ValueError(f"Unknown write operation: {operation}")
+        dispatch: dict[str, Any] = {
+            "create_issue": self.create_issue,
+            "create_branch": self.create_branch,
+            "create_or_update_file": self.create_or_update_file,
+            "create_pull_request": self.create_pull_request,
+        }
+        handler = dispatch.get(operation)
+        if handler is None:
+            raise ValueError(f"Unknown write operation: {operation}")
+        return await handler(**data)
 
     async def create_issue(
         self,
@@ -521,6 +921,197 @@ Use the exact `owner/repo` format. For tracked repos, get `full_name` from the `
             "title": issue["title"],
             "url": issue["html_url"],
             "state": issue["state"],
+            "repo_full_name": clean_repo,
+        }
+
+    # ── File / Branch / PR operations ────────────────────────────────────
+
+    @staticmethod
+    def _validate_repo(repo_full_name: str) -> str:
+        clean: str = repo_full_name.strip()
+        if "/" not in clean:
+            raise ValueError("repo_full_name must be in 'owner/repo' format.")
+        return clean
+
+    async def get_file_contents(
+        self,
+        *,
+        repo_full_name: str,
+        path: str,
+        ref: str | None = None,
+    ) -> dict[str, Any]:
+        """Read a single file from a repository."""
+        clean_repo: str = self._validate_repo(repo_full_name)
+        clean_path: str = path.strip().lstrip("/")
+        params: dict[str, str] = {}
+        if ref:
+            params["ref"] = ref.strip()
+
+        logger.info(
+            "Reading file %s from %s for org %s",
+            clean_path, clean_repo, self.organization_id,
+        )
+        data: dict[str, Any] = await self._gh_get(
+            f"/repos/{clean_repo}/contents/{clean_path}",
+            params=params or None,
+        )
+
+        if data.get("type") != "file":
+            return {
+                "error": f"Path '{clean_path}' is a {data.get('type', 'unknown')}, not a file.",
+                "type": data.get("type"),
+                "repo_full_name": clean_repo,
+                "path": clean_path,
+            }
+
+        raw_content: str = data.get("content", "")
+        try:
+            decoded: str = base64.b64decode(raw_content).decode("utf-8")
+        except (UnicodeDecodeError, Exception):
+            decoded = "(binary file — content not decodable as UTF-8)"
+
+        return {
+            "path": data["path"],
+            "sha": data["sha"],
+            "size": data.get("size"),
+            "content": decoded,
+            "encoding": "utf-8",
+            "download_url": data.get("download_url"),
+            "repo_full_name": clean_repo,
+        }
+
+    async def create_branch(
+        self,
+        *,
+        repo_full_name: str,
+        branch_name: str,
+        from_branch: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a new branch from an existing branch (defaults to the repo default branch)."""
+        clean_repo: str = self._validate_repo(repo_full_name)
+        clean_branch: str = branch_name.strip()
+
+        source_branch: str = (from_branch or "").strip()
+        if not source_branch:
+            repo_data: dict[str, Any] = await self._gh_get(f"/repos/{clean_repo}")
+            source_branch = repo_data.get("default_branch", "main")
+
+        ref_data: dict[str, Any] = await self._gh_get(
+            f"/repos/{clean_repo}/git/ref/heads/{source_branch}"
+        )
+        source_sha: str = ref_data["object"]["sha"]
+
+        logger.info(
+            "Creating branch %s from %s (%s) in %s for org %s",
+            clean_branch, source_branch, source_sha[:8],
+            clean_repo, self.organization_id,
+        )
+        result: dict[str, Any] = await self._gh_post(
+            f"/repos/{clean_repo}/git/refs",
+            {"ref": f"refs/heads/{clean_branch}", "sha": source_sha},
+        )
+        return {
+            "branch": clean_branch,
+            "sha": result["object"]["sha"],
+            "ref": result["ref"],
+            "url": result["url"],
+            "repo_full_name": clean_repo,
+            "from_branch": source_branch,
+        }
+
+    async def create_or_update_file(
+        self,
+        *,
+        repo_full_name: str,
+        path: str,
+        content: str,
+        message: str,
+        branch: str | None = None,
+        sha: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Create or update a single file, producing a commit.
+
+        For updates, ``sha`` of the existing file is required (obtain via
+        ``get_file_contents``).  For new files, omit ``sha``.
+        """
+        clean_repo: str = self._validate_repo(repo_full_name)
+        clean_path: str = path.strip().lstrip("/")
+
+        encoded_content: str = base64.b64encode(content.encode("utf-8")).decode("ascii")
+
+        payload: dict[str, Any] = {
+            "message": message.strip(),
+            "content": encoded_content,
+        }
+        if branch:
+            payload["branch"] = branch.strip()
+        if sha:
+            payload["sha"] = sha.strip()
+
+        logger.info(
+            "Creating/updating file %s in %s (branch=%s) for org %s",
+            clean_path, clean_repo, branch or "(default)",
+            self.organization_id,
+        )
+        result: dict[str, Any] = await self._gh_put(
+            f"/repos/{clean_repo}/contents/{clean_path}",
+            payload,
+        )
+        commit_info: dict[str, Any] = result.get("commit", {})
+        file_info: dict[str, Any] = result.get("content", {})
+        return {
+            "commit_sha": commit_info.get("sha"),
+            "commit_url": commit_info.get("html_url"),
+            "commit_message": commit_info.get("message"),
+            "file_sha": file_info.get("sha"),
+            "file_path": file_info.get("path", clean_path),
+            "repo_full_name": clean_repo,
+            "branch": branch or "(default)",
+        }
+
+    async def create_pull_request(
+        self,
+        *,
+        repo_full_name: str,
+        title: str,
+        head: str,
+        base: str | None = None,
+        body: str | None = None,
+        draft: bool = False,
+    ) -> dict[str, Any]:
+        """Create a pull request."""
+        clean_repo: str = self._validate_repo(repo_full_name)
+
+        if not base:
+            repo_data: dict[str, Any] = await self._gh_get(f"/repos/{clean_repo}")
+            base = repo_data.get("default_branch", "main")
+
+        payload: dict[str, Any] = {
+            "title": title.strip(),
+            "head": head.strip(),
+            "base": base,
+            "draft": draft,
+        }
+        if body:
+            payload["body"] = body
+
+        logger.info(
+            "Creating PR '%s' (%s → %s) in %s for org %s",
+            title.strip(), head.strip(), base, clean_repo, self.organization_id,
+        )
+        pr: dict[str, Any] = await self._gh_post(
+            f"/repos/{clean_repo}/pulls",
+            payload,
+        )
+        return {
+            "number": pr["number"],
+            "title": pr["title"],
+            "url": pr["html_url"],
+            "state": pr["state"],
+            "head": pr["head"]["ref"],
+            "base": pr["base"]["ref"],
+            "draft": pr.get("draft", False),
             "repo_full_name": clean_repo,
         }
 

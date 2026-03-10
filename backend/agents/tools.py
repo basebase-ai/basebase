@@ -2347,9 +2347,6 @@ async def _handle_code_repo_write(
     organization_id: str,
 ) -> dict[str, Any]:
     """Handle writes to code repository systems (GitHub, GitLab)."""
-    if operation != "create":
-        return {"error": f"Only 'create' operation is supported for {target_system} issues."}
-
     # Check for active integration
     async with get_session(organization_id=organization_id) as session:
         result = await session.execute(
@@ -2366,7 +2363,7 @@ async def _handle_code_repo_write(
             }
 
     if target_system == "github":
-        return await _handle_github_write(records, organization_id)
+        return await _handle_github_write(records, organization_id, operation)
     # Future: elif target_system == "gitlab": ...
 
     return {"error": f"Code repository '{target_system}' is not yet implemented."}
@@ -2375,34 +2372,31 @@ async def _handle_code_repo_write(
 async def _handle_github_write(
     records: list[dict[str, Any]],
     organization_id: str,
+    operation: str = "create",
 ) -> dict[str, Any]:
-    """Handle creating GitHub issues. Each record is processed individually."""
+    """Handle GitHub write operations. Each record is processed individually."""
     from connectors.github import GitHubConnector
 
     connector: GitHubConnector = GitHubConnector(organization_id=organization_id)
     results: list[dict[str, Any]] = []
     errors: list[str] = []
 
+    # Map legacy write_to_system_of_record operations to connector operations
+    _OPERATION_MAP: dict[str, str] = {
+        "create": "create_issue",
+        "create_issue": "create_issue",
+        "create_branch": "create_branch",
+        "create_or_update_file": "create_or_update_file",
+        "create_pull_request": "create_pull_request",
+    }
+    resolved_op: str | None = _OPERATION_MAP.get(operation)
+    if resolved_op is None:
+        return {"error": f"Unknown GitHub operation: {operation}"}
+
     for i, record in enumerate(records):
-        repo_full_name: str = record.get("repo_full_name", "").strip()
-        title: str = record.get("title", "").strip()
-
-        if not repo_full_name or "/" not in repo_full_name:
-            errors.append(f"Record {i + 1}: repo_full_name is required in 'owner/repo' format")
-            continue
-        if not title:
-            errors.append(f"Record {i + 1}: title is required")
-            continue
-
         try:
-            issue: dict[str, Any] = await connector.create_issue(
-                repo_full_name=repo_full_name,
-                title=title,
-                body=record.get("body"),
-                labels=record.get("labels"),
-                assignees=record.get("assignees"),
-            )
-            results.append(issue)
+            result: dict[str, Any] = await connector.write(resolved_op, record)
+            results.append(result)
         except Exception as exc:
             error_msg: str = f"Record {i + 1}: {exc}"
             logger.error("[Tools._handle_github_write] %s", error_msg)
@@ -2413,8 +2407,8 @@ async def _handle_github_write(
 
     return {
         "status": "completed",
-        "message": f"Created {len(results)} GitHub issue(s)",
-        "issues": results,
+        "message": f"Processed {len(results)} GitHub {resolved_op} record(s)",
+        "results": results,
         "errors": errors if errors else None,
     }
 
@@ -5295,7 +5289,7 @@ async def _create_artifact(
 
 
 # =============================================================================
-# Penny Apps (interactive mini-apps)
+# Basebase Apps (interactive mini-apps)
 # =============================================================================
 
 
