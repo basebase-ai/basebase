@@ -20,17 +20,23 @@ const APP_ID    = window.__REVTOPS_APP_ID__    || "";
 // ---------------------------------------------------------------------------
 // useAppQuery – fetch data from a named server-side query
 // ---------------------------------------------------------------------------
-export function useAppQuery(queryName, params) {
+const MIN_REFETCH_MS = 5000;
+
+export function useAppQuery(queryName, params, options) {
   const [data, setData]       = useState(null);
   const [columns, setColumns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState(null);
   const abortRef = useRef(null);
+  const lastFetchedAt = useRef(0);
 
   // Stable serialisation of params for the dependency array
   const paramKey = JSON.stringify(params ?? {});
 
   const refetch = useCallback(async () => {
+    // Throttle: skip if last successful fetch was less than MIN_REFETCH_MS ago
+    if (Date.now() - lastFetchedAt.current < MIN_REFETCH_MS) return;
+
     // Abort any in-flight request
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
@@ -62,6 +68,7 @@ export function useAppQuery(queryName, params) {
       const json = await res.json();
       setData(json.data ?? []);
       setColumns(json.columns ?? []);
+      lastFetchedAt.current = Date.now();
     } catch (err) {
       if (err.name !== "AbortError") {
         setError(err instanceof Error ? err : new Error(err.message || "Unknown error"));
@@ -72,6 +79,13 @@ export function useAppQuery(queryName, params) {
   }, [queryName, paramKey]);
 
   useEffect(() => { refetch(); }, [refetch]);
+
+  // Built-in polling via refetchInterval option
+  useEffect(() => {
+    if (!options?.refetchInterval) return;
+    const id = setInterval(refetch, options.refetchInterval);
+    return () => clearInterval(id);
+  }, [refetch, options?.refetchInterval]);
 
   // Cleanup on unmount
   useEffect(() => () => { if (abortRef.current) abortRef.current.abort(); }, []);
