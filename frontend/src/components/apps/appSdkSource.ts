@@ -29,13 +29,15 @@ export function useAppQuery(queryName, params, options) {
   const [error, setError]     = useState(null);
   const abortRef = useRef(null);
   const lastFetchedAt = useRef(0);
+  const lastParamKey = useRef("");
 
   // Stable serialisation of params for the dependency array
   const paramKey = JSON.stringify(params ?? {});
 
   const refetch = useCallback(async () => {
-    // Throttle: skip if last successful fetch was less than MIN_REFETCH_MS ago
-    if (Date.now() - lastFetchedAt.current < MIN_REFETCH_MS) return;
+    // Throttle: skip if same params and last fetch was recent
+    const paramsChanged = paramKey !== lastParamKey.current;
+    if (!paramsChanged && Date.now() - lastFetchedAt.current < MIN_REFETCH_MS) return;
 
     // Abort any in-flight request
     if (abortRef.current) abortRef.current.abort();
@@ -69,6 +71,7 @@ export function useAppQuery(queryName, params, options) {
       setData(json.data ?? []);
       setColumns(json.columns ?? []);
       lastFetchedAt.current = Date.now();
+      lastParamKey.current = paramKey;
     } catch (err) {
       if (err.name !== "AbortError") {
         setError(err instanceof Error ? err : new Error(err.message || "Unknown error"));
