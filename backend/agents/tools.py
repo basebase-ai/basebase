@@ -561,15 +561,20 @@ async def _get_connector_instance(
         # If no personal integration, look for shared integrations
         if integration is None:
             # Org-scoped connectors: any team member can use the org's integration
+            # Multiple integrations possible (e.g. several users clicked Connect).
+            # Pick one deterministically; scalar_one_or_none would raise on multiples.
             if meta.scope == ConnectorScope.ORGANIZATION:
                 result = await session.execute(
-                    select(Integration).where(
+                    select(Integration)
+                    .where(
                         Integration.organization_id == UUID(organization_id),
                         Integration.connector == slug,
                         Integration.is_active == True,  # noqa: E712
                     )
+                    .order_by(Integration.updated_at.desc().nullslast())
+                    .limit(1)
                 )
-                integration = result.scalar_one_or_none()
+                integration = result.scalars().first()
             else:
                 # User-scoped: check sharing flags
                 share_flag_map: dict[str, Any] = {
@@ -581,24 +586,30 @@ async def _get_connector_instance(
 
                 if share_flag is not None:
                     result = await session.execute(
-                        select(Integration).where(
+                        select(Integration)
+                        .where(
                             Integration.organization_id == UUID(organization_id),
                             Integration.connector == slug,
                             Integration.is_active == True,  # noqa: E712
                             share_flag == True,  # noqa: E712
                         )
+                        .order_by(Integration.updated_at.desc().nullslast())
+                        .limit(1)
                     )
-                    integration = result.scalar_one_or_none()
+                    integration = result.scalars().first()
                 else:
                     # sync or unknown capability — find any active integration
                     result = await session.execute(
-                        select(Integration).where(
+                        select(Integration)
+                        .where(
                             Integration.organization_id == UUID(organization_id),
                             Integration.connector == slug,
                             Integration.is_active == True,  # noqa: E712
                         )
+                        .order_by(Integration.updated_at.desc().nullslast())
+                        .limit(1)
                     )
-                    integration = result.scalar_one_or_none()
+                    integration = result.scalars().first()
 
         if integration is None:
             if required_capability == "query":
