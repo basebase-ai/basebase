@@ -15,6 +15,7 @@ Flow:
 5. Agent can edit existing files (user must have edit permission on the file)
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -776,7 +777,11 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
         await self.get_oauth_token()
 
         escaped_term: str = cleaned_query.replace("'", "\\'")
-        drive_query: str = f"name contains '{escaped_term}' and trashed=false"
+        drive_query: str = (
+            f"name contains '{escaped_term}'"
+            f" and mimeType != '{GOOGLE_FOLDER_MIME}'"
+            f" and trashed=false"
+        )
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
@@ -801,18 +806,15 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
 
             api_files: list[dict[str, Any]] = resp.json().get("files", [])
 
-        # Filter out folders
-        api_files = [
-            f for f in api_files if f.get("mimeType") != GOOGLE_FOLDER_MIME
-        ]
-
         # Filter by requested MIME types if specified
         if mime_types:
             api_files = [f for f in api_files if f.get("mimeType") in mime_types]
 
         # Upsert into shared_files so subsequent queries hit the fast DB path
-        for file_meta in api_files:
-            await self._upsert_created_file(file_meta)
+        if api_files:
+            await asyncio.gather(
+                *(self._upsert_created_file(f) for f in api_files)
+            )
 
         now_iso: str = f"{datetime.utcnow().isoformat()}Z"
         return [
@@ -823,7 +825,7 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
                 "mime_type": f.get("mimeType", ""),
                 "folder_path": "/",
                 "web_view_link": f.get("webViewLink"),
-                "file_size": f.get("size"),
+                "file_size": None,
                 "source_modified_at": (
                     f.get("modifiedTime") if f.get("modifiedTime") else None
                 ),
