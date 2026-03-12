@@ -568,7 +568,7 @@ class GoogleCalendarConnector(BaseConnector):
         if not participants:
             raise ValueError("create_huddle requires at least one participant email")
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         end = now + timedelta(minutes=duration_minutes)
 
         event_body: dict[str, Any] = {
@@ -733,7 +733,7 @@ class GoogleCalendarConnector(BaseConnector):
                 raise ValueError("Meeting has no linked Google Calendar event")
 
             google_event_id = meeting.google_event_id
-            now = datetime.now(timezone.utc)
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
 
             # PATCH calendar event end time to now
             try:
@@ -741,7 +741,7 @@ class GoogleCalendarConnector(BaseConnector):
                     "PATCH",
                     f"/calendars/primary/events/{google_event_id}",
                     json_body={
-                        "end": {"dateTime": now.isoformat(), "timeZone": "UTC"},
+                        "end": {"dateTime": now.isoformat() + "Z", "timeZone": "UTC"},
                     },
                 )
             except httpx.HTTPStatusError as exc:
