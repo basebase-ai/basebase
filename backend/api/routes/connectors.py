@@ -96,13 +96,16 @@ async def handle_connector_webhook(
 
     async with get_session(organization_id=organization_id) as session:
         result = await session.execute(
-            select(Integration).where(
+            select(Integration)
+            .where(
                 Integration.organization_id == org_uuid,
                 Integration.connector == provider,
-                Integration.is_active == True,
+                Integration.is_active == True,  # noqa: E712
             )
+            .order_by(Integration.updated_at.desc().nullslast())
+            .limit(1)
         )
-        integration: Integration | None = result.scalar_one_or_none()
+        integration: Integration | None = result.scalars().first()
 
     if not integration:
         logger.warning(
