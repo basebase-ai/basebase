@@ -392,7 +392,7 @@ async def _check_huddle_recording(
                         User.email == organizer_email,
                     )
                 )
-                drive_integration = organizer_result.scalar_one_or_none()
+                drive_integration = organizer_result.scalars().first()
 
         # Fall back to any active Drive integration in the org
         if not drive_integration:
@@ -404,7 +404,7 @@ async def _check_huddle_recording(
                         Integration.is_active == True,  # noqa: E712
                     )
                 )
-                drive_integration = result.scalar_one_or_none()
+                drive_integration = result.scalars().first()
 
         if not drive_integration:
             return {"status": "skipped", "reason": "no_drive_integration"}

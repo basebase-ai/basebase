@@ -563,10 +563,12 @@ class GoogleCalendarConnector(BaseConnector):
         duration_minutes: int = params.get("duration_minutes", 30)
         description = params.get("description", "")
 
+        notify = params.get("send_updates", "all")
+
         if not participants:
             raise ValueError("create_huddle requires at least one participant email")
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         end = now + timedelta(minutes=duration_minutes)
 
         event_body: dict[str, Any] = {
@@ -587,7 +589,7 @@ class GoogleCalendarConnector(BaseConnector):
             data = await self._make_request(
                 "POST",
                 "/calendars/primary/events",
-                params={"conferenceDataVersion": "1", "sendUpdates": "all"},
+                params={"conferenceDataVersion": "1", "sendUpdates": notify},
                 json_body=event_body,
             )
         except httpx.HTTPStatusError as exc:
@@ -669,9 +671,16 @@ class GoogleCalendarConnector(BaseConnector):
             google_event_id = meeting.google_event_id
 
             # GET current event to read existing attendees
-            event_data = await self._make_request(
-                "GET", f"/calendars/primary/events/{google_event_id}"
-            )
+            try:
+                event_data = await self._make_request(
+                    "GET", f"/calendars/primary/events/{google_event_id}"
+                )
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    meeting.huddle_status = "ended"
+                    await session.commit()
+                    return {"status": "error", "error": "Calendar event was deleted. Huddle marked as ended."}
+                raise
             existing_attendees = event_data.get("attendees", [])
             existing_emails = {a.get("email", "").lower() for a in existing_attendees}
 
@@ -724,7 +733,7 @@ class GoogleCalendarConnector(BaseConnector):
                 raise ValueError("Meeting has no linked Google Calendar event")
 
             google_event_id = meeting.google_event_id
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
             # PATCH calendar event end time to now
             try:
@@ -732,10 +741,15 @@ class GoogleCalendarConnector(BaseConnector):
                     "PATCH",
                     f"/calendars/primary/events/{google_event_id}",
                     json_body={
-                        "end": {"dateTime": now.isoformat() + "Z", "timeZone": "UTC"},
+                        "end": {"dateTime": now.isoformat(), "timeZone": "UTC"},
                     },
                 )
             except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    meeting.status = "completed"
+                    meeting.huddle_status = "ended"
+                    await session.commit()
+                    return {"status": "ok", "meeting_id": meeting_id, "note": "Calendar event already deleted"}
                 if exc.response.status_code == 403:
                     return {
                         "status": "error",
