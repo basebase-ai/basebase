@@ -582,13 +582,11 @@ class GoogleCalendarConnector(BaseConnector):
             data = await self._make_meet_request("POST", "/spaces", json_body={})
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 403:
+                error_body = exc.response.text
+                logger.error("Meet API 403: %s", error_body)
                 return {
                     "status": "error",
-                    "error": (
-                        "Meet space creation denied. The google-calendar integration "
-                        "needs the 'meetings.space.created' scope. "
-                        "Please re-authorize the integration in Settings → Integrations."
-                    ),
+                    "error": f"Meet space creation denied (403): {error_body}",
                 }
             raise
 
