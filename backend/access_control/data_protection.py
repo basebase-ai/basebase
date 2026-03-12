@@ -91,13 +91,16 @@ async def check_connector_call(
 
         if is_org_scoped:
             result = await session.execute(
-                select(Integration).where(
+                select(Integration)
+                .where(
                     Integration.organization_id == UUID(context.organization_id),
                     Integration.connector == context.provider,
                     Integration.is_active == True,  # noqa: E712
                 )
+                .order_by(Integration.updated_at.desc().nullslast())
+                .limit(1)
             )
-            shared_integration = result.scalar_one_or_none()
+            shared_integration: Integration | None = result.scalars().first()
             if shared_integration:
                 return DataProtectionResult(
                     allowed=True,
@@ -114,14 +117,17 @@ async def check_connector_call(
 
             if share_flag is not None:
                 result = await session.execute(
-                    select(Integration).where(
+                    select(Integration)
+                    .where(
                         Integration.organization_id == UUID(context.organization_id),
                         Integration.connector == context.provider,
                         Integration.is_active == True,  # noqa: E712
                         share_flag == True,  # noqa: E712
                     )
+                    .order_by(Integration.updated_at.desc().nullslast())
+                    .limit(1)
                 )
-                shared_integration = result.scalar_one_or_none()
+                shared_integration: Integration | None = result.scalars().first()
                 if shared_integration:
                     return DataProtectionResult(
                         allowed=True,
