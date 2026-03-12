@@ -346,7 +346,14 @@ async def _check_huddle_recording(
     meeting_id: str,
     organization_id: str,
 ) -> dict[str, Any]:
-    """Async implementation of huddle recording check."""
+    """Async implementation of huddle recording check.
+
+    New path (meet_space_name set): uses Meet REST API v2 conference records
+    to fetch participants, recordings, and transcripts.
+
+    Legacy path (meet_space_name null, google_event_id set): falls back to
+    fuzzy Drive search for video files.
+    """
     from models.database import get_session
     from models.meeting import Meeting
     from workers.events import emit_event
@@ -359,69 +366,149 @@ async def _check_huddle_recording(
         if meeting.recording_drive_id:
             return {"status": "skipped", "reason": "recording_already_linked"}
 
+        meet_space_name = meeting.meet_space_name
         title = meeting.title or "Huddle"
         start_time = meeting.scheduled_start
         organizer_email = meeting.organizer_email
 
-    # Get Drive OAuth token — prefer the huddle organizer's integration
-    try:
-        from connectors.registry import discover_connectors
+    # ── Get an OAuth token (Calendar integration — same token works for Meet & Drive) ──
+    token = await _get_google_token(task, organization_id, organizer_email)
+    if token is None:
+        return {"status": "skipped", "reason": "no_google_integration"}
 
-        connectors = discover_connectors()
-        drive_cls = connectors.get("google_drive")
-        if not drive_cls:
-            return {"status": "skipped", "reason": "google_drive_connector_not_available"}
-
-        from models.database import get_admin_session
-        from models.integration import Integration
-        from models.user import User
-        from sqlalchemy import select
-
-        drive_integration = None
-
-        # Try organizer's Drive integration first (recordings land in their Drive)
-        if organizer_email:
-            async with get_admin_session() as admin_session:
-                organizer_result = await admin_session.execute(
-                    select(Integration)
-                    .join(User, Integration.user_id == User.id)
-                    .where(
-                        Integration.organization_id == UUID(organization_id),
-                        Integration.connector == "google_drive",
-                        Integration.is_active == True,  # noqa: E712
-                        User.email == organizer_email,
-                    )
-                )
-                drive_integration = organizer_result.scalars().first()
-
-        # Fall back to any active Drive integration in the org
-        if not drive_integration:
-            async with get_admin_session() as admin_session:
-                result = await admin_session.execute(
-                    select(Integration).where(
-                        Integration.organization_id == UUID(organization_id),
-                        Integration.connector == "google_drive",
-                        Integration.is_active == True,  # noqa: E712
-                    )
-                )
-                drive_integration = result.scalars().first()
-
-        if not drive_integration:
-            return {"status": "skipped", "reason": "no_drive_integration"}
-
-        drive_connector = drive_cls(
-            organization_id, user_id=str(drive_integration.user_id)
-        )
-        token, _ = await drive_connector.get_oauth_token()
-    except Exception as e:
-        logger.warning("Failed to get Drive token for recording check: %s", e)
-        raise task.retry(exc=e)
-
-    # Search Drive for recording files (mp4 or webm)
     import httpx
 
+    MEET_API = "https://meet.googleapis.com/v2"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    # ── New path: Meet API conference records ──
+    if meet_space_name:
+        try:
+            async with httpx.AsyncClient() as client:
+                # Find the conference record for this space
+                resp = await client.get(
+                    f"{MEET_API}/conferenceRecords",
+                    headers=headers,
+                    params={"filter": f'space.name="{meet_space_name}"'},
+                    timeout=30.0,
+                )
+                resp.raise_for_status()
+                records = resp.json().get("conferenceRecords", [])
+
+            if not records:
+                remaining = task.max_retries - task.request.retries
+                if remaining > 0:
+                    logger.info(
+                        "No conference record yet for meeting %s, %d retries remaining",
+                        meeting_id, remaining,
+                    )
+                    raise task.retry()
+                return {"status": "not_found", "meeting_id": meeting_id}
+
+            # Use the most recent conference record
+            conf_record = records[-1]
+            conf_record_name = conf_record["name"]  # "conferenceRecords/abc123"
+
+            recording_url = ""
+            recording_drive_id = ""
+            transcript_url = ""
+            participant_data: list[dict[str, Any]] = []
+
+            async with httpx.AsyncClient() as client:
+                # Fetch recordings
+                rec_resp = await client.get(
+                    f"{MEET_API}/{conf_record_name}/recordings",
+                    headers=headers,
+                    timeout=30.0,
+                )
+                if rec_resp.status_code == 200:
+                    recordings = rec_resp.json().get("recordings", [])
+                    if recordings:
+                        drive_dest = recordings[0].get("driveDestination", {})
+                        recording_url = drive_dest.get("exportUri", "")
+                        recording_drive_id = drive_dest.get("file", "").split("/")[-1] if drive_dest.get("file") else ""
+
+                # Fetch transcripts
+                trans_resp = await client.get(
+                    f"{MEET_API}/{conf_record_name}/transcripts",
+                    headers=headers,
+                    timeout=30.0,
+                )
+                if trans_resp.status_code == 200:
+                    transcripts = trans_resp.json().get("transcripts", [])
+                    if transcripts:
+                        docs_dest = transcripts[0].get("docsDestination", {})
+                        transcript_url = docs_dest.get("exportUri", "")
+
+                # Fetch participants
+                part_resp = await client.get(
+                    f"{MEET_API}/{conf_record_name}/participants",
+                    headers=headers,
+                    timeout=30.0,
+                )
+                if part_resp.status_code == 200:
+                    for p in part_resp.json().get("participants", []):
+                        signin = p.get("signedinUser", {})
+                        anon = p.get("anonymousUser", {})
+                        participant_data.append({
+                            "email": signin.get("user", ""),
+                            "name": signin.get("displayName", anon.get("displayName", "")),
+                        })
+
+        except Exception as e:
+            if "retry" in type(e).__name__.lower():
+                raise
+            logger.warning("Meet API recording check failed: %s", e)
+            raise task.retry(exc=e)
+
+        if not recording_url and not transcript_url and not participant_data:
+            remaining = task.max_retries - task.request.retries
+            if remaining > 0:
+                logger.info(
+                    "No recordings/transcripts found yet for meeting %s, %d retries remaining",
+                    meeting_id, remaining,
+                )
+                raise task.retry()
+            return {"status": "not_found", "meeting_id": meeting_id}
+
+        # Update the meeting
+        async with get_session(organization_id=organization_id) as session:
+            meeting = await session.get(Meeting, UUID(meeting_id))
+            if meeting:
+                if recording_url:
+                    meeting.recording_url = recording_url
+                if recording_drive_id:
+                    meeting.recording_drive_id = recording_drive_id
+                if transcript_url:
+                    meeting.transcript_url = transcript_url
+                if participant_data:
+                    meeting.participants = participant_data
+                    meeting.participant_count = len(participant_data)
+                await session.commit()
+
+        if recording_url:
+            await emit_event(
+                event_type="huddle.recording_ready",
+                organization_id=organization_id,
+                data={
+                    "meeting_id": meeting_id,
+                    "recording_url": recording_url,
+                    "drive_file_id": recording_drive_id,
+                    "transcript_url": transcript_url,
+                },
+            )
+
+        logger.info("Linked Meet API data to meeting %s", meeting_id)
+        return {
+            "status": "found",
+            "meeting_id": meeting_id,
+            "recording_url": recording_url,
+            "transcript_url": transcript_url,
+            "participant_count": len(participant_data),
+        }
+
+    # ── Legacy fallback: Drive search for meetings without meet_space_name ──
     search_after = start_time.strftime("%Y-%m-%dT%H:%M:%S")
-    # Cap search window to ~60 min after meeting start to reduce false positives
     search_before = (start_time + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S")
     query = (
         f"(mimeType='video/mp4' or mimeType='video/webm') "
@@ -449,7 +536,6 @@ async def _check_huddle_recording(
         logger.warning("Drive search failed for recording: %s", e)
         raise task.retry(exc=e)
 
-    # Match recordings — prioritize title match, fall back to "meet" keyword
     title_lower = title.lower()
     matched = None
     fallback = None
@@ -464,18 +550,15 @@ async def _check_huddle_recording(
         matched = fallback
 
     if not matched:
-        # No match yet — retry if we have retries left
         remaining = task.max_retries - task.request.retries
         if remaining > 0:
             logger.info(
                 "No recording found for meeting %s, %d retries remaining",
-                meeting_id,
-                remaining,
+                meeting_id, remaining,
             )
             raise task.retry()
         return {"status": "not_found", "meeting_id": meeting_id}
 
-    # Link recording to the Meeting
     async with get_session(organization_id=organization_id) as session:
         meeting = await session.get(Meeting, UUID(meeting_id))
         if meeting:
@@ -483,7 +566,6 @@ async def _check_huddle_recording(
             meeting.recording_drive_id = matched.get("id", "")
             await session.commit()
 
-    # Emit event for downstream consumers
     await emit_event(
         event_type="huddle.recording_ready",
         organization_id=organization_id,
@@ -502,6 +584,69 @@ async def _check_huddle_recording(
         "drive_file_id": matched.get("id", ""),
         "recording_url": matched.get("webViewLink", ""),
     }
+
+
+async def _get_google_token(
+    task: Any,
+    organization_id: str,
+    organizer_email: str | None,
+) -> str | None:
+    """Get a Google OAuth token for Meet/Drive API calls.
+
+    Prefers the Calendar integration (same token works for Meet API).
+    Falls back to Drive integration if Calendar is not available.
+    """
+    from connectors.registry import discover_connectors
+    from models.database import get_admin_session
+    from models.integration import Integration
+    from models.user import User
+    from sqlalchemy import select
+
+    connectors = discover_connectors()
+
+    # Try Calendar integration first (same OAuth token covers Meet API)
+    for connector_name in ("google_calendar", "google_drive"):
+        cls = connectors.get(connector_name)
+        if not cls:
+            continue
+
+        integration = None
+
+        if organizer_email:
+            async with get_admin_session() as admin_session:
+                result = await admin_session.execute(
+                    select(Integration)
+                    .join(User, Integration.user_id == User.id)
+                    .where(
+                        Integration.organization_id == UUID(organization_id),
+                        Integration.connector == connector_name,
+                        Integration.is_active == True,  # noqa: E712
+                        User.email == organizer_email,
+                    )
+                )
+                integration = result.scalars().first()
+
+        if not integration:
+            async with get_admin_session() as admin_session:
+                result = await admin_session.execute(
+                    select(Integration).where(
+                        Integration.organization_id == UUID(organization_id),
+                        Integration.connector == connector_name,
+                        Integration.is_active == True,  # noqa: E712
+                    )
+                )
+                integration = result.scalars().first()
+
+        if integration:
+            try:
+                connector = cls(organization_id, user_id=str(integration.user_id))
+                token, _ = await connector.get_oauth_token()
+                return token
+            except Exception as e:
+                logger.warning("Failed to get %s token: %s", connector_name, e)
+                continue
+
+    return None
 
 
 @celery_app.task(bind=True, name="workers.tasks.sync.sync_all_organizations")

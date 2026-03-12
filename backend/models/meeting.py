@@ -74,6 +74,11 @@ class Meeting(Base):
     recording_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     recording_drive_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
+    # Google Meet REST API v2 fields
+    meet_space_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    meeting_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    transcript_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
     # Links to related entities
     account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=True
@@ -115,6 +120,8 @@ class Meeting(Base):
             "conference_link": self.conference_link,
             "huddle_status": self.huddle_status,
             "recording_url": self.recording_url,
+            "transcript_url": self.transcript_url,
+            "meeting_code": self.meeting_code,
             "account_id": str(self.account_id) if self.account_id else None,
             "deal_id": str(self.deal_id) if self.deal_id else None,
         }
