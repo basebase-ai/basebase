@@ -178,7 +178,7 @@ async def persist_records(
                 row["visibility"] = visibility
         rows.append(row)
 
-    async with get_session(organization_id=organization_id) as session:
+    async with get_session(organization_id=organization_id, user_id=str(owner_user_id) if owner_user_id else None) as session:
         table = model_cls.__table__
         update_cols: dict[str, Any] = {
             col: getattr(pg_insert(table).excluded, col)

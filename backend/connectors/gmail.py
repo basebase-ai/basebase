@@ -239,7 +239,7 @@ Send an email via the user's connected Gmail account. Emails are sent from the a
         integration_id: uuid.UUID = self._integration.id
         scope_prefix: str = f"{integration_id}:"
         existing_map: dict[str, uuid.UUID] = {}
-        async with get_session(organization_id=self.organization_id) as session:
+        async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
             result = await session.execute(
                 select(Activity.source_id, Activity.id).where(
                     Activity.organization_id == org_uuid,
@@ -313,7 +313,7 @@ Send an email via the user's connected Gmail account. Emails are sent from the a
         # Bulk insert in batches — skip duplicates (emails don't change)
         BATCH_SIZE: int = 500
         count: int = 0
-        async with get_session(organization_id=self.organization_id) as session:
+        async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
             for i in range(0, len(rows), BATCH_SIZE):
                 batch: list[dict[str, Any]] = rows[i : i + BATCH_SIZE]
                 stmt = pg_insert(Activity).values(batch).on_conflict_do_nothing()
