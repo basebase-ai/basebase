@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from models.database import get_admin_session, get_session
+from models.database import get_session
 
 logger = logging.getLogger(__name__)
 
@@ -178,9 +178,7 @@ async def persist_records(
                 row["visibility"] = visibility
         rows.append(row)
 
-    # Use admin session for sync inserts — bypasses RLS which blocks
-    # owner_only activity inserts without a matching session user.
-    async with get_admin_session() as session:
+    async with get_session(organization_id=organization_id, user_id=str(owner_user_id) if owner_user_id else None) as session:
         table = model_cls.__table__
         update_cols: dict[str, Any] = {
             col: getattr(pg_insert(table).excluded, col)

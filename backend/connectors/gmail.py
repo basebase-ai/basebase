@@ -21,7 +21,7 @@ from connectors.registry import (
     AuthType, Capability, ConnectorAction, ConnectorMeta, ConnectorScope,
 )
 from models.activity import Activity
-from models.database import get_admin_session, get_session
+from models.database import get_session
 
 GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1"
 
@@ -311,11 +311,9 @@ Send an email via the user's connected Gmail account. Emails are sent from the a
             rows.append(row)
 
         # Bulk insert in batches — skip duplicates (emails don't change)
-        # Use admin session to bypass RLS; sync is a trusted backend operation
-        # and the user-facing RLS policy blocks inserts without matching session user.
         BATCH_SIZE: int = 500
         count: int = 0
-        async with get_admin_session() as session:
+        async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
             for i in range(0, len(rows), BATCH_SIZE):
                 batch: list[dict[str, Any]] = rows[i : i + BATCH_SIZE]
                 stmt = pg_insert(Activity).values(batch).on_conflict_do_nothing()
