@@ -203,7 +203,12 @@ class FirefliesConnector(BaseConnector):
         print(f"[Fireflies] Got {len(transcripts)} transcripts")
 
         count = 0
-        async with get_session(organization_id=self.organization_id) as session:
+        # Pass user_id for RLS: activities with owner_only visibility require
+        # app.current_user_id to match owner_user_id for INSERT to succeed
+        async with get_session(
+            organization_id=self.organization_id,
+            user_id=self.user_id,
+        ) as session:
             for transcript in transcripts:
                 try:
                     # Parse transcript data
