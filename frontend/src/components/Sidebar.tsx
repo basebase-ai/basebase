@@ -59,10 +59,10 @@ function HelpButton(): JSX.Element {
       <button
         onClick={() => setShowModal(true)}
         title="Get Immediate Help"
-        className="p-2 rounded-lg text-amber-400 hover:text-amber-300 hover:bg-amber-500/15 transition-colors"
+        className="mr-0.5 p-2 rounded-lg text-amber-400 hover:text-amber-300 hover:bg-amber-500/15 transition-colors"
         aria-label="Get Immediate Help"
       >
-        <FaLifeRing className="w-5 h-5" />
+        <FaLifeRing className="w-[18px] h-[18px]" />
       </button>
       {showModal && (
         <div
