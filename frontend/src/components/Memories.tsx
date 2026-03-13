@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '../lib/api';
 import { useAppStore } from '../store';
@@ -18,7 +18,7 @@ interface MemoryDashboardResponse {
 }
 
 const GLOBAL_COMMAND_CATEGORY = 'global_commands';
-const GLOBAL_COMMAND_MAX_LENGTH = 400;
+const GLOBAL_COMMAND_MAX_LENGTH = 800;
 
 function formatTime(value: string | null): string {
   if (!value) return 'Unknown time';
@@ -33,6 +33,7 @@ export function Memories(): JSX.Element {
   const [newMemoryContent, setNewMemoryContent] = useState<string>('');
   const [newGlobalCommand, setNewGlobalCommand] = useState<string>('');
   const [showAddForm, setShowAddForm] = useState<boolean>(false);
+  const globalCommandTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const orgId = organization?.id;
   const userId = user?.id;
@@ -107,6 +108,18 @@ export function Memories(): JSX.Element {
     createMemory.mutate({ content: trimmed, category: GLOBAL_COMMAND_CATEGORY });
   };
 
+  const globalCommandValue = editingMemoryId === globalCommandMemory?.id
+    ? memoryDraft
+    : (globalCommandMemory?.content ?? newGlobalCommand);
+
+  useLayoutEffect(() => {
+    const textarea = globalCommandTextareaRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = 'auto';
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [globalCommandValue]);
+
   return (
     <div className="flex-1 overflow-hidden flex flex-col">
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
@@ -117,10 +130,12 @@ export function Memories(): JSX.Element {
           <>
             <div className="rounded-lg border border-primary-700/40 bg-primary-950/20 p-3">
               <div className="text-xs uppercase tracking-wide text-primary-300 mb-2">Global command</div>
-              <p className="text-xs text-surface-400 mb-2">Sent on every message. Maximum 400 characters.</p>
+              <p className="text-xs text-surface-400 mb-2">Applied on every message. Maximum 800 characters.</p>
               <textarea
-                className="w-full min-h-20 rounded-lg bg-surface-800 border border-surface-700 px-3 py-2 text-sm text-surface-100"
-                value={editingMemoryId === globalCommandMemory?.id ? memoryDraft : (globalCommandMemory?.content ?? newGlobalCommand)}
+                ref={globalCommandTextareaRef}
+                className="w-full rounded-lg bg-surface-800 border border-surface-700 px-3 py-2 text-sm text-surface-100 overflow-y-auto"
+                style={{ minHeight: '5rem', resize: 'none' }}
+                value={globalCommandValue}
                 onChange={(e) => {
                   if (editingMemoryId === globalCommandMemory?.id) {
                     setMemoryDraft(e.target.value);
@@ -134,7 +149,7 @@ export function Memories(): JSX.Element {
               />
               <div className="mt-2 flex items-center justify-between gap-2">
                 <span className="text-xs text-surface-500">
-                  {(editingMemoryId === globalCommandMemory?.id ? memoryDraft : (globalCommandMemory?.content ?? newGlobalCommand)).length}/{GLOBAL_COMMAND_MAX_LENGTH}
+                  {globalCommandValue.length}/{GLOBAL_COMMAND_MAX_LENGTH}
                 </span>
                 <div className="flex items-center gap-2">
                   {globalCommandMemory && (
