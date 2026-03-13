@@ -679,7 +679,8 @@ async def _fetch_gemini_summary(
     # - Named meetings: Gemini names the doc after the meeting title — only search by title
     # - Huddles: Gemini uses "Meeting started <timestamp>" — search by that pattern
     # Don't fall back to "Meeting started" for named meetings, as that grabs huddle docs
-    is_huddle = not title or title.lower() in ("huddle", "untitled event")
+    title_lower = (title or "").lower()
+    is_huddle = not title or title_lower.startswith("huddle") or title_lower == "untitled event"
     if is_huddle:
         name_filters = ["name contains 'Meeting started'"]
     else:
