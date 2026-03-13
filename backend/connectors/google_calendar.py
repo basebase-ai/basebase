@@ -423,10 +423,11 @@ class GoogleCalendarConnector(BaseConnector):
             except Exception as e:
                 logger.warning("[GCal Sync] Orphan cleanup failed (likely race condition): %s", e)
 
-        # Schedule Gemini summary fetch for completed Google Meet meetings
-        # that have a meeting_code but no summary yet
+        # Schedule Gemini summary fetch for completed meetings that have
+        # a meeting_code OR a title but no summary yet
         try:
             from models.meeting import Meeting as MeetingModel
+            from sqlalchemy import or_
             async with get_session(organization_id=self.organization_id) as session:
                 # Only check meetings from the last 7 days — older ones are unlikely
                 # to still have Gemini summaries we haven't fetched
@@ -435,7 +436,10 @@ class GoogleCalendarConnector(BaseConnector):
                     select(MeetingModel).where(
                         MeetingModel.organization_id == uuid.UUID(self.organization_id),
                         MeetingModel.status == "completed",
-                        MeetingModel.meeting_code.isnot(None),
+                        or_(
+                            MeetingModel.meeting_code.isnot(None),
+                            MeetingModel.title.isnot(None),
+                        ),
                         MeetingModel.summary.is_(None),
                         MeetingModel.huddle_status.is_(None),  # Skip huddles — handled by sweep
                         MeetingModel.scheduled_start > cutoff,

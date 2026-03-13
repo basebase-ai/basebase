@@ -511,8 +511,8 @@ async def _check_huddle_recording(
             "has_summary": bool(gemini_summary),
         }
 
-    # ── Calendared meetings: just fetch the Gemini summary from Drive ──
-    if meeting_code:
+    # ── Calendared meetings (or any meeting with a title): fetch Gemini summary from Drive ──
+    if meeting_code or title:
         gemini_summary = ""
         summary_doc_id = ""
         try:
@@ -669,7 +669,9 @@ async def _fetch_gemini_summary(
     except Exception as e:
         logger.warning("Failed to load existing summary_doc_ids: %s", e)
 
-    # Build time window: summary appears shortly after meeting ends
+    # Build time window: Gemini creates the doc shortly after the meeting
+    # Use createdTime (not modifiedTime) — the doc is created once, but
+    # modifiedTime can shift if someone opens/edits it later
     search_after = start_time.strftime("%Y-%m-%dT%H:%M:%S")
     search_before = (start_time + timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%S")
 
@@ -686,8 +688,8 @@ async def _fetch_gemini_summary(
             query = (
                 f"mimeType='application/vnd.google-apps.document' "
                 f"and {name_filter} "
-                f"and modifiedTime > '{search_after}' "
-                f"and modifiedTime < '{search_before}' "
+                f"and createdTime > '{search_after}' "
+                f"and createdTime < '{search_before}' "
                 f"and trashed=false"
             )
             resp = await client.get(
@@ -695,8 +697,8 @@ async def _fetch_gemini_summary(
                 headers=drive_headers,
                 params={
                     "q": query,
-                    "fields": "files(id,name,modifiedTime)",
-                    "orderBy": "modifiedTime desc",
+                    "fields": "files(id,name,createdTime)",
+                    "orderBy": "createdTime desc",
                     "pageSize": 10,
                 },
                 timeout=30.0,
