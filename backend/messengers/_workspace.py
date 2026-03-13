@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 STREAM_FLUSH_CHAR_THRESHOLD: int = 240
 STREAM_FLUSH_INTERVAL_SECONDS: float = 0.7
+STREAM_MIN_CHARS_FOR_TIME_FLUSH: int = 80
 SLOW_REPLY_TIMEOUT_SECONDS: int = 30
 SLOW_REPLY_MESSAGE: str = "Still working on this, one moment…"
 
@@ -525,10 +526,8 @@ class WorkspaceMessenger(BaseMessenger):
 
         async def _flush(*, reason: str, force: bool = False) -> None:
             nonlocal current_text, total_length, last_flush_at
-            text_to_send: str = current_text.strip() if force else current_text.strip()
-            if not force:
-                text_to_send = current_text.strip()
-            current_text = "" if force else ""
+            text_to_send: str = current_text.strip()
+            current_text = ""
 
             if not text_to_send:
                 return
@@ -553,8 +552,12 @@ class WorkspaceMessenger(BaseMessenger):
                     self._handle_json_chunk(chunk, channel_id, thread_id, workspace_id, organization_id)
                 else:
                     current_text += chunk
-                    size_flush: bool = len(current_text) >= STREAM_FLUSH_CHAR_THRESHOLD
-                    time_flush: bool = (time.monotonic() - last_flush_at) >= STREAM_FLUSH_INTERVAL_SECONDS
+                    buf_len: int = len(current_text)
+                    size_flush: bool = buf_len >= STREAM_FLUSH_CHAR_THRESHOLD
+                    time_flush: bool = (
+                        buf_len >= STREAM_MIN_CHARS_FOR_TIME_FLUSH
+                        and (time.monotonic() - last_flush_at) >= STREAM_FLUSH_INTERVAL_SECONDS
+                    )
                     if size_flush or time_flush:
                         await _flush(reason="buffer_size" if size_flush else "interval")
         except Exception as exc:
