@@ -669,10 +669,13 @@ async def _fetch_gemini_summary(
     except Exception as e:
         logger.warning("Failed to load existing summary_doc_ids: %s", e)
 
-    # Build time window: Gemini creates the doc shortly after the meeting
+    # Build time window: Gemini creates the doc shortly after the meeting.
     # Use createdTime (not modifiedTime) — the doc is created once, but
-    # modifiedTime can shift if someone opens/edits it later
-    search_after = start_time.strftime("%Y-%m-%dT%H:%M:%S")
+    # modifiedTime can shift if someone opens/edits it later.
+    # Search from 4h before to 4h after scheduled_start — for ad-hoc huddles
+    # the stored start time may be the calendar event time, not when the
+    # meeting actually happened.
+    search_after = (start_time - timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%S")
     search_before = (start_time + timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%S")
 
     # Search for the doc by name.
