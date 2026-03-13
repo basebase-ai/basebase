@@ -980,13 +980,17 @@ def sweep_completed_meetings(self: Any) -> dict[str, Any]:
 
 
 async def _sweep_completed_meetings() -> dict[str, Any]:
-    """Async implementation: find completed Meet meetings needing summaries."""
-    from models.database import get_admin_session
+    """Async implementation: check Meet API for ended calendared meetings, fetch summaries."""
+    import httpx
+    from models.database import get_admin_session, get_session
     from models.meeting import Meeting
     from sqlalchemy import select
 
+    MEET_API = "https://meet.googleapis.com/v2"
+
     now = datetime.utcnow()
-    cutoff = now - timedelta(hours=2)
+    # Look at meetings starting within the last 4 hours that haven't been summarized
+    cutoff = now - timedelta(hours=4)
 
     async with get_admin_session() as session:
         result = await session.execute(
@@ -994,25 +998,98 @@ async def _sweep_completed_meetings() -> dict[str, Any]:
                 Meeting.meeting_code.isnot(None),
                 Meeting.summary.is_(None),
                 Meeting.huddle_status.is_(None),  # Skip huddles — handled by sweep_active_huddles
-                Meeting.status == "completed",
-                Meeting.scheduled_end.isnot(None),
-                Meeting.scheduled_end < now,
-                Meeting.scheduled_end > cutoff,
+                Meeting.scheduled_start.isnot(None),
+                Meeting.scheduled_start > cutoff,
+                Meeting.scheduled_start < now,  # Meeting has started
             )
         )
         meetings = result.scalars().all()
 
     if not meetings:
-        return {"status": "ok", "checked": 0, "scheduled": 0}
+        return {"status": "ok", "checked": 0, "ended": 0, "scheduled": 0}
 
+    checked = 0
+    ended = 0
     scheduled = 0
-    for meeting in meetings:
-        check_huddle_recording.apply_async(
-            args=[str(meeting.id), str(meeting.organization_id)],
-            countdown=10,
-        )
-        scheduled += 1
-        logger.info("Sweep: scheduled summary fetch for calendared meeting %s", meeting.id)
 
-    logger.info("Completed meeting sweep: found=%d, scheduled=%d", len(meetings), scheduled)
-    return {"status": "ok", "checked": len(meetings), "scheduled": scheduled}
+    for meeting in meetings:
+        checked += 1
+        org_id = str(meeting.organization_id)
+        meeting_id = str(meeting.id)
+        meeting_code = meeting.meeting_code
+
+        # Skip meetings less than 5 minutes past start (still likely in progress)
+        if meeting.scheduled_start:
+            age_minutes = (now - meeting.scheduled_start).total_seconds() / 60
+            if age_minutes < 5:
+                continue
+
+        # Check Meet API for conference records using meeting_code
+        token = await _get_google_token(None, org_id, meeting.organizer_email)
+        if not token:
+            logger.warning("Sweep: no token for calendared meeting %s", meeting_id)
+            continue
+
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"{MEET_API}/conferenceRecords",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                    },
+                    params={"filter": f'space.meeting_code="{meeting_code}"'},
+                    timeout=30.0,
+                )
+
+                if resp.status_code == 403:
+                    # Scope doesn't cover calendar-created spaces — fall back to
+                    # scheduled_end check
+                    logger.info(
+                        "Sweep: Meet API 403 for calendared meeting %s, falling back to scheduled_end",
+                        meeting_id,
+                    )
+                    if meeting.scheduled_end and meeting.scheduled_end < now:
+                        check_huddle_recording.apply_async(
+                            args=[meeting_id, org_id], countdown=10,
+                        )
+                        scheduled += 1
+                    continue
+
+                resp.raise_for_status()
+                records = resp.json().get("conferenceRecords", [])
+
+            if records:
+                latest = records[-1]
+                end_time = latest.get("endTime")
+                if end_time:
+                    # Conference ended — mark meeting completed and schedule summary fetch
+                    if meeting.status != "completed":
+                        async with get_session(organization_id=org_id) as session:
+                            m = await session.get(Meeting, meeting.id)
+                            if m:
+                                m.status = "completed"
+                                m.scheduled_end = now
+                                if m.scheduled_start:
+                                    m.duration_minutes = max(
+                                        1, int((now - m.scheduled_start).total_seconds() / 60)
+                                    )
+                                await session.commit()
+                        ended += 1
+
+                    check_huddle_recording.apply_async(
+                        args=[meeting_id, org_id], countdown=10,
+                    )
+                    scheduled += 1
+                    logger.info("Sweep: calendared meeting %s ended, scheduled summary fetch", meeting_id)
+            # else: no conference record yet — meeting may not have started or nobody joined
+
+        except Exception as e:
+            logger.warning("Sweep: error checking calendared meeting %s: %s", meeting_id, e)
+            continue
+
+    logger.info(
+        "Completed meeting sweep: checked=%d, ended=%d, scheduled=%d",
+        checked, ended, scheduled,
+    )
+    return {"status": "ok", "checked": checked, "ended": ended, "scheduled": scheduled}
