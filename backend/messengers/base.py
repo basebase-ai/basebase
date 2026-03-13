@@ -309,6 +309,9 @@ class BaseMessenger(ABC):
             "(see attached files)" if attachment_ids else ""
         )
 
+        if not message_text.strip():
+            return {"status": "ok", "reason": "empty_after_org_selection"}
+
         # 6. Run orchestrator
         orchestrator = ChatOrchestrator(
             user_id=user_id,
