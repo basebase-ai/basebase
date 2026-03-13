@@ -454,40 +454,6 @@ class GoogleCalendarConnector(BaseConnector):
         except Exception as e:
             logger.warning("[GCal Sync] Failed to schedule summary fetches: %s", e)
 
-        # Schedule Gemini summary fetch for completed Google Meet meetings
-        # that have a meeting_code but no summary yet
-        try:
-            from models.meeting import Meeting as MeetingModel
-            async with get_session(organization_id=self.organization_id) as session:
-                # Only check meetings from the last 7 days — older ones are unlikely
-                # to still have Gemini summaries we haven't fetched
-                cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
-                needs_summary = await session.execute(
-                    select(MeetingModel).where(
-                        MeetingModel.organization_id == uuid.UUID(self.organization_id),
-                        MeetingModel.status == "completed",
-                        MeetingModel.meeting_code.isnot(None),
-                        MeetingModel.summary.is_(None),
-                        MeetingModel.huddle_status.is_(None),  # Skip huddles — handled by sweep
-                        MeetingModel.scheduled_start > cutoff,
-                    )
-                )
-                meetings_needing_summary = needs_summary.scalars().all()
-
-            if meetings_needing_summary:
-                from workers.tasks.sync import check_huddle_recording
-                for m in meetings_needing_summary:
-                    check_huddle_recording.apply_async(
-                        args=[str(m.id), self.organization_id],
-                        countdown=10,
-                    )
-                logger.info(
-                    "[GCal Sync] Scheduled summary fetch for %d completed Meet meetings",
-                    len(meetings_needing_summary),
-                )
-        except Exception as e:
-            logger.warning("[GCal Sync] Failed to schedule summary fetches: %s", e)
-
         # Broadcast final progress
         await broadcast_sync_progress(
             organization_id=self.organization_id,
