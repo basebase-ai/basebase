@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 import time
 import uuid as _uuid
 from datetime import UTC, datetime
@@ -28,6 +27,7 @@ from sqlalchemy import select, or_, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from config import settings
+from messengers._stream_breaks import find_safe_break
 from messengers.base import (
     BaseMessenger,
     InboundMessage,
@@ -68,7 +68,6 @@ _WORKSPACE_ORG_CACHE_TTL_SECONDS: int = 300
 _workspace_org_cache: dict[tuple[str, str], tuple[str | None, float]] = {}
 _workspace_org_cache_lock: asyncio.Lock = asyncio.Lock()
 
-_SENTENCE_BREAK_RE: re.Pattern[str] = re.compile(r"[.!?](?:\s|$)")
 
 
 # ---------------------------------------------------------------------------
@@ -87,37 +86,6 @@ def _merge_participating_user_ids(
             current.append(uid)
     return current
 
-
-def _find_safe_stream_break(text: str) -> int:
-    """Find the best character index to break a streamed response.
-
-    Prefer sentence boundaries (``.``, ``!``, ``?`` followed by whitespace or
-    end-of-string), while avoiding split points that sit inside Slack or
-    Markdown formatting markers (``**`` and ``~``) and apostrophe contractions
-    (e.g. ``user's``).
-    """
-    if not text:
-        return 0
-
-    break_idx: int = 0
-    for match in _SENTENCE_BREAK_RE.finditer(text):
-        candidate: int = match.end()
-
-        punct_idx: int = match.start()
-
-        # Avoid breaks after apostrophe contractions/possessives (e.g., "user's.").
-        if punct_idx >= 2 and text[punct_idx - 2:punct_idx] in {"'s", "'S"}:
-            continue
-
-        # Don't split right after formatting marks (e.g., "**.", "~.").
-        if punct_idx >= 2 and text[punct_idx - 2:punct_idx] == "**":
-            continue
-        if punct_idx >= 1 and text[punct_idx - 1:punct_idx] == "~":
-            continue
-
-        break_idx = candidate
-
-    return break_idx
 
 
 # ===========================================================================
@@ -565,7 +533,7 @@ class WorkspaceMessenger(BaseMessenger):
                 text_to_send = current_text.strip()
                 current_text = ""
             else:
-                break_idx: int = _find_safe_stream_break(current_text)
+                break_idx: int = find_safe_break(current_text, strategy="quickest_safe")
                 if break_idx <= 0:
                     return
                 text_to_send = current_text[:break_idx].strip()

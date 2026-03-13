@@ -29,6 +29,7 @@ import httpx
 from sqlalchemy import select
 
 from config import settings
+from messengers._stream_breaks import find_safe_break
 from messengers.base import (
     BaseMessenger,
     InboundMessage,
@@ -99,16 +100,18 @@ _TWILIO_MAX_LENGTH: int = 1600
 
 
 def _split_text(text: str, max_len: int) -> list[str]:
-    """Split *text* into chunks of at most *max_len* chars, preferring newlines."""
+    """Split *text* into chunks of at most *max_len* chars.
+
+    Uses the shared safe-break routine with the ``best`` strategy so Twilio
+    segments prefer the farthest safe break before hard-cutting.
+    """
     segments: list[str] = []
     remaining: str = text
     while remaining:
         if len(remaining) <= max_len:
             segments.append(remaining)
             break
-        cut: int = remaining.rfind("\n", 0, max_len)
-        if cut <= 0:
-            cut = remaining.rfind(" ", 0, max_len)
+        cut: int = find_safe_break(remaining, strategy="best", limit=max_len)
         if cut <= 0:
             cut = max_len
         segments.append(remaining[:cut].rstrip())
