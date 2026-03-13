@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 import time
 import uuid as _uuid
 from datetime import UTC, datetime
@@ -43,6 +42,7 @@ from models.messenger_user_mapping import MessengerUserMapping
 from models.org_member import OrgMember
 from models.organization import Organization
 from models.user import User
+from messengers._text_breaks import find_safe_text_break
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +68,6 @@ _WORKSPACE_ORG_CACHE_TTL_SECONDS: int = 300
 _workspace_org_cache: dict[tuple[str, str], tuple[str | None, float]] = {}
 _workspace_org_cache_lock: asyncio.Lock = asyncio.Lock()
 
-_SENTENCE_BREAK_RE: re.Pattern[str] = re.compile(r"[.!?](?:\s|$)")
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -89,35 +87,8 @@ def _merge_participating_user_ids(
 
 
 def _find_safe_stream_break(text: str) -> int:
-    """Find the best character index to break a streamed response.
-
-    Prefer sentence boundaries (``.``, ``!``, ``?`` followed by whitespace or
-    end-of-string), while avoiding split points that sit inside Slack or
-    Markdown formatting markers (``**`` and ``~``) and apostrophe contractions
-    (e.g. ``user's``).
-    """
-    if not text:
-        return 0
-
-    break_idx: int = 0
-    for match in _SENTENCE_BREAK_RE.finditer(text):
-        candidate: int = match.end()
-
-        punct_idx: int = match.start()
-
-        # Avoid breaks after apostrophe contractions/possessives (e.g., "user's.").
-        if punct_idx >= 2 and text[punct_idx - 2:punct_idx] in {"'s", "'S"}:
-            continue
-
-        # Don't split right after formatting marks (e.g., "**.", "~.").
-        if punct_idx >= 2 and text[punct_idx - 2:punct_idx] == "**":
-            continue
-        if punct_idx >= 1 and text[punct_idx - 1:punct_idx] == "~":
-            continue
-
-        break_idx = candidate
-
-    return break_idx
+    """Find the quickest safe break for workspace streaming updates."""
+    return find_safe_text_break(text, preference="quickest_safe")
 
 
 # ===========================================================================
