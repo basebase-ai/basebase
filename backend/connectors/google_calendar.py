@@ -394,26 +394,31 @@ class GoogleCalendarConnector(BaseConnector):
             
             # Cleanup orphaned meetings (meetings with no linked activities)
             # These can occur when calendar events are rescheduled
-            from models.meeting import Meeting
-            from sqlalchemy import func
-            
-            orphaned_result = await session.execute(
-                select(Meeting).where(
-                    Meeting.organization_id == uuid.UUID(self.organization_id),
-                    Meeting.status == "completed",  # Only cleanup past meetings
-                    ~Meeting.id.in_(
-                        select(Activity.meeting_id).where(Activity.meeting_id.isnot(None))
+            # Wrapped in try/except: concurrent user syncs can race and link
+            # activities between our check and the delete
+            try:
+                from models.meeting import Meeting
+                from sqlalchemy import func
+
+                orphaned_result = await session.execute(
+                    select(Meeting).where(
+                        Meeting.organization_id == uuid.UUID(self.organization_id),
+                        Meeting.status == "completed",  # Only cleanup past meetings
+                        ~Meeting.id.in_(
+                            select(Activity.meeting_id).where(Activity.meeting_id.isnot(None))
+                        )
                     )
                 )
-            )
-            orphaned_meetings = orphaned_result.scalars().all()
-            
-            if orphaned_meetings:
-                print(f"[GCal Sync] Cleaning up {len(orphaned_meetings)} orphaned meetings")
-                for meeting in orphaned_meetings:
-                    print(f"[GCal Sync]   Deleting orphaned meeting: {meeting.title} at {meeting.scheduled_start}")
-                    await session.delete(meeting)
-                await session.commit()
+                orphaned_meetings = orphaned_result.scalars().all()
+
+                if orphaned_meetings:
+                    print(f"[GCal Sync] Cleaning up {len(orphaned_meetings)} orphaned meetings")
+                    for meeting in orphaned_meetings:
+                        print(f"[GCal Sync]   Deleting orphaned meeting: {meeting.title} at {meeting.scheduled_start}")
+                        await session.delete(meeting)
+                    await session.commit()
+            except Exception as e:
+                logger.warning("[GCal Sync] Orphan cleanup failed (likely race condition): %s", e)
 
         # Schedule Gemini summary fetch for completed Google Meet meetings
         # that have a meeting_code but no summary yet
