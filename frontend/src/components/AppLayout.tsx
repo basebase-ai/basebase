@@ -1534,24 +1534,24 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
         {/* Release Stage Banner */}
         {RELEASE_STAGE.stage && showReleaseBanner && (
           <div className="flex-shrink-0 px-4 md:px-6 py-3 bg-primary-500/10 border-b border-primary-500/20">
-            <div className="flex items-start justify-between gap-3 max-w-7xl mx-auto">
-              <div className="flex items-start gap-2 min-w-0 flex-1">
-                <span className="flex-shrink-0 mt-0.5 text-primary-400 font-semibold text-sm">
+            <div className="flex items-center justify-between gap-3 max-w-7xl mx-auto">
+              <p className="text-sm text-surface-300 min-w-0 flex-1 leading-relaxed">
+                <span className="text-primary-400 font-semibold mr-2">
                   {RELEASE_STAGE.message}
                 </span>
-                <p className="text-sm text-surface-300 flex-1">
-                  {RELEASE_STAGE.description}
-                </p>
+                <span>{RELEASE_STAGE.description}</span>
+              </p>
+              <div className="self-start">
+                <button
+                  onClick={dismissReleaseBanner}
+                  className="flex-shrink-0 text-surface-400 hover:text-surface-200 transition-colors px-1"
+                  aria-label="Dismiss"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
-              <button
-                onClick={dismissReleaseBanner}
-                className="flex-shrink-0 text-surface-400 hover:text-surface-200 transition-colors px-1"
-                aria-label="Dismiss"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
             </div>
           </div>
         )}
