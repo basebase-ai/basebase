@@ -17,6 +17,9 @@ export interface UserProfile {
   phoneNumber: string | null;
   jobTitle: string | null;
   roles: string[]; // Global roles like ['global_admin']
+  smsConsent: boolean;
+  whatsappConsent: boolean;
+  phoneNumberVerified: boolean;
 }
 
 export interface MasqueradeState {

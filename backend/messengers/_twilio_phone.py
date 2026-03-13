@@ -428,6 +428,7 @@ class TwilioPhoneMessenger(BaseMessenger):
                 body="Your account is not associated with any organisation. "
                      "Please contact your administrator.",
                 whatsapp=is_whatsapp,
+                allow_unverified=True,  # Reply to inbound sender
             )
             return None  # caller should return {"status": "rejected"}
 
@@ -480,6 +481,7 @@ class TwilioPhoneMessenger(BaseMessenger):
                         to=phone,
                         body=f"Got it — chatting as {chosen_name}. Send your message!",
                         whatsapp=is_whatsapp,
+                        allow_unverified=True,
                     )
                     return chosen_org_id, chosen_name, True
             except ValueError:
@@ -518,6 +520,7 @@ class TwilioPhoneMessenger(BaseMessenger):
             to=phone,
             body="\n".join(lines),
             whatsapp=(self.meta.slug == "whatsapp"),
+            allow_unverified=True,
         )
         await _set_pending_org_choice(self.meta.slug, phone, org_ids)
 
@@ -601,7 +604,7 @@ class TwilioPhoneMessenger(BaseMessenger):
             return
 
         if len(text) <= _TWILIO_MAX_LENGTH:
-            await send_sms(to=to, body=text, media_urls=media_urls, whatsapp=is_whatsapp)
+            await send_sms(to=to, body=text, media_urls=media_urls, whatsapp=is_whatsapp, allow_unverified=True)
             return
 
         segments: list[str] = _split_text(text, _TWILIO_MAX_LENGTH)
@@ -613,6 +616,7 @@ class TwilioPhoneMessenger(BaseMessenger):
             await send_sms(
                 to=to,
                 body=segment,
+                allow_unverified=True,
                 media_urls=media_urls if i == 0 else None,
                 whatsapp=is_whatsapp,
             )

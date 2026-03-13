@@ -1,16 +1,176 @@
 /**
  * User profile management panel (slide-out).
- * 
+ *
  * Features:
  * - View/edit profile info
  * - Change avatar
+ * - Phone verification via modal
  * - Sign out
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { UserProfile } from './AppLayout';
 import { API_BASE } from '../lib/api';
 import { Memories } from './Memories';
+
+// ---------------------------------------------------------------------------
+// Phone verification modal
+// ---------------------------------------------------------------------------
+
+type VerifyStep = 'enter_number' | 'enter_code';
+
+interface PhoneVerifyModalProps {
+  userId: string;
+  initialNumber: string;
+  onVerified: (phone: string) => void;
+  onClose: () => void;
+}
+
+function PhoneVerifyModal({ userId, initialNumber, onVerified, onClose }: PhoneVerifyModalProps): JSX.Element {
+  const [step, setStep] = useState<VerifyStep>('enter_number');
+  const [phone, setPhone] = useState(initialNumber);
+  const [code, setCode] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [normalizedPhone, setNormalizedPhone] = useState('');
+
+  const handleSendCode = async (): Promise<void> => {
+    const raw: string = phone.trim().replace(/[\s\-().]/g, '');
+    if (!raw) return;
+    const e164: string = raw.startsWith('+') ? raw : `+1${raw}`;
+    if (!/^\+\d{10,15}$/.test(e164)) {
+      setError('Enter a valid phone number (e.g. +14155551234)');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const saveRes = await fetch(`${API_BASE}/auth/me?user_id=${userId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone_number: e164 }),
+      });
+      if (!saveRes.ok) {
+        const d = await saveRes.json().catch(() => ({})) as { detail?: string };
+        throw new Error(d.detail ?? 'Failed to save number');
+      }
+      const res = await fetch(`${API_BASE}/auth/me/request-phone-verification?user_id=${userId}`, { method: 'POST' });
+      const data = await res.json().catch(() => ({})) as { detail?: string };
+      if (!res.ok) throw new Error(data.detail ?? 'Failed to send code');
+      setNormalizedPhone(e164);
+      setStep('enter_code');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleVerify = async (): Promise<void> => {
+    if (!code.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/auth/me/verify-phone?user_id=${userId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: code.trim() }),
+      });
+      const data = await res.json().catch(() => ({})) as { detail?: string };
+      if (!res.ok) throw new Error(data.detail ?? 'Verification failed');
+      onVerified(normalizedPhone);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Verification failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/60 z-[60]" onClick={onClose} />
+      <div className="fixed inset-0 z-[61] flex items-center justify-center p-4">
+        <div
+          className="bg-surface-900 border border-surface-700 rounded-xl shadow-2xl w-full max-w-sm p-6 space-y-5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between">
+            <h3 className="text-base font-semibold text-surface-100">
+              {step === 'enter_number' ? 'Add phone number' : 'Enter verification code'}
+            </h3>
+            <button onClick={onClose} className="p-1 text-surface-400 hover:text-surface-200 rounded">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {step === 'enter_number' && (
+            <div className="space-y-3">
+              <p className="text-sm text-surface-400">
+                We&apos;ll text a verification code to this number.
+              </p>
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="+1 415-555-1234"
+                className="input-field"
+                maxLength={30}
+                autoFocus
+              />
+              {error && <p className="text-sm text-red-400">{error}</p>}
+              <button
+                onClick={() => void handleSendCode()}
+                disabled={busy || !phone.trim()}
+                className="w-full btn-primary disabled:opacity-50"
+              >
+                {busy ? 'Sending…' : 'Send code'}
+              </button>
+            </div>
+          )}
+
+          {step === 'enter_code' && (
+            <div className="space-y-3">
+              <p className="text-sm text-surface-400">
+                Enter the 6-digit code we sent to <span className="text-surface-200 font-mono">{phone.trim()}</span>
+              </p>
+              <input
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="000000"
+                className="input-field text-center tracking-[0.3em] text-lg font-mono"
+                maxLength={6}
+                autoFocus
+              />
+              {error && <p className="text-sm text-red-400">{error}</p>}
+              <button
+                onClick={() => void handleVerify()}
+                disabled={busy || code.length < 4}
+                className="w-full btn-primary disabled:opacity-50"
+              >
+                {busy ? 'Verifying…' : 'Verify'}
+              </button>
+              <button
+                onClick={() => { setStep('enter_number'); setCode(''); setError(null); }}
+                className="w-full text-sm text-surface-400 hover:text-surface-200"
+              >
+                Use a different number
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Profile panel
+// ---------------------------------------------------------------------------
 
 interface ProfilePanelProps {
   user: UserProfile;
@@ -23,14 +183,19 @@ export function ProfilePanel({ user, onClose, onLogout, onUpdateUser }: ProfileP
   const [activeTab, setActiveTab] = useState<'profile' | 'memories'>('profile');
   const [name, setName] = useState(user.name ?? '');
   const [jobTitle, setJobTitle] = useState(user.jobTitle ?? '');
-  const [phoneNumber, setPhoneNumber] = useState(user.phoneNumber ?? '');
+  const [smsConsent, setSmsConsent] = useState(user.smsConsent ?? false);
+  const [whatsappConsent, setWhatsappConsent] = useState(user.whatsappConsent ?? false);
   const [isSaving, setIsSaving] = useState(false);
-  // Only use local state for a NEW avatar selection, otherwise use the user prop directly
+
+  useEffect(() => { setName(user.name ?? ''); }, [user.name]);
+  useEffect(() => { setJobTitle(user.jobTitle ?? ''); }, [user.jobTitle]);
+  useEffect(() => { setSmsConsent(user.smsConsent ?? false); }, [user.smsConsent]);
+  useEffect(() => { setWhatsappConsent(user.whatsappConsent ?? false); }, [user.whatsappConsent]);
+  const [showPhoneModal, setShowPhoneModal] = useState(false);
   const [newAvatarFile, setNewAvatarFile] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
-  // Use new file if selected, otherwise use the user's current avatar
-  const avatarPreview = newAvatarFile ?? user.avatarUrl;
+
+  const avatarPreview: string | null = newAvatarFile ?? user.avatarUrl;
 
   const handleSave = async (): Promise<void> => {
     setIsSaving(true);
@@ -42,31 +207,33 @@ export function ProfilePanel({ user, onClose, onLogout, onUpdateUser }: ProfileP
         body: JSON.stringify({
           name: name || null,
           avatar_url: avatarPreview,
-          phone_number: phoneNumber.trim() || null,
           job_title: jobTitle.trim() || null,
+          sms_consent: smsConsent,
+          whatsapp_consent: whatsappConsent,
         }),
       });
-
       if (!response.ok) {
         const data = await response.json().catch(() => ({})) as { detail?: string };
         throw new Error(data.detail ?? 'Failed to update profile');
       }
-
       const updatedUser = await response.json() as {
         name: string | null;
         avatar_url: string | null;
         phone_number: string | null;
         job_title: string | null;
+        sms_consent: boolean;
+        whatsapp_consent: boolean;
+        phone_number_verified: boolean;
       };
-      
-      // Update the store
       onUpdateUser({
         name: updatedUser.name,
         avatarUrl: updatedUser.avatar_url,
         phoneNumber: updatedUser.phone_number,
         jobTitle: updatedUser.job_title,
+        smsConsent: updatedUser.sms_consent,
+        whatsappConsent: updatedUser.whatsapp_consent,
+        phoneNumberVerified: updatedUser.phone_number_verified,
       });
-      
       onClose();
     } catch (err) {
       console.error('Failed to save:', err);
@@ -79,7 +246,6 @@ export function ProfilePanel({ user, onClose, onLogout, onUpdateUser }: ProfileP
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
     const file = e.target.files?.[0];
     if (file) {
-      // Check file size (limit to 500KB for base64 storage)
       if (file.size > 500 * 1024) {
         setError('Image too large. Please choose an image under 500KB.');
         return;
@@ -98,13 +264,15 @@ export function ProfilePanel({ user, onClose, onLogout, onUpdateUser }: ProfileP
     onLogout();
   };
 
+  const handlePhoneVerified = (verifiedPhone: string): void => {
+    onUpdateUser({ phoneNumber: verifiedPhone, phoneNumberVerified: true });
+    setShowPhoneModal(false);
+  };
+
   return (
     <>
       {/* Backdrop */}
-      <div
-        className="fixed inset-0 bg-black/50 z-40"
-        onClick={onClose}
-      />
+      <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
 
       {/* Panel */}
       <div className="fixed right-0 top-0 bottom-0 w-full max-w-md bg-surface-900 border-l border-surface-800 z-50 flex flex-col shadow-2xl">
@@ -121,7 +289,7 @@ export function ProfilePanel({ user, onClose, onLogout, onUpdateUser }: ProfileP
           </button>
         </header>
 
-        {/* Tabs - matches OrganizationPanel pattern */}
+        {/* Tabs */}
         <div className="flex border-b border-surface-800">
           {(['profile', 'memories'] as const).map((tab) => (
             <button
@@ -142,7 +310,7 @@ export function ProfilePanel({ user, onClose, onLogout, onUpdateUser }: ProfileP
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {activeTab === 'profile' && (
             <>
-          {/* Avatar Section */}
+          {/* Avatar */}
           <div className="flex flex-col items-center">
             <div className="relative">
               {avatarPreview ? (
@@ -162,25 +330,16 @@ export function ProfilePanel({ user, onClose, onLogout, onUpdateUser }: ProfileP
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleAvatarChange}
-                  className="hidden"
-                />
+                <input type="file" accept="image/*" onChange={handleAvatarChange} className="hidden" />
               </label>
             </div>
-            <p className="text-sm text-surface-400 mt-3">
-              Click camera icon to change photo
-            </p>
+            <p className="text-sm text-surface-400 mt-3">Click camera icon to change photo</p>
           </div>
 
-          {/* Form Fields */}
+          {/* Form */}
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-surface-200 mb-2">
-                Display name
-              </label>
+              <label className="block text-sm font-medium text-surface-200 mb-2">Display name</label>
               <input
                 type="text"
                 value={name}
@@ -190,11 +349,8 @@ export function ProfilePanel({ user, onClose, onLogout, onUpdateUser }: ProfileP
               />
             </div>
 
-
             <div>
-              <label className="block text-sm font-medium text-surface-200 mb-2">
-                Job title
-              </label>
+              <label className="block text-sm font-medium text-surface-200 mb-2">Job title</label>
               <input
                 type="text"
                 value={jobTitle}
@@ -205,37 +361,80 @@ export function ProfilePanel({ user, onClose, onLogout, onUpdateUser }: ProfileP
               />
             </div>
 
+            {/* Email */}
             <div>
-              <label className="block text-sm font-medium text-surface-200 mb-2">
-                Phone number
-              </label>
-              <input
-                type="tel"
-                value={phoneNumber}
-                onChange={(e) => setPhoneNumber(e.target.value)}
-                placeholder="e.g. +1 415-555-1234"
-                className="input-field"
-                maxLength={30}
-              />
-              <p className="text-xs text-surface-500 mt-1">
-                Used for urgent SMS alerts from workflows
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-surface-200 mb-2">
-                Email
-              </label>
+              <label className="block text-sm font-medium text-surface-200 mb-2">Email</label>
               <input
                 type="email"
                 value={user.email}
                 disabled
                 className="input-field opacity-60 cursor-not-allowed"
               />
-              <p className="text-xs text-surface-500 mt-1">
-                Email cannot be changed
-              </p>
+              <p className="text-xs text-surface-500 mt-1">Email cannot be changed</p>
             </div>
+
+            {/* Phone number — read-only display */}
+            <div>
+              <label className="block text-sm font-medium text-surface-200 mb-2">Phone number</label>
+              {(user.phoneNumber ?? '').trim() ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-surface-200 font-mono">{user.phoneNumber}</span>
+                  <span className="inline-flex items-center gap-1 text-xs text-green-500">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                    Verified
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowPhoneModal(true)}
+                    className="text-sm text-primary-400 hover:text-primary-300 ml-auto"
+                  >
+                    Change
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowPhoneModal(true)}
+                  className="text-sm text-primary-400 hover:text-primary-300"
+                >
+                  Add phone number
+                </button>
+              )}
+            </div>
+
+            {/* Notification consent — only shown when a verified phone number exists */}
+            {user.phoneNumberVerified && (
+              <div className="pt-4 border-t border-surface-800">
+                <h3 className="text-sm font-medium text-surface-200 mb-3">Notification preferences</h3>
+                <div className="space-y-2.5">
+                  <label className="flex items-center gap-3 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={smsConsent}
+                      onChange={(e) => setSmsConsent(e.target.checked)}
+                      className="rounded border-surface-600 bg-surface-800 text-primary-500 focus:ring-primary-500"
+                    />
+                    <span className="text-sm text-surface-300 group-hover:text-surface-200">
+                      I agree to receive SMS from Basebase
+                    </span>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={whatsappConsent}
+                      onChange={(e) => setWhatsappConsent(e.target.checked)}
+                      className="rounded border-surface-600 bg-surface-800 text-primary-500 focus:ring-primary-500"
+                    />
+                    <span className="text-sm text-surface-300 group-hover:text-surface-200">
+                      I agree to receive WhatsApp messages from Basebase
+                    </span>
+                  </label>
+                </div>
+              </div>
+            )}
+
           </div>
 
           {/* Account Info */}
@@ -245,9 +444,7 @@ export function ProfilePanel({ user, onClose, onLogout, onUpdateUser }: ProfileP
               <div className="flex justify-between items-center">
                 <span className="text-surface-400">User ID</span>
                 <div className="flex items-center gap-2">
-                  <span className="text-surface-300 font-mono text-xs">
-                    {user.id}
-                  </span>
+                  <span className="text-surface-300 font-mono text-xs">{user.id}</span>
                   <button
                     onClick={() => void navigator.clipboard.writeText(user.id)}
                     className="p-1 text-surface-400 hover:text-surface-200 hover:bg-surface-700 rounded transition-colors"
@@ -275,11 +472,9 @@ export function ProfilePanel({ user, onClose, onLogout, onUpdateUser }: ProfileP
           )}
         </div>
 
-        {/* Footer - always visible */}
+        {/* Footer */}
         <div className="p-6 border-t border-surface-800 space-y-3">
-          {error && (
-            <p className="text-sm text-red-400 text-center">{error}</p>
-          )}
+          {error && <p className="text-sm text-red-400 text-center">{error}</p>}
           {activeTab === 'profile' && (
             <button
               onClick={() => void handleSave()}
@@ -300,6 +495,16 @@ export function ProfilePanel({ user, onClose, onLogout, onUpdateUser }: ProfileP
           </button>
         </div>
       </div>
+
+      {/* Phone verify modal */}
+      {showPhoneModal && (
+        <PhoneVerifyModal
+          userId={user.id}
+          initialNumber={user.phoneNumber ?? ''}
+          onVerified={handlePhoneVerified}
+          onClose={() => setShowPhoneModal(false)}
+        />
+      )}
     </>
   );
 }

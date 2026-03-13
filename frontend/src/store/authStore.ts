@@ -310,6 +310,9 @@ export const useAuthStore = create<AuthState>()(
             phone_number: string | null;
             job_title: string | null;
             roles: string[];
+            sms_consent?: boolean;
+            whatsapp_consent?: boolean;
+            phone_number_verified?: boolean;
             organization: {
               id: string;
               name: string;
@@ -323,22 +326,31 @@ export const useAuthStore = create<AuthState>()(
           );
 
           const newRoles = data.roles ?? [];
+          const newSmsConsent = data.sms_consent ?? user.smsConsent;
+          const newWhatsappConsent = data.whatsapp_consent ?? user.whatsappConsent;
+          const newPhoneVerified = data.phone_number_verified ?? user.phoneNumberVerified;
           if (
             data.id !== user.id ||
             data.avatar_url !== user.avatarUrl ||
             data.name !== user.name ||
             data.phone_number !== user.phoneNumber ||
             data.job_title !== user.jobTitle ||
-            JSON.stringify(newRoles) !== JSON.stringify(user.roles)
+            JSON.stringify(newRoles) !== JSON.stringify(user.roles) ||
+            newSmsConsent !== user.smsConsent ||
+            newWhatsappConsent !== user.whatsappConsent ||
+            newPhoneVerified !== user.phoneNumberVerified
           ) {
             setUser({
               ...user,
               id: data.id,
               name: data.name ?? user.name,
               avatarUrl: data.avatar_url ?? user.avatarUrl,
-              phoneNumber: data.phone_number ?? user.phoneNumber,
+              phoneNumber: data.phone_number,
               jobTitle: data.job_title ?? user.jobTitle,
               roles: newRoles,
+              smsConsent: newSmsConsent,
+              whatsappConsent: newWhatsappConsent,
+              phoneNumberVerified: newPhoneVerified,
             });
           }
 

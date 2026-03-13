@@ -52,6 +52,11 @@ class User(Base):
     phone_number: Mapped[Optional[str]] = mapped_column(
         String(30), nullable=True, unique=True
     )  # E.164 format, e.g. "+14155551234"
+    phone_number_verified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )  # When set, outbound SMS to this number is allowed
+    sms_consent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    whatsapp_consent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_guest: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     # Waitlist fields
@@ -97,6 +102,9 @@ class User(Base):
             "status": self.status,
             "avatar_url": self.avatar_url,
             "phone_number": self.phone_number,
+            "phone_number_verified_at": self.phone_number_verified_at.isoformat() if self.phone_number_verified_at else None,
+            "sms_consent": self.sms_consent,
+            "whatsapp_consent": self.whatsapp_consent,
             "is_guest": self.is_guest,
             "organization_id": str(self.organization_id) if self.organization_id else None,
         }
