@@ -164,6 +164,7 @@ class GoogleCalendarConnector(BaseConnector):
                 "orderBy": "startTime",
                 "timeMin": time_min.isoformat() + "Z",
                 "timeMax": time_max.isoformat() + "Z",
+                "conferenceDataVersion": 1,
             }
             if page_token:
                 params["pageToken"] = page_token
