@@ -109,6 +109,9 @@ function App(): JSX.Element {
               phoneNumber: null,
               jobTitle: null,
               roles: [],
+              smsConsent: false,
+              whatsappConsent: false,
+              phoneNumberVerified: false,
             });
             setOrganization({
               id: 'example.com',
@@ -200,9 +203,12 @@ function App(): JSX.Element {
       email,
       name,
       avatarUrl,
-      phoneNumber: existingUser?.phoneNumber ?? null,
-      jobTitle: existingUser?.jobTitle ?? null,
+      phoneNumber: null,
+      jobTitle: null,
       roles: [],
+      smsConsent: false,
+      whatsappConsent: false,
+      phoneNumberVerified: false,
     });
 
     // CHECK WAITLIST STATUS FIRST - before any company/org setup
@@ -234,6 +240,9 @@ function App(): JSX.Element {
           organization: { id: string; name: string; logo_url: string | null; handle?: string | null } | null;
           needs_onboarding: boolean;
           onboarding_mode: 'new' | 'invited' | null;
+          sms_consent?: boolean;
+          whatsapp_consent?: boolean;
+          phone_number_verified?: boolean;
         };
         
         // Update user with data from backend (authoritative source)
@@ -243,9 +252,12 @@ function App(): JSX.Element {
           email,
           name: userData.name ?? name,
           avatarUrl: userData.avatar_url ?? avatarUrl,
-          phoneNumber: userData.phone_number ?? existingUser?.phoneNumber ?? null,
-          jobTitle: userData.job_title ?? existingUser?.jobTitle ?? null,
+          phoneNumber: userData.phone_number ?? null,
+          jobTitle: userData.job_title ?? null,
           roles: userData.roles ?? [],
+          smsConsent: userData.sms_consent ?? false,
+          whatsappConsent: userData.whatsapp_consent ?? false,
+          phoneNumberVerified: userData.phone_number_verified ?? false,
         });
         
         // If sync returned an organization, set it and route based on onboarding status

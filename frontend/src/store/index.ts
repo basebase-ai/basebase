@@ -255,6 +255,9 @@ export const useConnectedIntegrations = () =>
       phoneNumber: string | null;
       jobTitle: string | null;
       roles: string[];
+      smsConsent: boolean;
+      whatsappConsent: boolean;
+      phoneNumberVerified: boolean;
     }
     interface LegacyOrg {
       id: string;
@@ -268,7 +271,15 @@ export const useConnectedIntegrations = () =>
       role: string;
       isActive: boolean;
     }
-    const user = legacy.user as LegacyUser | null;
+    const rawUser = legacy.user as Partial<LegacyUser> | null;
+    const user: LegacyUser | null = rawUser
+      ? {
+          ...rawUser,
+          smsConsent: rawUser.smsConsent ?? false,
+          whatsappConsent: rawUser.whatsappConsent ?? false,
+          phoneNumberVerified: rawUser.phoneNumberVerified ?? false,
+        } as LegacyUser
+      : null;
     if (user) {
       useAuthStore.setState({
         user,

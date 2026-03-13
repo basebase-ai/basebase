@@ -65,9 +65,9 @@ def run_query(sql: str) -> None:
 
             for stmt in statements:
                 cur.execute(stmt)
-                if cur.description is None:
-                    conn.commit()
                 # Keep going; we'll print the last result set below
+
+            conn.commit()
 
             if cur.description is None:
                 print(f"OK — {cur.rowcount} row(s) affected")

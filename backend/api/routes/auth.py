@@ -346,6 +346,9 @@ class UserResponse(BaseModel):
     phone_number: Optional[str]
     job_title: Optional[str]
     organization_id: Optional[str]
+    sms_consent: bool = False
+    whatsapp_consent: bool = False
+    phone_number_verified: bool = False
 
 
 class TeamConnection(BaseModel):
@@ -454,6 +457,9 @@ async def get_current_user(user_id: Optional[str] = None) -> UserResponse:
             phone_number=user.phone_number,
             job_title=job_title,
             organization_id=str(user.organization_id) if user.organization_id else None,
+            sms_consent=user.sms_consent,
+            whatsapp_consent=user.whatsapp_consent,
+            phone_number_verified=user.phone_number_verified_at is not None,
         )
 
 
@@ -464,6 +470,8 @@ class UpdateProfileRequest(BaseModel):
     avatar_url: Optional[str] = None
     phone_number: Optional[str] = Field(default=None, max_length=30)
     job_title: Optional[str] = Field(default=None, max_length=255)
+    sms_consent: Optional[bool] = None
+    whatsapp_consent: Optional[bool] = None
 
 
 @router.patch("/me", response_model=UserResponse)
@@ -493,7 +501,23 @@ async def update_profile(
         if request.avatar_url is not None:
             user.avatar_url = request.avatar_url
         if request.phone_number is not None:
-            user.phone_number = request.phone_number or None
+            raw_phone: str = request.phone_number.strip()
+            new_phone: Optional[str] = None
+            if raw_phone:
+                import re as _re
+                digits_only: str = _re.sub(r"[\s\-().]+", "", raw_phone)
+                if not digits_only.startswith("+"):
+                    digits_only = f"+1{digits_only}"
+                if not _re.fullmatch(r"\+\d{10,15}", digits_only):
+                    raise HTTPException(status_code=400, detail=f"Invalid phone number: must be E.164 format (e.g. +14155551234)")
+                new_phone = digits_only
+            if new_phone != user.phone_number:
+                user.phone_number_verified_at = None
+            user.phone_number = new_phone
+        if request.sms_consent is not None:
+            user.sms_consent = request.sms_consent
+        if request.whatsapp_consent is not None:
+            user.whatsapp_consent = request.whatsapp_consent
 
         # Update job title on org_members
         job_title: Optional[str] = None
@@ -522,6 +546,9 @@ async def update_profile(
             phone_number=user.phone_number,
             job_title=job_title,
             organization_id=str(user.organization_id) if user.organization_id else None,
+            sms_consent=user.sms_consent,
+            whatsapp_consent=user.whatsapp_consent,
+            phone_number_verified=user.phone_number_verified_at is not None,
         )
 
 
@@ -529,6 +556,70 @@ async def update_profile(
 async def logout(response: Response) -> dict[str, str]:
     """Clear session."""
     return {"status": "logged out"}
+
+
+@router.post("/me/request-phone-verification")
+async def request_phone_verification(user_id: Optional[str] = None) -> dict[str, str | bool]:
+    """Send a verification code via SMS to the current user's phone number."""
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+    from services.phone_verify import request_phone_verification as send_verification
+
+    async with get_admin_session() as session:
+        user = await session.get(User, user_uuid)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        if not user.phone_number or not user.phone_number.strip():
+            raise HTTPException(status_code=400, detail="No phone number set. Add a phone number in your profile first.")
+        if user.phone_number_verified_at is not None:
+            return {"status": "already_verified"}
+        ok, err = await send_verification(user.phone_number.strip())
+        if ok:
+            return {"status": "sent"}
+        raise HTTPException(status_code=502, detail=err or "Failed to send verification code")
+
+
+class VerifyPhoneRequest(BaseModel):
+    """Request body for verifying phone with code."""
+
+    code: str
+
+
+@router.post("/me/verify-phone")
+async def verify_phone(
+    request: VerifyPhoneRequest,
+    user_id: Optional[str] = None,
+) -> dict[str, str | bool]:
+    """Verify the current user's phone number with the code sent by SMS."""
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+    if not (request.code or "").strip():
+        raise HTTPException(status_code=400, detail="Code is required")
+    from datetime import datetime as dt
+    from services.phone_verify import check_phone_verification
+
+    async with get_admin_session() as session:
+        user = await session.get(User, user_uuid)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        if not user.phone_number or not user.phone_number.strip():
+            raise HTTPException(status_code=400, detail="No phone number set.")
+        if user.phone_number_verified_at is not None:
+            return {"status": "already_verified", "verified": True}
+        ok, err = await check_phone_verification(user.phone_number.strip(), request.code)
+        if not ok:
+            raise HTTPException(status_code=400, detail=err or "Invalid or expired code")
+        user.phone_number_verified_at = dt.utcnow()
+        await session.commit()
+        return {"status": "verified", "verified": True}
 
 
 class CreateOrganizationRequest(BaseModel):
@@ -587,6 +678,9 @@ class SyncUserResponse(BaseModel):
     roles: list[str]  # Global roles like ['global_admin']
     needs_onboarding: bool = False
     onboarding_mode: Optional[str] = None  # "new" | "invited" | None
+    sms_consent: bool = False
+    whatsapp_consent: bool = False
+    phone_number_verified: bool = False
 
 
 @router.post("/users/sync", response_model=SyncUserResponse)
@@ -824,6 +918,9 @@ async def sync_user(request: SyncUserRequest) -> SyncUserResponse:
                 roles=existing.roles or [],
                 needs_onboarding=sync_needs_onboarding,
                 onboarding_mode=sync_onboarding_mode,
+                sms_consent=existing.sms_consent,
+                whatsapp_consent=existing.whatsapp_consent,
+                phone_number_verified=existing.phone_number_verified_at is not None,
             )
 
         # Create a new active user with no org. Organization assignment is now
@@ -876,6 +973,9 @@ async def sync_user(request: SyncUserRequest) -> SyncUserResponse:
                     organization=org_data_retry,
                     status=existing.status,
                     roles=existing.roles or [],
+                    sms_consent=existing.sms_consent,
+                    whatsapp_consent=existing.whatsapp_consent,
+                    phone_number_verified=existing.phone_number_verified_at is not None,
                 )
             raise HTTPException(status_code=500, detail="User creation conflict; please retry")
         await session.refresh(new_user)
@@ -891,6 +991,9 @@ async def sync_user(request: SyncUserRequest) -> SyncUserResponse:
             organization=None,
             status=new_user.status,
             roles=new_user.roles or [],
+            sms_consent=new_user.sms_consent,
+            whatsapp_consent=new_user.whatsapp_consent,
+            phone_number_verified=new_user.phone_number_verified_at is not None,
         )
 
 
@@ -2094,6 +2197,9 @@ async def switch_active_organization(
             organization=org_data,
             status=user.status,
             roles=user.roles or [],
+            sms_consent=user.sms_consent,
+            whatsapp_consent=user.whatsapp_consent,
+            phone_number_verified=user.phone_number_verified_at is not None,
         )
 
 

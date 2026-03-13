@@ -634,6 +634,9 @@ export function AdminPanel(): JSX.Element {
         phoneNumber: null,
         jobTitle: null,
         roles: data.roles,
+        smsConsent: false,
+        whatsappConsent: false,
+        phoneNumberVerified: false,
       };
 
       const targetOrg: OrganizationInfo | null = data.organization
