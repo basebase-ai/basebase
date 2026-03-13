@@ -78,6 +78,7 @@ class Meeting(Base):
     meet_space_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     meeting_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     transcript_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    summary_doc_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     # Links to related entities
     account_id: Mapped[Optional[uuid.UUID]] = mapped_column(

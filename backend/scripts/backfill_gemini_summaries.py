@@ -51,14 +51,15 @@ async def backfill():
         start_time = meeting.scheduled_start
 
         async with httpx.AsyncClient() as client:
-            summary = await _fetch_gemini_summary(client, org_id, meeting.organizer_email, title, start_time, meeting_id)
+            summary, doc_id = await _fetch_gemini_summary(client, org_id, meeting.organizer_email, title, start_time, meeting_id)
 
         if summary:
             async with get_session(organization_id=org_id) as session:
                 m = await session.get(Meeting, meeting.id)
                 m.summary = summary
+                m.summary_doc_id = doc_id
                 await session.commit()
-            print(f"  OK   {meeting_id}: saved {len(summary)} chars")
+            print(f"  OK   {meeting_id}: saved {len(summary)} chars (doc={doc_id})")
             filled += 1
         else:
             print(f"  MISS {meeting_id}: no summary doc found in Drive")

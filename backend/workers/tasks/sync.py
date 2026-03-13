@@ -446,7 +446,7 @@ async def _check_huddle_recording(
                         })
 
                 # Fetch Gemini meeting summary doc from "Meet Recordings" in Drive
-                gemini_summary = await _fetch_gemini_summary(
+                gemini_summary, summary_doc_id = await _fetch_gemini_summary(
                     client, organization_id, organizer_email, title, start_time, meeting_id
                 )
 
@@ -472,6 +472,7 @@ async def _check_huddle_recording(
                     meeting.participant_count = len(participant_data)
                 if gemini_summary:
                     meeting.summary = gemini_summary
+                    meeting.summary_doc_id = summary_doc_id
                 await session.commit()
 
         if not recording_url and not transcript_url:
@@ -513,9 +514,10 @@ async def _check_huddle_recording(
     # ── Calendared meetings: just fetch the Gemini summary from Drive ──
     if meeting_code:
         gemini_summary = ""
+        summary_doc_id = ""
         try:
             async with httpx.AsyncClient() as client:
-                gemini_summary = await _fetch_gemini_summary(
+                gemini_summary, summary_doc_id = await _fetch_gemini_summary(
                     client, organization_id, organizer_email, title, start_time, meeting_id
                 )
         except Exception as e:
@@ -526,6 +528,7 @@ async def _check_huddle_recording(
                 meeting = await session.get(Meeting, UUID(meeting_id))
                 if meeting:
                     meeting.summary = gemini_summary
+                    meeting.summary_doc_id = summary_doc_id
                     await session.commit()
             logger.info("Saved Gemini summary (%d chars) for calendared meeting %s", len(gemini_summary), meeting_id)
             return {
@@ -629,12 +632,12 @@ async def _fetch_gemini_summary(
     title: str,
     start_time: datetime,
     meeting_id: str,
-) -> str:
+) -> tuple[str, str]:
     """Search Drive's 'Meet Recordings' folder for a Gemini-generated summary doc.
 
     For named meetings, Gemini uses the meeting title as the doc name.
     For huddles (title='Huddle'), the doc is named like 'Meeting started <timestamp>'.
-    Returns the plain-text content of the doc, or empty string if not found.
+    Returns (plain-text content, doc_id) or ("", "") if not found.
     """
     # Get a Drive-scoped token (Calendar token won't have Drive access)
     drive_token = await _get_google_token(
@@ -642,10 +645,29 @@ async def _fetch_gemini_summary(
     )
     if not drive_token:
         logger.info("No Drive token available for Gemini summary fetch, meeting %s", meeting_id)
-        return ""
+        return "", ""
 
     drive_headers = {"Authorization": f"Bearer {drive_token}"}
     DRIVE_API = "https://www.googleapis.com/drive/v3"
+
+    # Collect Drive doc IDs already assigned to other meetings in this org
+    # to avoid assigning the same doc to multiple meetings
+    exclude_doc_ids: set[str] = set()
+    try:
+        from models.database import get_admin_session
+        from models.meeting import Meeting
+        from sqlalchemy import select
+
+        async with get_admin_session() as session:
+            result = await session.execute(
+                select(Meeting.summary_doc_id).where(
+                    Meeting.organization_id == UUID(organization_id),
+                    Meeting.summary_doc_id.isnot(None),
+                )
+            )
+            exclude_doc_ids = {row[0] for row in result}
+    except Exception as e:
+        logger.warning("Failed to load existing summary_doc_ids: %s", e)
 
     # Build time window: summary appears shortly after meeting ends
     search_after = start_time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -675,18 +697,20 @@ async def _fetch_gemini_summary(
                     "q": query,
                     "fields": "files(id,name,modifiedTime)",
                     "orderBy": "modifiedTime desc",
-                    "pageSize": 5,
+                    "pageSize": 10,
                 },
                 timeout=30.0,
             )
             resp.raise_for_status()
-            files = resp.json().get("files", [])
+            candidates = resp.json().get("files", [])
+            # Filter out docs already assigned to other meetings
+            files = [f for f in candidates if f["id"] not in exclude_doc_ids]
             if files:
                 break
 
         if not files:
             logger.info("No Gemini summary doc found for meeting %s", meeting_id)
-            return ""
+            return "", ""
 
         doc_id = files[0]["id"]
         doc_name = files[0].get("name", "")
@@ -703,11 +727,11 @@ async def _fetch_gemini_summary(
         summary_text = export_resp.text.strip()
 
         logger.info("Fetched Gemini summary (%d chars) for meeting %s", len(summary_text), meeting_id)
-        return summary_text
+        return summary_text, doc_id
 
     except Exception as e:
         logger.warning("Failed to fetch Gemini summary for meeting %s: %s", meeting_id, e)
-        return ""
+        return "", ""
 
 
 async def _get_google_token(
