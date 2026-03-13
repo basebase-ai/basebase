@@ -655,7 +655,8 @@ async def _fetch_gemini_summary(
     # "Meeting started" (Gemini's default for huddles / unnamed meetings)
     name_filters = ["name contains 'Meeting started'"]
     if title and title.lower() != "huddle":
-        name_filters.insert(0, f"name contains '{title}'")
+        safe_title = title.replace("\\", "\\\\").replace("'", "\\'")
+        name_filters.insert(0, f"name contains '{safe_title}'")
 
     files = []
     try:

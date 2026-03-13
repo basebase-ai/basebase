@@ -581,34 +581,24 @@ class GoogleCalendarConnector(BaseConnector):
 
     async def _fetch_gemini_doc(self, doc_id: str) -> str:
         """Export a Gemini notes doc as plain text using the Drive API."""
-        from connectors.registry import discover_connectors
-        from models.database import get_admin_session
-        from models.integration import Integration
-        from sqlalchemy import select
+        from workers.tasks.sync import _get_google_token
 
-        # Get a Drive-scoped token
-        connectors = discover_connectors()
-        drive_cls = connectors.get("google_drive")
-        if not drive_cls:
+        # Look up user email for organizer-scoped token
+        organizer_email = None
+        if self.user_id:
+            from models.database import get_admin_session
+            from models.user import User
+
+            async with get_admin_session() as session:
+                user = await session.get(User, uuid.UUID(self.user_id))
+                if user:
+                    organizer_email = user.email
+
+        token = await _get_google_token(
+            None, self.organization_id, organizer_email, preferred_connector="google_drive"
+        )
+        if not token:
             return ""
-
-        # Prefer the Drive integration of the user whose calendar we're syncing
-        async with get_admin_session() as session:
-            query = select(Integration).where(
-                Integration.organization_id == uuid.UUID(self.organization_id),
-                Integration.connector == "google_drive",
-                Integration.is_active == True,  # noqa: E712
-            )
-            if self.user_id:
-                query = query.where(Integration.user_id == uuid.UUID(self.user_id))
-            result = await session.execute(query)
-            integration = result.scalars().first()
-
-        if not integration:
-            return ""
-
-        connector = drive_cls(self.organization_id, user_id=str(integration.user_id))
-        token, _ = await connector.get_oauth_token()
 
         async with httpx.AsyncClient() as client:
             resp = await client.get(
@@ -623,12 +613,20 @@ class GoogleCalendarConnector(BaseConnector):
     @staticmethod
     def _extract_gemini_doc_id(gcal_event: dict[str, Any]) -> str:
         """Extract the Gemini notes doc fileId from calendar event attachments."""
-        for att in gcal_event.get("attachments", []):
+        attachments = gcal_event.get("attachments", [])
+        for att in attachments:
             if (
                 att.get("mimeType") == "application/vnd.google-apps.document"
                 and "gemini" in att.get("title", "").lower()
             ):
                 return att.get("fileId", "")
+        if attachments:
+            logger.debug(
+                "[GCal Sync] %d attachment(s) on event %s but none matched Gemini: %s",
+                len(attachments),
+                gcal_event.get("id", "?"),
+                [att.get("title", "") for att in attachments],
+            )
         return ""
 
     async def sync_all(self) -> dict[str, int]:
