@@ -1541,17 +1541,15 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
                 </span>
                 <span>{RELEASE_STAGE.description}</span>
               </p>
-              <div className="self-start">
-                <button
-                  onClick={dismissReleaseBanner}
-                  className="flex-shrink-0 text-surface-400 hover:text-surface-200 transition-colors px-1"
-                  aria-label="Dismiss"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
+              <button
+                onClick={dismissReleaseBanner}
+                className="flex-shrink-0 self-center text-surface-400 hover:text-surface-200 transition-colors px-1"
+                aria-label="Dismiss"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
           </div>
         )}
