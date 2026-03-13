@@ -967,3 +967,52 @@ async def _sweep_active_huddles() -> dict[str, Any]:
 
     logger.info("Sweep complete: checked=%d, ended=%d", checked, ended)
     return {"status": "ok", "checked": checked, "ended": ended}
+
+
+@celery_app.task(bind=True, name="workers.tasks.sync.sweep_completed_meetings")
+def sweep_completed_meetings(self: Any) -> dict[str, Any]:
+    """
+    Periodic task that finds recently-ended calendared Google Meet meetings
+    missing a Gemini summary and schedules a fetch.
+    """
+    logger.info(f"Task {self.request.id}: Sweeping completed meetings for summaries")
+    return run_async(_sweep_completed_meetings())
+
+
+async def _sweep_completed_meetings() -> dict[str, Any]:
+    """Async implementation: find completed Meet meetings needing summaries."""
+    from models.database import get_admin_session
+    from models.meeting import Meeting
+    from sqlalchemy import select
+
+    now = datetime.utcnow()
+    cutoff = now - timedelta(hours=2)
+
+    async with get_admin_session() as session:
+        result = await session.execute(
+            select(Meeting).where(
+                Meeting.meeting_code.isnot(None),
+                Meeting.summary.is_(None),
+                Meeting.huddle_status.is_(None),  # Skip huddles — handled by sweep_active_huddles
+                Meeting.status == "completed",
+                Meeting.scheduled_end.isnot(None),
+                Meeting.scheduled_end < now,
+                Meeting.scheduled_end > cutoff,
+            )
+        )
+        meetings = result.scalars().all()
+
+    if not meetings:
+        return {"status": "ok", "checked": 0, "scheduled": 0}
+
+    scheduled = 0
+    for meeting in meetings:
+        check_huddle_recording.apply_async(
+            args=[str(meeting.id), str(meeting.organization_id)],
+            countdown=10,
+        )
+        scheduled += 1
+        logger.info("Sweep: scheduled summary fetch for calendared meeting %s", meeting.id)
+
+    logger.info("Completed meeting sweep: found=%d, scheduled=%d", len(meetings), scheduled)
+    return {"status": "ok", "checked": len(meetings), "scheduled": scheduled}
