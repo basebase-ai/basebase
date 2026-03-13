@@ -1994,7 +1994,7 @@ function MessageWithBlocks({
     return (
       <div className="flex gap-2 flex-row-reverse animate-slide-up">
         {/* Avatar */}
-        <div className="flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center bg-primary-600">
+        <div className="flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center bg-primary-800">
           <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
           </svg>
@@ -2002,7 +2002,7 @@ function MessageWithBlocks({
 
         {/* Content: bubble + attachments + timestamp, all right-aligned */}
         <div className="flex-1 max-w-[85%] overflow-hidden text-right">
-          <div className="inline-block max-w-full px-3 py-2 rounded-xl rounded-tr-sm bg-primary-600 text-white text-[13px] leading-relaxed">
+          <div className="inline-block max-w-full px-3 py-2 rounded-xl rounded-tr-sm bg-primary-800 text-white text-[13px] leading-relaxed">
             <div className="whitespace-pre-wrap break-words text-left">{textContent}</div>
           </div>
           {attachments.length > 0 && (
