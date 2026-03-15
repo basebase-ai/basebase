@@ -470,13 +470,14 @@ async def _check_huddle_recording(
                 if participant_data:
                     meeting.participants = participant_data
                     meeting.participant_count = len(participant_data)
+                notes_changed = False
                 if gemini_summary:
-                    meeting.set_notes("gemini", gemini_summary, doc_id=summary_doc_id)
+                    notes_changed = meeting.set_notes("gemini", gemini_summary, doc_id=summary_doc_id)
                 await session.commit()
 
-        if gemini_summary:
+        if notes_changed:
             generate_meeting_summary.apply_async(
-                args=[meeting_id, organization_id], countdown=60,
+                args=[meeting_id, organization_id], countdown=_SUMMARY_DELAY,
             )
 
         if not recording_url and not transcript_url:
@@ -528,14 +529,16 @@ async def _check_huddle_recording(
             logger.warning("Drive summary fetch failed for calendared meeting %s: %s", meeting_id, e)
 
         if gemini_summary:
+            notes_changed = False
             async with get_session(organization_id=organization_id) as session:
                 meeting = await session.get(Meeting, UUID(meeting_id))
                 if meeting:
-                    meeting.set_notes("gemini", gemini_summary, doc_id=summary_doc_id)
+                    notes_changed = meeting.set_notes("gemini", gemini_summary, doc_id=summary_doc_id)
                     await session.commit()
-            generate_meeting_summary.apply_async(
-                args=[meeting_id, organization_id], countdown=60,
-            )
+            if notes_changed:
+                generate_meeting_summary.apply_async(
+                    args=[meeting_id, organization_id], countdown=_SUMMARY_DELAY,
+                )
             logger.info("Saved Gemini summary (%d chars) for calendared meeting %s", len(gemini_summary), meeting_id)
             return {
                 "status": "found",
@@ -1152,6 +1155,9 @@ def generate_meeting_summary(
     logger.info("Generating meeting summary for %s", meeting_id)
     return run_async(_generate_meeting_summary(self, meeting_id, organization_id))
 
+
+# Delay before generating summary — gives time for multiple sources to arrive
+_SUMMARY_DELAY = 60
 
 _SUMMARY_MODEL = "claude-haiku-4-5-20251001"
 

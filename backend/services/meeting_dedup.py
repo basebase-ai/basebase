@@ -23,15 +23,10 @@ from models.meeting import Meeting
 from models.activity import Activity
 from models.database import get_session
 
-# Delay (seconds) before generating summary — gives time for multiple
-# sources to arrive so we only call the LLM once.
-_SUMMARY_DELAY = 60
-
-
 def _schedule_summary(meeting_id: str, organization_id: str) -> None:
     """Fire-and-forget: schedule LLM summary generation after a short delay."""
     try:
-        from workers.tasks.sync import generate_meeting_summary
+        from workers.tasks.sync import generate_meeting_summary, _SUMMARY_DELAY
         generate_meeting_summary.apply_async(
             args=[meeting_id, organization_id],
             countdown=_SUMMARY_DELAY,

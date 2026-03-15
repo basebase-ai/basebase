@@ -72,14 +72,24 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Restore summary/summary_doc_id from external_notes before dropping
+    # Restore summary from external_notes before dropping — try gemini first,
+    # then fall back to granola, fireflies, unknown, or any remaining source.
     op.execute(
         sa.text("""
             UPDATE meetings
-            SET summary = (external_notes->'gemini'->-1->>'content'),
-                summary_doc_id = (external_notes->'gemini'->-1->>'doc_id')
-            WHERE external_notes ? 'gemini'
-              AND jsonb_array_length(external_notes->'gemini') > 0
+            SET summary = COALESCE(
+                    CASE WHEN external_notes ? 'gemini' AND jsonb_array_length(external_notes->'gemini') > 0
+                         THEN external_notes->'gemini'->-1->>'content' END,
+                    CASE WHEN external_notes ? 'granola' AND jsonb_array_length(external_notes->'granola') > 0
+                         THEN external_notes->'granola'->-1->>'content' END,
+                    CASE WHEN external_notes ? 'fireflies' AND jsonb_array_length(external_notes->'fireflies') > 0
+                         THEN external_notes->'fireflies'->-1->>'content' END,
+                    CASE WHEN external_notes ? 'unknown' AND jsonb_array_length(external_notes->'unknown') > 0
+                         THEN external_notes->'unknown'->-1->>'content' END
+                ),
+                summary_doc_id = CASE WHEN external_notes ? 'gemini' AND jsonb_array_length(external_notes->'gemini') > 0
+                                      THEN external_notes->'gemini'->-1->>'doc_id' END
+            WHERE external_notes IS NOT NULL
         """)
     )
     op.drop_index("ix_meetings_external_notes", table_name="meetings")
