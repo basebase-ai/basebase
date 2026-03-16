@@ -18,8 +18,8 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-BOT_FRAMEWORK_TOKEN_URL: str = (
-    "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token"
+_BOT_FRAMEWORK_TOKEN_URL_TEMPLATE: str = (
+    "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
 )
 BOT_FRAMEWORK_SCOPE: str = "https://api.botframework.com/.default"
 MICROSOFT_GRAPH_API_BASE: str = "https://graph.microsoft.com/v1.0"
@@ -43,9 +43,12 @@ async def get_bot_framework_token() -> str:
             "MICROSOFT_APP_ID and MICROSOFT_APP_PASSWORD must be set for Teams"
         )
 
+    tenant: str = settings.MICROSOFT_TENANT_ID or "botframework.com"
+    token_url: str = _BOT_FRAMEWORK_TOKEN_URL_TEMPLATE.format(tenant=tenant)
+
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            BOT_FRAMEWORK_TOKEN_URL,
+            token_url,
             data={
                 "grant_type": "client_credentials",
                 "client_id": app_id,
