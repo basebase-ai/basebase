@@ -57,8 +57,8 @@ class Conversation(Base):
         String(20), nullable=False, default="web"
     )  # "web" | "slack"
     source_channel_id: Mapped[Optional[str]] = mapped_column(
-        String(100), nullable=True
-    )  # Slack DM channel ID
+        String(255), nullable=True
+    )
     source_user_id: Mapped[Optional[str]] = mapped_column(
         String(100), nullable=True
     )  # External user ID (e.g., Slack user ID)
