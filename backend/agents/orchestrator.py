@@ -526,7 +526,7 @@ class ChatOrchestrator:
 
         Full parameter docs are fetched on demand via get_connector_docs(connector).
         """
-        from connectors.registry import ConnectorMeta, discover_connectors
+        from connectors.registry import ConnectorMeta, discover_connectors, resolve_connector
         from models.integration import Integration
 
         try:
@@ -536,6 +536,7 @@ class ChatOrchestrator:
                         Integration.connector,
                         Integration.last_sync_at,
                         Integration.last_error,
+                        Integration.extra_data,
                     )
                     .where(
                         Integration.organization_id == UUID(self.organization_id),
@@ -550,16 +551,25 @@ class ChatOrchestrator:
                 active_providers[row[0]] = {
                     "last_sync": row[1],
                     "last_error": row[2],
+                    "extra_data": row[3],
                 }
 
             registry = discover_connectors()
+            all_slugs: set[str] = set(registry.keys()) | set(active_providers.keys())
 
             lines: list[str] = [
                 "Call `get_connector_docs(connector)` to get detailed usage instructions and parameter reference before using a connector for the first time.",
                 "",
             ]
-            for slug, connector_cls in sorted(registry.items()):
+            for slug in sorted(all_slugs):
                 if slug not in active_providers:
+                    continue
+                # Skip the base "mcp" template — only show dynamic mcp_* instances
+                if slug == "mcp":
+                    continue
+
+                connector_cls = resolve_connector(slug)
+                if connector_cls is None:
                     continue
 
                 meta: ConnectorMeta = connector_cls.meta  # type: ignore[attr-defined]
@@ -573,6 +583,10 @@ class ChatOrchestrator:
                     elif provider_info["last_sync"]:
                         sync_status = f" (synced {provider_info['last_sync'].strftime('%Y-%m-%d %H:%M')} UTC)"
 
+                is_dynamic_mcp: bool = slug.startswith("mcp_")
+                extra: dict[str, Any] = (provider_info or {}).get("extra_data") or {}
+                display_name: str = extra.get("display_name", slug) if is_dynamic_mcp else meta.name
+
                 summary: str = meta.description or ""
                 action_names: list[str] = []
                 if meta.write_operations:
@@ -580,7 +594,15 @@ class ChatOrchestrator:
                 if meta.actions:
                     action_names.extend(act.name for act in meta.actions)
                 action_str: str = f" Actions: {', '.join(action_names)}" if action_names else ""
-                label: str = f"- **{meta.slug}** ({meta.name}) [{caps}]{sync_status} – {summary}{action_str}"
+
+                label: str = f"- **{slug}** ({display_name}) [{caps}]{sync_status} – {summary}{action_str}"
+                if is_dynamic_mcp:
+                    mcp_tools: list[dict[str, Any]] = extra.get("tools", [])
+                    if mcp_tools:
+                        tool_names: list[str] = [
+                            t.get("name", "") for t in mcp_tools if isinstance(t, dict)
+                        ]
+                        label += f" MCP tools: {', '.join(tool_names)}"
                 lines.append(label)
 
             connected_block: str = (
@@ -589,7 +611,8 @@ class ChatOrchestrator:
 
             # List connectors that exist but are not enabled for this org (no active Integration).
             not_enabled_slugs: list[str] = sorted(
-                set(registry.keys()) - set(active_providers.keys())
+                slug for slug in (set(registry.keys()) - set(active_providers.keys()))
+                if slug != "mcp"
             )
             not_enabled_block: str = ""
             if not_enabled_slugs:

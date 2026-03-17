@@ -625,6 +625,11 @@ async def _get_connector_instance(
     # Instantiate connector with the integration owner's user_id
     instance: BaseConnector = connector_cls(organization_id, user_id=integration_user_id)
 
+    # Dynamic MCP slugs (mcp_deepwiki, etc.) share the McpConnector class whose
+    # source_system is "mcp", but the Integration row uses the dynamic slug.
+    if slug.startswith("mcp_") and hasattr(instance, "source_system"):
+        instance.source_system = slug
+
     return instance, None
 
 
@@ -739,10 +744,14 @@ async def _get_connector_docs(
         return {"error": f"Unknown connector: {slug}"}
 
     meta: ConnectorMeta = connector_cls.meta  # type: ignore[attr-defined]
+    is_dynamic_mcp: bool = slug.startswith("mcp_")
     sections: list[str] = []
 
     if meta.usage_guide:
-        sections.append(meta.usage_guide)
+        guide: str = meta.usage_guide
+        if is_dynamic_mcp:
+            guide = guide.replace("<SLUG>", slug)
+        sections.append(guide)
 
     param_lines: list[str] = []
 
@@ -792,8 +801,12 @@ async def _get_connector_docs(
     if param_lines:
         sections.append("\n\n---\n\n# Parameter reference\n\n" + "\n\n".join(param_lines))
 
-    docs: str = "\n\n".join(sections) if sections else f"No documentation available for {meta.name}."
-    return {"connector": slug, "name": meta.name, "docs": docs}
+    display_name: str = meta.name
+    if is_dynamic_mcp and integration_extra_data:
+        display_name = integration_extra_data.get("display_name", slug)
+
+    docs: str = "\n\n".join(sections) if sections else f"No documentation available for {display_name}."
+    return {"connector": slug, "name": display_name, "docs": docs}
 
 
 async def _query_on_connector(
