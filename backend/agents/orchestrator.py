@@ -945,16 +945,6 @@ class ChatOrchestrator:
         }.get(self.source, self.source)
         system_prompt_parts.append(f"\n\n## Message Source\nThis conversation is from: **{source_label}**.")
 
-        if self.source in ("slack_dm", "slack_mention", "slack_thread"):
-            system_prompt_parts.append(
-                "\n\n## Slack Formatting"
-                "\nMarkdown tables render poorly in Slack. When you need to present tabular data"
-                " (query results, lists with multiple columns, comparisons, etc.), **always use the"
-                " `send_slack_table` tool** with structured `columns` and `rows` instead of writing"
-                " a markdown table in your response text. The tool automatically picks the best Slack"
-                " format based on table size."
-            )
-
         slack_channel_id: str | None = (self.workflow_context or {}).get("slack_channel_id")
         slack_thread_ts: str | None = (self.workflow_context or {}).get("slack_thread_ts")
         system_prompt_parts.append(_format_slack_scope_context(slack_channel_id=slack_channel_id, slack_thread_ts=slack_thread_ts))

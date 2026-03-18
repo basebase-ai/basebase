@@ -301,7 +301,6 @@ from agents.tools import (
     update_tool_call_result,
     execute_send_email_from,
     execute_send_slack,
-    execute_send_slack_table,
     execute_save_memory,
     execute_keep_notes,
 )
@@ -509,10 +508,6 @@ async def _execute_tool_approval(
             return result
         elif tool_name == "send_slack":
             result = await execute_send_slack(params, op_org_id)
-            result["tool_name"] = tool_name
-            return result
-        elif tool_name == "send_slack_table":
-            result = await execute_send_slack_table(params, op_org_id)
             result["tool_name"] = tool_name
             return result
         elif tool_name == "manage_memory":

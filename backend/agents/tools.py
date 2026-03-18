@@ -222,8 +222,8 @@ async def _should_skip_approval(
         return True
 
     # When the user is in Slack (or other messenger), there is no approval UI — auto-approve
-    # send_slack_table and send_slack so the table/message actually posts.
-    if context and context.get("source") in ("slack", "teams") and tool_name in ("send_slack_table", "send_slack"):
+    # send_slack so the message actually posts.
+    if context and context.get("source") in ("slack", "teams") and tool_name == "send_slack":
         logger.info("[Tools] Skipping approval for %s - conversation from messenger (source=%s)", tool_name, context.get("source"))
         return True
 
@@ -324,7 +324,6 @@ async def execute_tool(
         "query_on_connector": lambda: _query_on_connector(tool_input, organization_id, user_id),
         "write_on_connector": lambda: _write_on_connector(tool_input, organization_id, user_id, skip_approval, context),
         "run_on_connector": lambda: _run_on_connector(tool_input, organization_id, user_id, skip_approval, context),
-        "send_slack_table": lambda: _send_slack_table(tool_input, organization_id, user_id, skip_approval),
     }
 
     handler = tool_handlers.get(tool_name)
@@ -4876,138 +4875,6 @@ async def execute_send_slack(
             "status": "failed",
             "error": str(e),
         }
-
-
-async def _send_slack_table(
-    params: dict[str, Any], organization_id: str, user_id: str | None, skip_approval: bool = False
-) -> dict[str, Any]:
-    """
-    Post tabular data to Slack using adaptive formatting (Block Kit / code block / CSV file).
-
-    Requires channel, columns, and rows. Optionally thread_ts and message.
-    """
-    channel: str = (params.get("channel") or "").strip()
-    columns_raw: Any = params.get("columns")
-    rows_raw: Any = params.get("rows")
-    thread_ts: str | None = params.get("thread_ts")
-    message: str = (params.get("message") or "").strip()
-
-    if not channel:
-        return {"error": "Slack channel is required."}
-    if not isinstance(columns_raw, list) or not all(isinstance(c, str) for c in columns_raw):
-        return {"error": "columns must be a list of strings (column names)."}
-    if not isinstance(rows_raw, list):
-        return {"error": "rows must be a list of row objects."}
-
-    columns_list: list[str] = [str(c) for c in columns_raw]
-    rows_list: list[dict[str, Any]] = []
-    for r in rows_raw:
-        if not isinstance(r, dict):
-            return {"error": "Each row must be an object with keys matching columns."}
-        rows_list.append({k: v for k, v in r.items()})
-
-    async with get_session(organization_id=organization_id) as session:
-        result = await session.execute(
-            select(Integration).where(
-                Integration.organization_id == UUID(organization_id),
-                Integration.connector == "slack",
-                Integration.is_active == True,
-            )
-        )
-        integration = result.scalar_one_or_none()
-        if not integration:
-            return {
-                "error": "No connected Slack workspace found. Please connect Slack in Data Sources.",
-                "suggestion": "Go to Data Sources and connect your Slack workspace.",
-            }
-
-    if skip_approval:
-        logger.info("[Tools._send_slack_table] Auto-approved, posting immediately")
-        return await execute_send_slack_table(params, organization_id)
-
-    operation_id: str = str(uuid4())
-    store_pending_operation(
-        operation_id=operation_id,
-        tool_name="send_slack_table",
-        params=params,
-        organization_id=organization_id,
-        user_id=user_id,
-    )
-    preview_msg: str = f"{len(rows_list)} rows × {len(columns_list)} columns to {channel}"
-    return {
-        "type": "pending_approval",
-        "status": "pending_approval",
-        "operation_id": operation_id,
-        "tool_name": "send_slack_table",
-        "preview": {
-            "channel": channel,
-            "columns": columns_list,
-            "row_count": len(rows_list),
-            "thread_ts": thread_ts,
-        },
-        "message": f"Ready to post table ({preview_msg}). Please review and click Approve to send.",
-    }
-
-
-async def execute_send_slack_table(
-    params: dict[str, Any], organization_id: str
-) -> dict[str, Any]:
-    """Execute table post to Slack after approval. Uses format_table_for_slack then post_message or upload_file."""
-    from connectors.slack import SlackConnector
-    from connectors.slack_tables import format_table_for_slack, SlackTablePayload
-
-    channel: str = (params.get("channel") or "").strip()
-    columns_raw: Any = params.get("columns")
-    rows_raw: Any = params.get("rows")
-    thread_ts: str | None = params.get("thread_ts")
-    message: str = (params.get("message") or "").strip()
-
-    columns_list: list[str] = [str(c) for c in (columns_raw or [])]
-    rows_list: list[dict[str, Any]] = [r if isinstance(r, dict) else {} for r in (rows_raw or [])]
-
-    payload: SlackTablePayload = format_table_for_slack(
-        columns_list, rows_list, csv_filename="data.csv"
-    )
-
-    connector = SlackConnector(organization_id=organization_id)
-
-    try:
-        if payload.get("csv_bytes") is not None and payload.get("csv_filename"):
-            comment: str = payload.get("initial_comment") or ""
-            if message:
-                comment = f"{message}\n\n{comment}" if comment else message
-            await connector.upload_file(
-                channel=channel,
-                content=payload["csv_bytes"],
-                filename=payload["csv_filename"],
-                title=payload["csv_filename"],
-                initial_comment=comment or "Table data attached.",
-                thread_ts=thread_ts,
-            )
-            return {
-                "status": "completed",
-                "message": f"Table ({len(rows_list)} rows) posted to {channel} as file",
-                "channel": channel,
-            }
-        if payload.get("blocks") is not None and payload.get("text") is not None:
-            text_to_send: str = message or payload["text"]
-            if message and payload.get("text"):
-                text_to_send = f"{message}\n\n{payload['text']}"
-            await connector.post_message(
-                channel=channel,
-                text=text_to_send,
-                thread_ts=thread_ts,
-                blocks=payload["blocks"],
-            )
-            logger.info("[Tools] send_slack_table posted to channel=%s", channel)
-            return {"status": "completed", "message": f"Table posted to {channel}", "channel": channel}
-        text_only: str = (message + "\n\n" + (payload.get("text") or "")) if message and payload.get("text") else (payload.get("text") or message or "Table data")
-        await connector.post_message(channel=channel, text=text_only, thread_ts=thread_ts)
-        logger.info("[Tools] send_slack_table posted to channel=%s", channel)
-        return {"status": "completed", "message": f"Table posted to {channel}", "channel": channel}
-    except Exception as e:
-        logger.error("[Tools.execute_send_slack_table] Failed: %s", e)
-        return {"status": "failed", "error": str(e)}
 
 
 async def _send_sms(
