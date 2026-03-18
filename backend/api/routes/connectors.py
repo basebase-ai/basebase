@@ -17,13 +17,23 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
 
-from connectors.registry import Capability, discover_connectors
+from config import BUILTIN_CONNECTORS, get_provider_sharing_defaults
+from connectors.registry import AuthType, Capability, discover_connectors
 from models.database import get_session
 from models.integration import Integration
 from workers.events import emit_event
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _connection_flow(slug: str, auth_type: AuthType) -> str:
+    """Return oauth | builtin | custom_credentials for frontend connect flow."""
+    if slug not in BUILTIN_CONNECTORS:
+        return "oauth"
+    if auth_type == AuthType.CUSTOM:
+        return "custom_credentials"
+    return "builtin"
 
 
 @router.get("")
@@ -34,11 +44,19 @@ async def list_connectors() -> list[dict[str, Any]]:
 
     for slug, cls in sorted(registry.items()):
         meta = cls.meta  # type: ignore[attr-defined]
+        sharing = get_provider_sharing_defaults(slug)
         result.append({
             "slug": meta.slug,
             "name": meta.name,
             "description": meta.description,
             "auth_type": meta.auth_type.value,
+            "scope": meta.scope.value,
+            "default_sharing": {
+                "share_synced_data": sharing.share_synced_data,
+                "share_query_access": sharing.share_query_access,
+                "share_write_access": sharing.share_write_access,
+            },
+            "connection_flow": _connection_flow(slug, meta.auth_type),
             "entity_types": meta.entity_types,
             "capabilities": [c.value for c in meta.capabilities],
             "write_operations": [

@@ -287,7 +287,12 @@ PROVIDER_SHARING_DEFAULTS: dict[str, SharingDefaults] = {
     "twilio": SharingDefaults(share_synced_data=True),
     "artifacts": SharingDefaults(share_synced_data=True),
     "apps": SharingDefaults(share_synced_data=True),
+    "ispot_tv": SharingDefaults(share_synced_data=True, share_query_access=True),
 }
+
+BUILTIN_CONNECTORS: frozenset[str] = frozenset(
+    {"web_search", "code_sandbox", "twilio", "artifacts", "apps", "mcp", "ispot_tv"}
+)
 
 
 def get_nango_integration_id(provider: str) -> str:

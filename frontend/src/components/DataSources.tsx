@@ -69,42 +69,59 @@ const ICON_MAP: Record<string, IconType> = {
   plug: HiLink,
 };
 
-// Sharing defaults for providers (used when showing the sharing modal)
-const PROVIDER_SHARING_DEFAULTS: Record<string, { shareSyncedData: boolean; shareQueryAccess: boolean; shareWriteAccess: boolean }> = {
-  hubspot: { shareSyncedData: true, shareQueryAccess: false, shareWriteAccess: false },
-  salesforce: { shareSyncedData: true, shareQueryAccess: false, shareWriteAccess: false },
-  slack: { shareSyncedData: true, shareQueryAccess: false, shareWriteAccess: false },
-  apollo: { shareSyncedData: true, shareQueryAccess: false, shareWriteAccess: false },
-  github: { shareSyncedData: true, shareQueryAccess: false, shareWriteAccess: false },
-  linear: { shareSyncedData: true, shareQueryAccess: false, shareWriteAccess: false },
-  jira: { shareSyncedData: true, shareQueryAccess: false, shareWriteAccess: false },
-  asana: { shareSyncedData: true, shareQueryAccess: false, shareWriteAccess: false },
-  web_search: { shareSyncedData: true, shareQueryAccess: false, shareWriteAccess: false },
-  code_sandbox: { shareSyncedData: true, shareQueryAccess: false, shareWriteAccess: false },
-  twilio: { shareSyncedData: true, shareQueryAccess: false, shareWriteAccess: false },
-  artifacts: { shareSyncedData: true, shareQueryAccess: true, shareWriteAccess: true },
-  apps: { shareSyncedData: true, shareQueryAccess: true, shareWriteAccess: true },
-  gmail: { shareSyncedData: false, shareQueryAccess: false, shareWriteAccess: false },
-  google_calendar: { shareSyncedData: false, shareQueryAccess: false, shareWriteAccess: false },
-  microsoft_calendar: { shareSyncedData: false, shareQueryAccess: false, shareWriteAccess: false },
-  microsoft_mail: { shareSyncedData: false, shareQueryAccess: false, shareWriteAccess: false },
-  fireflies: { shareSyncedData: false, shareQueryAccess: false, shareWriteAccess: false },
-  granola: { shareSyncedData: false, shareQueryAccess: false, shareWriteAccess: false },
-  zoom: { shareSyncedData: false, shareQueryAccess: false, shareWriteAccess: false },
-  google_drive: { shareSyncedData: false, shareQueryAccess: false, shareWriteAccess: false },
-  ispot_tv: { shareSyncedData: true, shareQueryAccess: true, shareWriteAccess: false },
+/** Connector metadata from GET /api/connectors */
+interface ConnectorMetaFromApi {
+  slug: string;
+  name: string;
+  description: string;
+  auth_type: string;
+  scope: 'user' | 'organization';
+  default_sharing: { share_synced_data: boolean; share_query_access: boolean; share_write_access: boolean };
+  connection_flow: 'oauth' | 'builtin' | 'custom_credentials';
+  capabilities: string[];
+  icon: string;
+}
+
+/** Display overrides (icon, color) by slug; fallback used when missing. */
+const CONNECTOR_DISPLAY_OVERRIDE: Record<string, { icon?: string; color?: string }> = {
+  hubspot: { icon: 'hubspot', color: 'from-orange-500 to-orange-600' },
+  salesforce: { icon: 'salesforce', color: 'from-blue-500 to-blue-600' },
+  slack: { icon: 'slack', color: 'from-purple-500 to-purple-600' },
+  zoom: { icon: 'zoom', color: 'from-blue-400 to-blue-500' },
+  google_calendar: { icon: 'google_calendar', color: 'from-green-500 to-green-600' },
+  gmail: { icon: 'gmail', color: 'from-red-500 to-red-600' },
+  microsoft_calendar: { icon: 'microsoft_calendar', color: 'from-sky-500 to-sky-600' },
+  microsoft_mail: { icon: 'microsoft_mail', color: 'from-sky-500 to-sky-600' },
+  fireflies: { icon: 'fireflies', color: 'from-violet-500 to-violet-600' },
+  granola: { icon: '/connector-icons/granola.png', color: 'from-lime-500 to-green-600' },
+  google_drive: { icon: 'google_drive', color: 'from-yellow-500 to-amber-500' },
+  apollo: { icon: 'apollo', color: 'from-yellow-400 to-yellow-500' },
+  github: { icon: 'github', color: 'from-gray-600 to-gray-700' },
+  linear: { icon: 'linear', color: 'from-indigo-500 to-violet-600' },
+  jira: { icon: 'jira', color: 'from-blue-500 to-blue-600' },
+  asana: { icon: 'asana', color: 'from-fuchsia-500 to-pink-600' },
+  web_search: { icon: 'globe', color: 'from-emerald-500 to-teal-600' },
+  code_sandbox: { icon: 'terminal', color: 'from-amber-500 to-orange-600' },
+  twilio: { icon: 'sms', color: 'from-red-500 to-pink-600' },
+  artifacts: { icon: 'artifacts', color: 'from-slate-500 to-slate-600' },
+  apps: { icon: 'apps', color: 'from-violet-500 to-purple-600' },
+  mcp: { icon: 'plug', color: 'from-cyan-500 to-blue-600' },
+  ispot_tv: { icon: 'globe', color: 'from-emerald-500 to-teal-600' },
 };
 
-// Integration display config (colors, icons, descriptions)
+const DEFAULT_ICON = 'globe';
+const DEFAULT_COLOR = 'from-gray-500 to-gray-600';
+
+/** Fallback when API fails or provider not in registry. */
 interface IntegrationConfigEntry {
   name: string;
   description: string;
   icon: string;
   color: string;
-  scope: "organization" | "user";
+  scope: 'organization' | 'user';
 }
 
-const INTEGRATION_CONFIG: Record<string, IntegrationConfigEntry> = {
+const INTEGRATION_CONFIG_FALLBACK: Record<string, IntegrationConfigEntry> = {
   hubspot: { name: 'HubSpot', description: 'CRM data including deals, contacts, and companies', icon: 'hubspot', color: 'from-orange-500 to-orange-600', scope: 'user' },
   salesforce: { name: 'Salesforce', description: 'CRM - Opportunities, Accounts', icon: 'salesforce', color: 'from-blue-500 to-blue-600', scope: 'user' },
   slack: { name: 'Slack', description: 'Team messages and communication history', icon: 'slack', color: 'from-purple-500 to-purple-600', scope: 'organization' },
@@ -121,7 +138,6 @@ const INTEGRATION_CONFIG: Record<string, IntegrationConfigEntry> = {
   linear: { name: 'Linear', description: 'Issue tracking - sync and manage teams, projects, and issues', icon: 'linear', color: 'from-indigo-500 to-violet-600', scope: 'user' },
   jira: { name: 'Jira', description: 'Issue tracking - sync projects and issues from Atlassian Jira', icon: 'jira', color: 'from-blue-500 to-blue-600', scope: 'user' },
   asana: { name: 'Asana', description: 'Tasks and projects - sync and manage workspaces, projects, and tasks', icon: 'asana', color: 'from-fuchsia-500 to-pink-600', scope: 'user' },
-  // Built-in connectors (no OAuth — connect with one click)
   web_search: { name: 'Web Search', description: 'Web search and URL fetching — enable for the agent to search the web or fetch pages', icon: 'globe', color: 'from-emerald-500 to-teal-600', scope: 'organization' },
   code_sandbox: { name: 'Code Sandbox', description: 'Run shell commands and scripts in a secure sandbox (Python, Node, bash)', icon: 'terminal', color: 'from-amber-500 to-orange-600', scope: 'organization' },
   twilio: { name: 'Twilio', description: 'Send SMS messages to phone numbers', icon: 'sms', color: 'from-red-500 to-pink-600', scope: 'organization' },
@@ -130,19 +146,6 @@ const INTEGRATION_CONFIG: Record<string, IntegrationConfigEntry> = {
   mcp: { name: 'MCP Server', description: 'Connect any MCP-compatible server by URL', icon: 'plug', color: 'from-cyan-500 to-blue-600', scope: 'user' },
   ispot_tv: { name: 'iSpot.tv', description: 'TV ad analytics — airings, spend, impressions, and conversions', icon: 'globe', color: 'from-emerald-500 to-teal-600', scope: 'organization' },
 };
-
-const SUPPORTED_PROVIDERS = new Set(Object.keys(INTEGRATION_CONFIG));
-
-/** Check if a provider is "supported" for display (static config or dynamic MCP). */
-function isSupportedProvider(provider: string): boolean {
-  return SUPPORTED_PROVIDERS.has(provider) || provider.startsWith('mcp_');
-}
-
-/** Built-in connectors that connect with one click (no OAuth popup). */
-const BUILTIN_CONNECTORS = new Set(['web_search', 'code_sandbox', 'twilio', 'artifacts', 'apps', 'mcp']);
-
-/** Connectors that have no sync — on-demand only (no Sync button, no "Starting sync"). */
-const NO_SYNC_PROVIDERS = new Set(['apollo', 'web_search', 'code_sandbox', 'twilio', 'artifacts', 'apps', 'mcp']);
 
 // Common integrations to show as tiles when org has zero connected (display order)
 const COMMON_INTEGRATION_KEYS: ReadonlyArray<string> = [
@@ -344,6 +347,80 @@ export function DataSources(): JSX.Element {
   const [ispotClientSecret, setIspotClientSecret] = useState('');
   const [ispotConnecting, setIspotConnecting] = useState(false);
   const [ispotError, setIspotError] = useState<string | null>(null);
+
+  // Connectors from API (source of truth for Connect modal and display)
+  const [connectorsFromApi, setConnectorsFromApi] = useState<ConnectorMetaFromApi[]>([]);
+  const [connectorsLoading, setConnectorsLoading] = useState(true);
+  const [connectorsError, setConnectorsError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setConnectorsLoading(true);
+    setConnectorsError(null);
+    fetch(`${API_BASE}/connectors`)
+      .then((res) => {
+        if (!res.ok) throw new Error(res.statusText);
+        return res.json() as Promise<ConnectorMetaFromApi[]>;
+      })
+      .then((data) => {
+        if (!cancelled) setConnectorsFromApi(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setConnectorsError(err instanceof Error ? err.message : 'Failed to load connectors');
+      })
+      .finally(() => {
+        if (!cancelled) setConnectorsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  /** Resolve display config for a provider (use API + overlay, or fallback). */
+  const getConnectorDisplay = useCallback((provider: string): IntegrationConfigEntry & { connection_flow?: 'oauth' | 'builtin' | 'custom_credentials'; default_sharing?: { shareSyncedData: boolean; shareQueryAccess: boolean; shareWriteAccess: boolean }; hasSync?: boolean } => {
+    const baseSlug = provider.startsWith('mcp_') ? 'mcp' : provider;
+    const fallback = INTEGRATION_CONFIG_FALLBACK[baseSlug] ?? INTEGRATION_CONFIG_FALLBACK[provider];
+    const apiConnector = connectorsFromApi.find((c) => c.slug === baseSlug);
+    const override = CONNECTOR_DISPLAY_OVERRIDE[baseSlug] ?? CONNECTOR_DISPLAY_OVERRIDE[provider];
+    if (apiConnector) {
+      const icon = override?.icon ?? (apiConnector.icon || DEFAULT_ICON);
+      const color = override?.color ?? DEFAULT_COLOR;
+      return {
+        name: apiConnector.name,
+        description: apiConnector.description,
+        icon,
+        color,
+        scope: apiConnector.scope,
+        connection_flow: apiConnector.connection_flow,
+        default_sharing: {
+          shareSyncedData: apiConnector.default_sharing.share_synced_data,
+          shareQueryAccess: apiConnector.default_sharing.share_query_access,
+          shareWriteAccess: apiConnector.default_sharing.share_write_access,
+        },
+        hasSync: apiConnector.capabilities.includes('sync'),
+      };
+    }
+    if (fallback) {
+      return {
+        ...fallback,
+        default_sharing: { shareSyncedData: false, shareQueryAccess: false, shareWriteAccess: false },
+        hasSync: true,
+      };
+    }
+    return {
+      name: provider,
+      description: '',
+      icon: DEFAULT_ICON,
+      color: DEFAULT_COLOR,
+      scope: 'user',
+      default_sharing: { shareSyncedData: false, shareQueryAccess: false, shareWriteAccess: false },
+      hasSync: false,
+    };
+  }, [connectorsFromApi]);
+
+  /** Whether a provider is supported for display (in API list or mcp_* or fallback). */
+  const isSupportedProvider = useCallback((provider: string): boolean => {
+    if (provider.startsWith('mcp_')) return true;
+    if (connectorsFromApi.length > 0) return connectorsFromApi.some((c) => c.slug === provider);
+    return Object.prototype.hasOwnProperty.call(INTEGRATION_CONFIG_FALLBACK, provider) || (provider.startsWith('mcp_') && Object.prototype.hasOwnProperty.call(INTEGRATION_CONFIG_FALLBACK, 'mcp'));
+  }, [connectorsFromApi]);
 
   // GitHub: available repos (from token), tracked repo ids, selection, loading
   interface GitHubRepo {
@@ -573,91 +650,88 @@ export function DataSources(): JSX.Element {
       return true;
     })
     .map((integration) => {
-      const config: IntegrationConfigEntry = INTEGRATION_CONFIG[integration.provider]
-        ?? (integration.provider.startsWith('mcp_') ? INTEGRATION_CONFIG['mcp']! : undefined)!;
+      const config = getConnectorDisplay(integration.provider);
       const name: string = integration.displayName ?? config.name;
       return {
         ...integration,
-        ...config,
         name,
+        description: config.description,
+        icon: config.icon,
+        color: config.color,
+        scope: config.scope,
         connected: integration.isActive,
       };
     });
 
   // Also include available (not connected) integrations
   const connectedProviders = new Set(integrations.map((i) => i.provider));
-  const availableProviders = Object.keys(INTEGRATION_CONFIG).filter((p) => !connectedProviders.has(p));
-  const availableIntegrationsDisplay: DisplayIntegration[] = availableProviders
-    .filter((provider) => INTEGRATION_CONFIG[provider] !== undefined)
-    .map((provider) => {
-      const config = INTEGRATION_CONFIG[provider]!;
-      const defaults = PROVIDER_SHARING_DEFAULTS[provider] ?? { shareSyncedData: false, shareQueryAccess: false, shareWriteAccess: false };
-      return {
-        id: provider,
-        provider,
-        userId: null,
-        isActive: false,
-        lastSyncAt: null,
-        lastError: null,
-        connectedAt: null,
-        connectedBy: null,
-        scope: config.scope,
-        currentUserConnected: false,
-        teamConnections: [],
-        teamTotal: 0,
-        syncStats: null,
-        displayName: null,
-        shareSyncedData: defaults.shareSyncedData,
-        shareQueryAccess: defaults.shareQueryAccess,
-        shareWriteAccess: defaults.shareWriteAccess,
-        pendingSharingConfig: false,
-        isOwner: false,
-        name: config.name,
-        description: config.description,
-        icon: config.icon,
-        color: config.color,
-        connected: false,
-      };
-    });
+  const connectorSlugs = connectorsFromApi.length > 0
+    ? connectorsFromApi.map((c) => c.slug)
+    : Object.keys(INTEGRATION_CONFIG_FALLBACK);
+  const availableProviders = connectorSlugs.filter((p) => !connectedProviders.has(p));
+  const availableIntegrationsDisplay: DisplayIntegration[] = availableProviders.map((provider) => {
+    const config = getConnectorDisplay(provider);
+    const defaults = config.default_sharing ?? { shareSyncedData: false, shareQueryAccess: false, shareWriteAccess: false };
+    return {
+      id: provider,
+      provider,
+      userId: null,
+      isActive: false,
+      lastSyncAt: null,
+      lastError: null,
+      connectedAt: null,
+      connectedBy: null,
+      scope: config.scope,
+      currentUserConnected: false,
+      teamConnections: [],
+      teamTotal: 0,
+      syncStats: null,
+      displayName: null,
+      shareSyncedData: defaults.shareSyncedData,
+      shareQueryAccess: defaults.shareQueryAccess,
+      shareWriteAccess: defaults.shareWriteAccess,
+      pendingSharingConfig: false,
+      isOwner: false,
+      name: config.name,
+      description: config.description,
+      icon: config.icon,
+      color: config.color,
+      connected: false,
+    };
+  });
   const allIntegrations: DisplayIntegration[] = [...integrations, ...availableIntegrationsDisplay];
 
-  // Full list of all connectors for the Add Source modal (always show every connector)
-  const allConnectorsForModal: DisplayIntegration[] = Object.keys(INTEGRATION_CONFIG).map(
-    (provider: string): DisplayIntegration => {
-      const config = INTEGRATION_CONFIG[provider]!;
-      const defaults = PROVIDER_SHARING_DEFAULTS[provider] ?? {
-        shareSyncedData: false,
-        shareQueryAccess: false,
-        shareWriteAccess: false,
-      };
-      return {
-        id: provider,
-        provider,
-        userId: null,
-        isActive: false,
-        lastSyncAt: null,
-        lastError: null,
-        connectedAt: null,
-        connectedBy: null,
-        scope: config.scope,
-        currentUserConnected: false,
-        teamConnections: [],
-        teamTotal: 0,
-        syncStats: null,
-        displayName: null,
-        shareSyncedData: defaults.shareSyncedData,
-        shareQueryAccess: defaults.shareQueryAccess,
-        shareWriteAccess: defaults.shareWriteAccess,
-        pendingSharingConfig: false,
-        isOwner: false,
-        name: config.name,
-        description: config.description,
-        icon: config.icon,
-        color: config.color,
-        connected: false,
-      };
-    }
-  );
+  // Full list of all connectors for the Add Source modal (from API or fallback)
+  const allConnectorsForModal: DisplayIntegration[] = connectorSlugs.map((provider: string): DisplayIntegration => {
+    const config = getConnectorDisplay(provider);
+    const defaults = config.default_sharing ?? { shareSyncedData: false, shareQueryAccess: false, shareWriteAccess: false };
+    return {
+      id: provider,
+      provider,
+      userId: null,
+      isActive: false,
+      lastSyncAt: null,
+      lastError: null,
+      connectedAt: null,
+      connectedBy: null,
+      scope: config.scope,
+      currentUserConnected: false,
+      teamConnections: [],
+      teamTotal: 0,
+      syncStats: null,
+      displayName: null,
+      shareSyncedData: defaults.shareSyncedData,
+      shareQueryAccess: defaults.shareQueryAccess,
+      shareWriteAccess: defaults.shareWriteAccess,
+      pendingSharingConfig: false,
+      isOwner: false,
+      name: config.name,
+      description: config.description,
+      icon: config.icon,
+      color: config.color,
+      connected: false,
+    };
+  });
 
   const handleConnect = async (provider: string): Promise<void> => {
     if (connectingProvider || !organizationId || !userId) return;
@@ -665,29 +739,25 @@ export function DataSources(): JSX.Element {
     setConnectingProvider(provider);
 
     try {
-      // MCP connector — needs a form for URL + optional token
-      if (provider === 'mcp') {
+      const connectionFlow = getConnectorDisplay(provider).connection_flow;
+      if (connectionFlow === 'custom_credentials') {
         setConnectingProvider(null);
-        setMcpName('');
-        setMcpEndpointUrl('');
-        setMcpBearerToken('');
-        setMcpError(null);
-        setShowMcpForm(true);
+        if (provider === 'mcp') {
+          setMcpName('');
+          setMcpEndpointUrl('');
+          setMcpBearerToken('');
+          setMcpError(null);
+          setShowMcpForm(true);
+        } else if (provider === 'ispot_tv') {
+          setIspotClientId('');
+          setIspotClientSecret('');
+          setIspotError(null);
+          setShowIspotForm(true);
+        }
         return;
       }
 
-      // iSpot.tv — needs client_id and client_secret (no OAuth popup)
-      if (provider === 'ispot_tv') {
-        setConnectingProvider(null);
-        setIspotClientId('');
-        setIspotClientSecret('');
-        setIspotError(null);
-        setShowIspotForm(true);
-        return;
-      }
-
-      // Built-in connectors (Open Web, Code Sandbox, Twilio) — one-click, no OAuth
-      if (BUILTIN_CONNECTORS.has(provider)) {
+      if (connectionFlow === 'builtin') {
         const res = await fetch(`${API_BASE}/auth/integrations/connect-builtin`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1203,6 +1273,7 @@ export function DataSources(): JSX.Element {
       'from-yellow-500 to-amber-500': 'bg-yellow-500',
       'from-indigo-500 to-violet-600': 'bg-indigo-500',
       'from-gray-600 to-gray-700': 'bg-gray-600',
+      'from-gray-500 to-gray-600': 'bg-gray-500',
       'from-emerald-500 to-teal-600': 'bg-emerald-500',
     };
     return colorMap[color] ?? 'bg-surface-600';
@@ -1219,7 +1290,7 @@ export function DataSources(): JSX.Element {
     const isConnecting = connectingProvider === integration.provider;
     const isStartingSync =
       (state === 'connected' || state === 'org-connected') &&
-      !NO_SYNC_PROVIDERS.has(integration.provider) && !integration.provider.startsWith('mcp_') &&
+      getConnectorDisplay(integration.provider).hasSync !== false &&
       !integration.lastSyncAt &&
       !syncingProviders.has(integration.provider);
     const isSyncing = syncingProviders.has(integration.provider) || isStartingSync;
@@ -1245,7 +1316,7 @@ export function DataSources(): JSX.Element {
     const getButtonConfig = (): { text: string; className: string; action: () => void; disabled: boolean; hidden?: boolean } => {
       if (state === 'connected' || state === 'org-connected') {
         // Apollo, artifacts, apps, web_search, code_sandbox, twilio — no sync, on-demand only
-        if (NO_SYNC_PROVIDERS.has(integration.provider) || integration.provider.startsWith('mcp_')) {
+        if (getConnectorDisplay(integration.provider).hasSync === false) {
           return {
             text: '',
             className: '',
@@ -1682,7 +1753,15 @@ export function DataSources(): JSX.Element {
               />
             </div>
             <ul className="max-h-[50vh] overflow-y-auto p-2">
-              {filteredConnectModalIntegrations.length === 0 ? (
+              {connectorsLoading ? (
+                <li className="px-4 py-8 text-center text-sm text-surface-500">
+                  Loading sources...
+                </li>
+              ) : connectorsError && allConnectorsForModal.length === 0 ? (
+                <li className="px-4 py-8 text-center text-sm text-red-400">
+                  {connectorsError}
+                </li>
+              ) : filteredConnectModalIntegrations.length === 0 ? (
                 <li className="px-4 py-8 text-center text-sm text-surface-500">
                   No sources match your search.
                 </li>
@@ -1993,10 +2072,10 @@ export function DataSources(): JSX.Element {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
                 {COMMON_INTEGRATION_KEYS.filter(
                   (provider) =>
-                    INTEGRATION_CONFIG[provider] != null &&
+                    connectorSlugs.includes(provider) &&
                     availableIntegrations.some((i) => i.provider === provider),
                 ).map((provider) => {
-                  const config = INTEGRATION_CONFIG[provider]!;
+                  const config = getConnectorDisplay(provider);
                   const isConnecting = connectingProvider === provider;
                   return (
                     <button
