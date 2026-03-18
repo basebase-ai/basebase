@@ -501,33 +501,33 @@ Use `m.external_userid` when setting `hubspot_owner_id`. If no mapping exists, t
 
     async def _ensure_pipeline_cache(self) -> None:
         """Load pipeline and stage caches from database if not already loaded."""
-        if self._pipeline_cache:
+        if self._pipeline_cache and self._stage_cache:
             return
 
         async with get_session(organization_id=self.organization_id) as session:
-            result = await session.execute(
-                select(Pipeline).where(
-                    Pipeline.organization_id == uuid.UUID(self.organization_id),
-                    Pipeline.source_system == self.source_system,
-                )
-            )
-            pipelines = result.scalars().all()
-            for pipeline in pipelines:
-                self._pipeline_cache[pipeline.source_id] = pipeline.id
-
-            # Also load stage name/probability mapping
-            from models.pipeline import PipelineStage
-            pipeline_ids = list(self._pipeline_cache.values())
-            if pipeline_ids:
+            if not self._pipeline_cache:
                 result = await session.execute(
-                    select(
-                        PipelineStage.source_id,
-                        PipelineStage.name,
-                        PipelineStage.probability,
-                    ).where(PipelineStage.pipeline_id.in_(pipeline_ids))
+                    select(Pipeline).where(
+                        Pipeline.organization_id == uuid.UUID(self.organization_id),
+                        Pipeline.source_system == self.source_system,
+                    )
                 )
-                for row in result.all():
-                    self._stage_cache[row[0]] = (row[1], row[2])
+                pipelines = result.scalars().all()
+                for pipeline in pipelines:
+                    self._pipeline_cache[pipeline.source_id] = pipeline.id
+
+            if not self._stage_cache:
+                pipeline_ids = list(self._pipeline_cache.values())
+                if pipeline_ids:
+                    result = await session.execute(
+                        select(
+                            PipelineStage.source_id,
+                            PipelineStage.name,
+                            PipelineStage.probability,
+                        ).where(PipelineStage.pipeline_id.in_(pipeline_ids))
+                    )
+                    for row in result.all():
+                        self._stage_cache[row[0]] = (row[1], row[2])
 
     async def sync_deals(self) -> int:
         """
