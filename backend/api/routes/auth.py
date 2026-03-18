@@ -30,7 +30,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 
-from config import settings, get_nango_integration_id, get_provider_sharing_defaults, PROVIDER_SHARING_DEFAULTS
+from config import (
+    BUILTIN_CONNECTORS,
+    settings,
+    get_nango_integration_id,
+    get_provider_sharing_defaults,
+    PROVIDER_SHARING_DEFAULTS,
+)
 from models.database import get_admin_session, get_session
 from models.integration import Integration
 from models.user import User
@@ -3235,12 +3241,9 @@ async def patch_integration_sharing(
     }
 
 
-_BUILTIN_CONNECTORS: frozenset[str] = frozenset({"web_search", "code_sandbox", "twilio", "artifacts", "apps", "mcp", "ispot_tv"})
-
-
 def _is_builtin_connector(provider: str) -> bool:
     """Check if a provider is a builtin connector, including dynamic mcp_* slugs."""
-    return provider in _BUILTIN_CONNECTORS or provider.startswith("mcp_")
+    return provider in BUILTIN_CONNECTORS or provider.startswith("mcp_")
 
 
 class ConnectBuiltinRequest(BaseModel):
