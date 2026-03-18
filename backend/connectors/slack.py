@@ -56,7 +56,9 @@ def markdown_to_mrkdwn(text: str) -> str:
     _TABLE_RE: re.Pattern[str] = re.compile(r'((?:^\|.+\|$\n?)+)', re.MULTILINE)
 
     def _wrap_table(match: re.Match[str]) -> str:
-        return '```\n' + _clean_table_lines(match.group(1)) + '\n```'
+        from connectors.slack_tables import format_markdown_table_inline
+        cleaned: str = _clean_table_lines(match.group(1))
+        return format_markdown_table_inline(cleaned)
 
     text = _TABLE_RE.sub(_wrap_table, text)
 
@@ -1134,6 +1136,70 @@ Send a message to a Slack channel, DM, or user.
             normalized_channel,
         )
         return normalized_channel
+
+    async def upload_file(
+        self,
+        channel: str,
+        content: bytes,
+        filename: str,
+        title: str,
+        initial_comment: str = "",
+        thread_ts: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """
+        Upload a file to Slack using files.getUploadURLExternal + upload URL + files.completeUploadExternal.
+
+        Requires files:write scope. Shares the file in the given channel with optional initial comment and thread.
+
+        Args:
+            channel: Channel ID (or resolved name) where the file will be shared.
+            content: Raw file bytes.
+            filename: Name of the file (e.g. "data.csv").
+            title: Display title for the file in Slack.
+            initial_comment: Optional message introducing the file in the channel.
+            thread_ts: Optional thread timestamp to post the file as a reply.
+
+        Returns:
+            Response with ok, files (list of {id, title}), and any Slack metadata.
+        """
+        channel_id: str = await self._resolve_channel_for_post(channel)
+        length: int = len(content)
+
+        get_url_data: dict[str, Any] = await self._make_request(
+            "POST",
+            "files.getUploadURLExternal",
+            json_data={"filename": filename, "length": length},
+        )
+        upload_url: str = get_url_data.get("upload_url") or ""
+        file_id: str = get_url_data.get("file_id") or ""
+        if not upload_url or not file_id:
+            raise ValueError(
+                "Slack files.getUploadURLExternal did not return upload_url and file_id"
+            )
+
+        async with httpx.AsyncClient() as client:
+            files: dict[str, tuple[str, bytes]] = {"file": (filename, content)}
+            upload_resp: httpx.Response = await client.post(
+                upload_url, files=files, timeout=60.0
+            )
+            upload_resp.raise_for_status()
+
+        complete_payload: dict[str, Any] = {
+            "files": [{"id": file_id, "title": title}],
+            "channel_id": channel_id,
+        }
+        if thread_ts:
+            complete_payload["thread_ts"] = thread_ts
+        if initial_comment:
+            complete_payload["initial_comment"] = initial_comment
+
+        data: dict[str, Any] = await self._make_request(
+            "POST", "files.completeUploadExternal", json_data=complete_payload
+        )
+        return {
+            "ok": data.get("ok"),
+            "files": data.get("files", []),
+        }
 
     async def download_file(self, url_private: str) -> bytes:
         """
