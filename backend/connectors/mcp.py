@@ -249,9 +249,10 @@ class McpConnector(BaseConnector):
         ],
         usage_guide=(
             "This connector lets you interact with a remote MCP server.\n\n"
-            "1. Use query_on_connector(connector='mcp', query='list_tools') to see available tools.\n"
-            "2. Use run_on_connector(connector='mcp', action='call_tool', "
+            "1. Use query_on_connector(connector='<SLUG>', query='list_tools') to see available tools.\n"
+            "2. Use run_on_connector(connector='<SLUG>', action='call_tool', "
             "params={'tool': '<tool_name>', 'arguments': {…}}) to invoke a tool.\n\n"
+            "Replace <SLUG> with the actual connector slug (e.g. mcp_deepwiki).\n"
             "The available tools depend on which MCP server the user has connected."
         ),
     )
