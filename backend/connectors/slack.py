@@ -681,8 +681,12 @@ Send a message to a Slack channel, DM, or user.
                                     status="syncing",
                                 )
 
+                    # Commit after each channel so progress is saved
+                    await session.commit()
+
                 except Exception as e:
-                    # Skip channels we can't access
+                    # Rollback so the session is usable for the next channel
+                    await session.rollback()
                     logger.warning(
                         "[Slack Sync] Error fetching messages from channel=%s (%s): %s",
                         channel_name,
