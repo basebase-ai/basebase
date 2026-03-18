@@ -95,7 +95,7 @@ class SlackConnector(BaseConnector):
         auth_type=AuthType.OAUTH2,
         scope=ConnectorScope.ORGANIZATION,
         entity_types=["activities"],
-        capabilities=[Capability.SYNC, Capability.ACTION, Capability.LISTEN],
+        capabilities=[Capability.SYNC, Capability.QUERY, Capability.ACTION, Capability.LISTEN],
         actions=[
             ConnectorAction(
                 name="send_message",
@@ -111,6 +111,18 @@ class SlackConnector(BaseConnector):
         nango_integration_id="slack",
         description="Slack workspace – messages, channels, and real-time events",
         usage_guide="""# Slack Usage Guide
+
+## Query: list_channels
+
+Call via `query_on_connector(connector='slack', query='list_channels')`.
+
+Returns all channels the bot can see, with id, name, and is_private.
+
+## Query: channel_info
+
+Call via `query_on_connector(connector='slack', query='channel_info:<channel_id>')`.
+
+Returns details for a single channel including topic and purpose.
 
 ## Action: send_message
 
@@ -949,6 +961,27 @@ Send a message to a Slack channel, DM, or user.
         except Exception:
             # Silently ignore if reaction was already removed or doesn't exist
             pass
+
+    async def query(self, request: str) -> dict[str, Any]:
+        """Execute a read-only query against Slack."""
+        stripped = request.strip()
+        if stripped.lower() in ("list_channels", "channels", "get_channels"):
+            channels = await self.get_channels()
+            return {
+                "total": len(channels),
+                "channels": [
+                    {"id": ch.get("id"), "name": ch.get("name"), "is_private": ch.get("is_private", False)}
+                    for ch in channels
+                ],
+            }
+        if stripped.lower().startswith("channel_info:"):
+            _, _, channel_id = stripped.partition(":")
+            channel_id = channel_id.strip()
+            info = await self.get_channel_info(channel_id)
+            if info:
+                return {"channel": {"id": info.get("id"), "name": info.get("name"), "is_private": info.get("is_private", False), "topic": (info.get("topic") or {}).get("value", ""), "purpose": (info.get("purpose") or {}).get("value", "")}}
+            return {"error": f"Channel {channel_id} not found"}
+        return {"error": f"Unknown query: {request}. Supported: list_channels, channel_info:<channel_id>"}
 
     async def execute_action(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
         """Execute a side-effect action."""
