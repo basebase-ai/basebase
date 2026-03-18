@@ -964,8 +964,8 @@ Send a message to a Slack channel, DM, or user.
 
     async def query(self, request: str) -> dict[str, Any]:
         """Execute a read-only query against Slack."""
-        req = request.strip().lower()
-        if req in ("list_channels", "channels", "get_channels"):
+        stripped = request.strip()
+        if stripped.lower() in ("list_channels", "channels", "get_channels"):
             channels = await self.get_channels()
             return {
                 "total": len(channels),
@@ -974,8 +974,9 @@ Send a message to a Slack channel, DM, or user.
                     for ch in channels
                 ],
             }
-        if req.startswith("channel_info:"):
-            channel_id = req.split(":", 1)[1].strip()
+        if stripped.lower().startswith("channel_info:"):
+            _, _, channel_id = stripped.partition(":")
+            channel_id = channel_id.strip()
             info = await self.get_channel_info(channel_id)
             if info:
                 return {"channel": {"id": info.get("id"), "name": info.get("name"), "is_private": info.get("is_private", False), "topic": (info.get("topic") or {}).get("value", ""), "purpose": (info.get("purpose") or {}).get("value", "")}}
