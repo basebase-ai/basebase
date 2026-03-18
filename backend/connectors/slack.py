@@ -566,20 +566,27 @@ Send a message to a Slack channel, DM, or user.
             status="syncing",
         )
         
-        # Get channels, then filter out archived and empty ones
+        # Get channels, then filter out archived, empty, and stale ones
         all_channels = await self.get_channels()
-        channels = [
-            ch for ch in all_channels
-            if not ch.get("is_archived") and (ch.get("num_members") or 0) > 0
-        ]
+        oldest_ts: float = self.sync_since.timestamp() if self.sync_since else (datetime.utcnow().timestamp() - 7 * 24 * 60 * 60)
+        channels = []
+        for ch in all_channels:
+            if ch.get("is_archived"):
+                continue
+            if (ch.get("num_members") or 0) == 0:
+                continue
+            updated = ch.get("updated", 0)
+            if updated > 1_000_000_000_000:
+                updated = updated / 1000
+            if updated and updated < oldest_ts:
+                continue
+            channels.append(ch)
         logger.info(
-            "[Slack Sync] Retrieved %d channels (%d active with members) for org=%s",
+            "[Slack Sync] Retrieved %d channels (%d active/recent) for org=%s",
             len(all_channels),
             len(channels),
             self.organization_id,
         )
-
-        oldest: float = self.sync_since.timestamp() if self.sync_since else (datetime.utcnow().timestamp() - 7 * 24 * 60 * 60)
 
         count = 0
         channels_with_messages = 0
@@ -595,12 +602,11 @@ Send a message to a Slack channel, DM, or user.
                 )
 
                 try:
-                    # Join public channels so we can read history (requires channels:join scope)
-                    is_private: bool = bool(channel.get("is_private", True))
-                    if not is_private:
+                    # Join public channels so we can read history (skip if already a member)
+                    if not channel.get("is_private") and not channel.get("is_member"):
                         await self.join_channel(channel_id)
                     messages = await self.get_channel_messages(
-                        channel_id, oldest=oldest, limit=100
+                        channel_id, oldest=oldest_ts, limit=100
                     )
                     if messages:
                         channels_with_messages += 1
