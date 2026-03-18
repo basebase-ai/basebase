@@ -133,6 +133,10 @@ export interface ChatState {
     conversationId: string,
     app: AppBlock["app"],
   ) => void;
+  advanceConversationChunkIndex: (
+    conversationId: string,
+    chunkIndex: number,
+  ) => void;
   clearConversation: (conversationId: string) => void;
 
   // Actions - Active tasks
@@ -611,6 +615,56 @@ export const useChatStore = create<ChatState>()(
       });
     },
 
+    advanceConversationChunkIndex: (conversationId, chunkIndex) => {
+      const { conversations } = get();
+      const current = conversations[conversationId];
+      if (!current || chunkIndex <= current.lastChunkIndex) return;
+
+      const streamingId: string | null = current.streamingMessageId;
+      let messages: ChatMessage[] = current.messages;
+      let newLastIndex: number = chunkIndex;
+      const remaining: Array<{ index: number; content: string }> = [];
+
+      if (streamingId && current.pendingChunks.length > 0) {
+        const sorted = [...current.pendingChunks].sort(
+          (a, b) => a.index - b.index,
+        );
+        for (const pending of sorted) {
+          if (pending.index !== newLastIndex + 1) {
+            remaining.push(pending);
+            continue;
+          }
+          messages = messages.map((msg) => {
+            if (msg.id !== streamingId) return msg;
+            const blocks = [...(msg.contentBlocks ?? [])];
+            const lastBlock = blocks[blocks.length - 1];
+            if (lastBlock && lastBlock.type === "text") {
+              blocks[blocks.length - 1] = {
+                ...lastBlock,
+                text: lastBlock.text + pending.content,
+              };
+            } else {
+              blocks.push({ type: "text", text: pending.content });
+            }
+            return { ...msg, contentBlocks: blocks };
+          });
+          newLastIndex = pending.index;
+        }
+      }
+
+      set({
+        conversations: {
+          ...conversations,
+          [conversationId]: {
+            ...current,
+            messages,
+            lastChunkIndex: newLastIndex,
+            pendingChunks: remaining,
+          },
+        },
+      });
+    },
+
     markConversationMessageComplete: (conversationId) => {
       const { conversations } = get();
       const current = conversations[conversationId];
@@ -631,7 +685,33 @@ export const useChatStore = create<ChatState>()(
         conversationId,
       );
 
-      const updated = current.messages.map((msg) => {
+      const streamingId: string | null = current.streamingMessageId;
+      let messages: ChatMessage[] = current.messages;
+
+      // Flush any remaining pendingChunks so late text isn't lost
+      if (streamingId && current.pendingChunks.length > 0) {
+        const sorted = [...current.pendingChunks].sort(
+          (a, b) => a.index - b.index,
+        );
+        for (const pending of sorted) {
+          messages = messages.map((msg) => {
+            if (msg.id !== streamingId) return msg;
+            const blocks = [...(msg.contentBlocks ?? [])];
+            const lastBlock = blocks[blocks.length - 1];
+            if (lastBlock && lastBlock.type === "text") {
+              blocks[blocks.length - 1] = {
+                ...lastBlock,
+                text: lastBlock.text + pending.content,
+              };
+            } else {
+              blocks.push({ type: "text", text: pending.content });
+            }
+            return { ...msg, contentBlocks: blocks };
+          });
+        }
+      }
+
+      const updated = messages.map((msg) => {
         const finalizedBlocks = msg.contentBlocks.map((block) =>
           block.type === "tool_use" &&
           block.status !== "complete"
@@ -651,6 +731,7 @@ export const useChatStore = create<ChatState>()(
             ...current,
             messages: updated,
             streamingMessageId: null,
+            pendingChunks: [],
           },
         },
       });

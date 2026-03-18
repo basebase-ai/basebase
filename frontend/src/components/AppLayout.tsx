@@ -266,6 +266,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
   const appendToConversationStreaming = useAppStore((state) => state.appendToConversationStreaming);
   const startConversationStreaming = useAppStore((state) => state.startConversationStreaming);
   const markConversationMessageComplete = useAppStore((state) => state.markConversationMessageComplete);
+  const advanceConversationChunkIndex = useAppStore((state) => state.advanceConversationChunkIndex);
   const setConversationThinking = useAppStore((state) => state.setConversationThinking);
   const updateConversationToolMessage = useAppStore((state) => state.updateConversationToolMessage);
   const addConversationArtifactBlock = useAppStore((state) => state.addConversationArtifactBlock);
@@ -982,6 +983,11 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
               const usage = data as { input_tokens: number; output_tokens: number };
               setConversationContextTokens(conversation_id, usage.input_tokens);
             }
+
+            // Advance chunk index so subsequent text_delta chunks aren't
+            // incorrectly buffered as "out of order" (the backend uses a
+            // single counter for ALL chunk types).
+            advanceConversationChunkIndex(conversation_id, chunkIndex);
           }
           break;
         }
