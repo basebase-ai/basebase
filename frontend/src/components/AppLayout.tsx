@@ -1349,7 +1349,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
     addConversation, addConversationMessage, appendToConversationStreaming,
     startConversationStreaming, markConversationMessageComplete, updateConversationToolMessage,
     addConversationArtifactBlock, addConversationAppBlock, setCurrentChatId,
-    setConversationContextTokens, queryClient
+    setConversationContextTokens, advanceConversationChunkIndex, queryClient
   ]);
 
   // Cross-tab sync for optimistic UI and streamed updates
