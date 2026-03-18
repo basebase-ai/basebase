@@ -275,6 +275,46 @@ Check the Connected Connectors manifest for available actions and their required
 )
 
 
+register_tool(
+    name="send_slack_table",
+    description="""Post tabular data to a Slack channel with formatting optimized for readability.
+
+Use this when you have query results (columns + rows) that you want to share in Slack.
+Small tables are shown inline; large tables are attached as a CSV file with a summary.
+Requires Slack to be connected. Prefer this over run_on_connector(slack, send_message) when the payload is structured table data from run_sql_query.""",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "channel": {
+                "type": "string",
+                "description": "Slack channel ID or name (e.g. #general or C1234567890)",
+            },
+            "columns": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Column names in order (e.g. from run_sql_query result)",
+            },
+            "rows": {
+                "type": "array",
+                "items": {"type": "object"},
+                "description": "List of row objects; keys must match columns",
+            },
+            "thread_ts": {
+                "type": "string",
+                "description": "Optional thread timestamp to reply in thread",
+            },
+            "message": {
+                "type": "string",
+                "description": "Optional short message above the table (e.g. summary)",
+            },
+        },
+        "required": ["channel", "columns", "rows"],
+    },
+    category=ToolCategory.EXTERNAL_WRITE,
+    default_requires_approval=True,
+)
+
+
 # -----------------------------------------------------------------------------
 # LOCAL_WRITE Tools - Tracked in change sessions, reversible
 # -----------------------------------------------------------------------------
