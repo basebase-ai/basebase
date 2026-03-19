@@ -22,6 +22,7 @@ from anthropic import APIStatusError, AsyncAnthropic
 from sqlalchemy import select, update
 
 from agents.model_routing import is_short_phrase_for_cheap_model
+from agents.registry import format_tool_status
 from agents.tools import execute_tool, get_tools
 from config import settings
 from models.chat_message import ChatMessage
@@ -1206,12 +1207,14 @@ class ChatOrchestrator:
                                         current_tool["input"] = {}
                                     
                                     tool_uses.append(current_tool)
+                                    _running_input: dict[str, Any] = current_tool["input"]
                                     yield json.dumps({
                                         "type": "tool_call",
                                         "tool_name": current_tool["name"],
-                                        "tool_input": current_tool["input"],
+                                        "tool_input": _running_input,
                                         "tool_id": current_tool["id"],
                                         "status": "running",
+                                        "status_text": format_tool_status(current_tool["name"], _running_input, "running"),
                                     })
                                     current_tool = None
                                     current_tool_input_json = ""
@@ -1331,6 +1334,7 @@ class ChatOrchestrator:
                     "tool_input": tool_input,
                     "tool_id": tool_id,
                     "status": "running",
+                    "status_text": format_tool_status(tool_name, tool_input, "running"),
                 })
             
             # Early save: fire-and-forget so it doesn't block tool execution.
@@ -1440,6 +1444,7 @@ class ChatOrchestrator:
                     "tool_input": tool_input,
                     "result": tool_result,
                     "status": "complete",
+                    "status_text": format_tool_status(tool_name, tool_input, "complete"),
                 })
 
                 if tool_result.get("status") == "success":

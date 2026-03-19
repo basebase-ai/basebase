@@ -13,6 +13,7 @@ Mental Model ("Cursor for your business"):
 - EXTERNAL_WRITE: CRM, email, Slack - permanent, external (like git push)
 """
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Awaitable
@@ -55,7 +56,14 @@ class ToolDefinition:
 
     workflow_only: bool = False
     """Whether this tool should only be exposed during workflow executions."""
-    
+
+    status_running: str = ""
+    """Human-friendly text when the tool starts (e.g. 'Querying your database'). Use {connector}, {provider}, etc. for placeholders."""
+    status_complete: str = ""
+    """Human-friendly text when the tool finishes (e.g. 'Queried your database')."""
+    hidden_status: bool = False
+    """If True, do not show status in Slack/Teams/UI (think, keep_notes, manage_memory)."""
+
     # Note: execute_fn is set separately to avoid circular imports
     # The actual execution functions are in tools.py
 
@@ -74,6 +82,10 @@ def register_tool(
     category: ToolCategory,
     default_requires_approval: bool = False,
     workflow_only: bool = False,
+    *,
+    status_running: str = "",
+    status_complete: str = "",
+    hidden_status: bool = False,
 ) -> None:
     """Register a tool in the registry."""
     TOOL_DEFINITIONS[name] = ToolDefinition(
@@ -83,6 +95,9 @@ def register_tool(
         category=category,
         default_requires_approval=default_requires_approval,
         workflow_only=workflow_only,
+        status_running=status_running,
+        status_complete=status_complete,
+        hidden_status=hidden_status,
     )
 
 
@@ -140,6 +155,8 @@ IMPORTANT: Only SELECT queries are allowed. No INSERT, UPDATE, DELETE, DROP, etc
     },
     category=ToolCategory.LOCAL_READ,
     default_requires_approval=False,
+    status_running="Querying your database",
+    status_complete="Queried your database",
 )
 
 
@@ -158,6 +175,8 @@ need to verify a connector is connected before using it.""",
     },
     category=ToolCategory.LOCAL_READ,
     default_requires_approval=False,
+    status_running="Checking connected tools",
+    status_complete="Checked connected tools",
 )
 
 
@@ -181,6 +200,8 @@ examples) written by the connector author. Use the connector slug (e.g. 'google_
     },
     category=ToolCategory.LOCAL_READ,
     default_requires_approval=False,
+    status_running="Reading {connector} docs",
+    status_complete="Read {connector} docs",
 )
 
 
@@ -209,6 +230,8 @@ detailed query formats, parameters, and examples before using a connector.""",
     },
     category=ToolCategory.EXTERNAL_READ,
     default_requires_approval=False,
+    status_running="Looking up data in {connector}",
+    status_complete="Queried {connector}",
 )
 
 
@@ -240,6 +263,8 @@ Check the Connected Connectors manifest for available operations and their requi
     },
     category=ToolCategory.EXTERNAL_WRITE,
     default_requires_approval=False,
+    status_running="Writing to {connector}",
+    status_complete="Wrote to {connector}",
 )
 
 
@@ -272,6 +297,8 @@ Check the Connected Connectors manifest for available actions and their required
     },
     category=ToolCategory.EXTERNAL_WRITE,
     default_requires_approval=False,
+    status_running="Running action on {connector}",
+    status_complete="Ran action on {connector}",
 )
 
 
@@ -339,6 +366,8 @@ Rules:
     },
     category=ToolCategory.LOCAL_WRITE,
     default_requires_approval=False,
+    status_running="Updating your database",
+    status_complete="Updated your database",
 )
 
 
@@ -364,6 +393,8 @@ The sync runs in the background and may take a few minutes to complete.""",
     },
     category=ToolCategory.EXTERNAL_WRITE,
     default_requires_approval=False,  # Syncing is safe, just refreshes data
+    status_running="Syncing {provider}",
+    status_complete="Synced {provider}",
 )
 
 
@@ -398,6 +429,8 @@ Available connectors include:
     },
     category=ToolCategory.LOCAL_WRITE,
     default_requires_approval=False,
+    status_running="Setting up connection",
+    status_complete="Set up connection",
 )
 
 
@@ -440,6 +473,8 @@ IMPORTANT: Avoid circular calls (A calls B calls A) - this will be detected and 
     },
     category=ToolCategory.LOCAL_WRITE,
     default_requires_approval=False,
+    status_running="Running workflow",
+    status_complete="Completed workflow",
 )
 
 
@@ -510,6 +545,8 @@ Set max_concurrent=1 for sequential execution, higher for parallel. Blocks until
     },
     category=ToolCategory.LOCAL_WRITE,
     default_requires_approval=False,
+    status_running="Processing items",
+    status_complete="Processed items",
 )
 
 # -----------------------------------------------------------------------------
@@ -542,6 +579,7 @@ This is workflow-scoped memory, not user-wide memory.""",
     category=ToolCategory.LOCAL_WRITE,
     default_requires_approval=False,
     workflow_only=True,
+    hidden_status=True,
 )
 
 register_tool(
@@ -567,6 +605,7 @@ bulk operations, or ambiguous requests that need decomposition.""",
     },
     category=ToolCategory.LOCAL_READ,
     default_requires_approval=False,
+    hidden_status=True,
 )
 
 
@@ -617,6 +656,7 @@ Each memory should be a single, self-contained statement. Do NOT save conversati
     },
     category=ToolCategory.LOCAL_WRITE,
     default_requires_approval=False,
+    hidden_status=True,
 )
 
 
@@ -624,6 +664,44 @@ Each memory should be a single, self-contained statement. Do NOT save conversati
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
+def _title_slug(slug: str) -> str:
+    """Turn a connector/provider slug into a display label (e.g. google_drive -> Google Drive)."""
+    if not slug or not isinstance(slug, str):
+        return ""
+    return slug.replace("_", " ").strip().title()
+
+
+def format_tool_status(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    phase: str,
+) -> str | None:
+    """Return human-friendly status text for a tool call, or None if hidden or unknown.
+
+    phase must be 'running' or 'complete'. Template placeholders like {connector}
+    are filled from tool_input with title-cased display labels.
+    """
+    tool: ToolDefinition | None = TOOL_DEFINITIONS.get(tool_name)
+    if tool is None or tool.hidden_status:
+        return None
+    template: str = tool.status_running if phase == "running" else tool.status_complete
+    if not template:
+        return None
+    raw: dict[str, Any] = tool_input or {}
+    placeholders: list[str] = re.findall(r"\{(\w+)\}", template)
+    format_map: dict[str, str] = {}
+    for key in placeholders:
+        val = raw.get(key)
+        if isinstance(val, str) and val.strip():
+            format_map[key] = _title_slug(val)
+        else:
+            format_map[key] = key.replace("_", " ").title()
+    try:
+        return template.format(**format_map)
+    except KeyError:
+        return template
+
 
 def get_tool(name: str) -> ToolDefinition | None:
     """Get a tool definition by name."""

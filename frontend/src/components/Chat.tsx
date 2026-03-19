@@ -2267,7 +2267,13 @@ function ToolBlockIndicator({
 }): JSX.Element {
   const isComplete: boolean = block.status === 'complete';
   const hasError: boolean = isComplete && !!(block.result as Record<string, unknown> | undefined)?.error;
-  const statusText: string = getToolStatusText(block.name, block.input, isComplete, block.result);
+  const statusText: string = getToolStatusText(
+    block.name,
+    block.input,
+    isComplete,
+    block.result,
+    block.statusText,
+  );
 
   return (
     <button
@@ -2372,11 +2378,15 @@ function formatStreamingChars(chars: number): string {
 }
 
 function getToolStatusText(
-  toolName: string, 
-  input: Record<string, unknown> | undefined, 
+  toolName: string,
+  input: Record<string, unknown> | undefined,
   isComplete: boolean,
-  result: Record<string, unknown> | undefined
+  result: Record<string, unknown> | undefined,
+  statusTextFromBlock?: string,
 ): string {
+  if (statusTextFromBlock != null && statusTextFromBlock.trim() !== "") {
+    return statusTextFromBlock;
+  }
   const streamingChars: number | undefined = typeof input?._streaming_chars === 'number' ? input._streaming_chars : undefined;
 
   switch (toolName) {
