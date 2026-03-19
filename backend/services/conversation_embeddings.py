@@ -3,18 +3,18 @@ Conversation embeddings for semantic workstream clustering.
 
 Builds a single vector per conversation from title + summary + recent user messages,
 stored in conversations.embedding. Staleness is tracked via embedding_message_count.
+
+Snapshot-stale marking and workstreams_stale broadcast are done by
+conversation_post_completion.run_post_completion() after this returns.
 """
 
 import json
 import logging
-from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
 
 from models.conversation import Conversation
 from models.chat_message import ChatMessage as ChatMessageModel
 from models.database import get_session
-from models.workstream_snapshot import WorkstreamSnapshot
 from sqlalchemy import select, update
 
 from services.embeddings import get_embedding_service
@@ -24,20 +24,6 @@ logger = logging.getLogger(__name__)
 _STALENESS_THRESHOLD = 2
 _MAX_RECENT_CHARS = 12_000
 _MAX_MESSAGES_FOR_RECENT = 50
-
-
-async def _mark_workstream_snapshots_stale(organization_id: str) -> None:
-    """Set stale_since on all workstream snapshots for this org so next GET recomputes."""
-    try:
-        async with get_session(organization_id=organization_id) as session:
-            await session.execute(
-                update(WorkstreamSnapshot)
-                .where(WorkstreamSnapshot.organization_id == UUID(organization_id))
-                .values(stale_since=datetime.now(timezone.utc))
-            )
-            await session.commit()
-    except Exception:
-        logger.debug("Could not mark workstream snapshots stale for org %s", organization_id, exc_info=True)
 
 
 def _extract_text_from_blocks(blocks: list[dict[str, Any]] | None) -> str:
@@ -155,7 +141,6 @@ async def update_conversation_embedding(
             )
             await session.commit()
 
-        await _mark_workstream_snapshots_stale(organization_id)
         logger.info(
             "Embedding updated for conversation %s (message_count=%d)",
             conversation_id,

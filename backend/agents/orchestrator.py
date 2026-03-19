@@ -1106,6 +1106,9 @@ class ChatOrchestrator:
         
         await self._save_assistant_message(content_blocks)
 
+        # Fire-and-forget: summary + embedding in one shot (all code paths)
+        asyncio.create_task(self._run_post_completion())
+
         # Update conversation title if first message
         if is_first_message:
             title = self._generate_title(
@@ -1883,6 +1886,21 @@ class ChatOrchestrator:
         if isinstance(obj, dict):
             return {k: ChatOrchestrator._strip_null_bytes(v) for k, v in obj.items()}
         return obj
+
+    async def _run_post_completion(self) -> None:
+        """Fire-and-forget: run summary + embedding + stale + broadcast (best-effort)."""
+        if not self.conversation_id or not self.organization_id:
+            return
+        try:
+            from services.conversation_post_completion import run_post_completion
+
+            await run_post_completion(self.conversation_id, self.organization_id)
+        except Exception:
+            logger.warning(
+                "[Orchestrator] Post-completion failed for conversation %s",
+                self.conversation_id,
+                exc_info=True,
+            )
 
     async def _save_assistant_message(self, assistant_blocks: list[dict[str, Any]]) -> None:
         """Save or update assistant message in database."""
