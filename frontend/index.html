@@ -1,6 +1,29 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem("revtops-ui-store");
+          if (!raw) return;
+          var data = JSON.parse(raw);
+          var state = data && data.state ? data.state : {};
+          var t = state.theme;
+          var html = document.documentElement;
+          if (t === "light") {
+            html.classList.remove("dark");
+          } else if (t === "dark") {
+            html.classList.add("dark");
+          } else if (t === "system") {
+            if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+              html.classList.add("dark");
+            } else {
+              html.classList.remove("dark");
+            }
+          }
+        } catch (e) {}
+      })();
+    </script>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/basebase_logo.svg" />
     <link rel="apple-touch-icon" href="/basebase_logo-512.png" />

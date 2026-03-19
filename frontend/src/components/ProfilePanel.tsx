@@ -11,6 +11,7 @@
 import { useEffect, useState } from 'react';
 import type { UserProfile } from './AppLayout';
 import { API_BASE } from '../lib/api';
+import { useUIStore, type UITheme } from '../store/uiStore';
 import { Memories } from './Memories';
 
 // ---------------------------------------------------------------------------
@@ -180,6 +181,8 @@ interface ProfilePanelProps {
 }
 
 export function ProfilePanel({ user, onClose, onLogout, onUpdateUser }: ProfilePanelProps): JSX.Element {
+  const theme: UITheme = useUIStore((s) => s.theme);
+  const setTheme = useUIStore((s) => s.setTheme);
   const [activeTab, setActiveTab] = useState<'profile' | 'memories'>('profile');
   const [name, setName] = useState(user.name ?? '');
   const [jobTitle, setJobTitle] = useState(user.jobTitle ?? '');
@@ -458,6 +461,34 @@ export function ProfilePanel({ user, onClose, onLogout, onUpdateUser }: ProfileP
                 </div>
               </div>
             )}
+
+            {/* Appearance */}
+            <div className="pt-4 border-t border-surface-800">
+              <h3 className="text-sm font-medium text-surface-200 mb-1">Appearance</h3>
+              <p className="text-xs text-surface-500 mb-3">Choose how Basebase looks on this device.</p>
+              <div
+                className="flex rounded-lg border border-surface-700 p-0.5 bg-surface-800/50"
+                role="group"
+                aria-label="Color theme"
+              >
+                {(['light', 'dark', 'system'] as const).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => setTheme(option)}
+                    className={`flex-1 px-2 py-2 text-xs font-medium rounded-md transition-colors ${
+                      theme === option
+                        ? 'bg-surface-700 text-surface-100 shadow-sm'
+                        : 'text-surface-400 hover:text-surface-200'
+                    }`}
+                  >
+                    {option === 'system'
+                      ? 'System'
+                      : `${option.charAt(0).toUpperCase()}${option.slice(1)}`}
+                  </button>
+                ))}
+              </div>
+            </div>
 
           </div>
 
