@@ -1379,6 +1379,25 @@ def _workflow_insert_would_auto_run(query: str) -> bool:
     return bool(trigger_type and trigger_type != "manual" and is_enabled is True)
 
 
+def _build_slack_workflow_output_config(context: dict[str, Any] | None) -> dict[str, str] | None:
+    """Build Slack delivery metadata for workflows created from a Slack conversation."""
+    if not context or context.get("source") != "slack":
+        return None
+
+    channel_id = (context.get("slack_channel_id") or "").strip()
+    if not channel_id:
+        return None
+
+    output_config: dict[str, str] = {
+        "platform": "slack",
+        "channel_id": channel_id,
+    }
+    thread_ts = (context.get("slack_thread_ts") or "").strip()
+    if thread_ts:
+        output_config["thread_ts"] = thread_ts
+    return output_config
+
+
 def _parse_update_values(query: str) -> tuple[dict[str, Any], str] | None:
     """
     Parse an UPDATE query to extract SET values and WHERE clause.
@@ -1558,10 +1577,14 @@ async def _run_sql_write(
                 parsed = _parse_insert_for_injection(query_to_use)
                 if parsed is None:
                     return {"error": "INSERT query format not recognized. Use: INSERT INTO table (columns) VALUES (values)"}
-                
+
                 table_part, columns, values = parsed
                 columns_lower = columns.lower()
-                
+                column_name_set = {
+                    col.strip().lower()
+                    for col in _split_sql_csv(columns)
+                }
+
                 # Build lists of extra columns and values to inject
                 extra_cols: list[str] = []
                 extra_vals: list[str] = []
@@ -1576,22 +1599,30 @@ async def _run_sql_write(
                 
                 # Workflow-specific defaults
                 if table == "workflows":
-                    if "id" not in columns_lower:
+                    if "id" not in column_name_set:
                         extra_cols.append("id")
                         extra_vals.append("gen_random_uuid()")
-                    if "steps" not in columns_lower:
+                    if "steps" not in column_name_set:
                         extra_cols.append("steps")
                         extra_vals.append("'[]'::jsonb")
-                    if "auto_approve_tools" not in columns_lower:
+                    slack_output_config = _build_slack_workflow_output_config(context)
+                    if "output_config" not in column_name_set and slack_output_config:
+                        extra_cols.append("output_config")
+                        extra_vals.append(f"'{json.dumps(slack_output_config)}'::jsonb")
+                    if "auto_approve_tools" not in column_name_set:
                         extra_cols.append("auto_approve_tools")
-                        extra_vals.append("'[]'::jsonb")
-                    if "is_enabled" not in columns_lower:
+                        extra_vals.append(
+                            '\'["send_slack"]\'::jsonb'
+                            if slack_output_config
+                            else "'[]'::jsonb"
+                        )
+                    if "is_enabled" not in column_name_set:
                         extra_cols.append("is_enabled")
                         extra_vals.append("true")
-                
+
                 # Artifacts-specific defaults
                 if table == "artifacts":
-                    if "id" not in columns_lower:
+                    if "id" not in column_name_set:
                         extra_cols.append("id")
                         extra_vals.append("gen_random_uuid()")
                 

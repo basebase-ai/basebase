@@ -682,6 +682,15 @@ class WorkspaceMessenger(BaseMessenger):
         ctx: dict[str, Any] = message.messenger_context
         slack_user_email: str | None = ctx.get("user_email")
 
+        workflow_context: dict[str, Any] = dict(ctx.get("workflow_context") or {})
+        if self.meta.slug == "slack":
+            channel_id = ctx.get("channel_id")
+            thread_ts = ctx.get("thread_id") or ctx.get("thread_ts")
+            if channel_id:
+                workflow_context.setdefault("slack_channel_id", channel_id)
+            if thread_ts:
+                workflow_context.setdefault("slack_thread_ts", thread_ts)
+
         orchestrator = ChatOrchestrator(
             user_id=str(user.id),
             organization_id=organization_id,
@@ -689,7 +698,7 @@ class WorkspaceMessenger(BaseMessenger):
             user_email=user.email,
             source_user_id=message.external_user_id,
             source_user_email=slack_user_email or user.email,
-            workflow_context=ctx.get("workflow_context"),
+            workflow_context=workflow_context or None,
             source=self.meta.slug,
             timezone=ctx.get("timezone"),
             local_time=ctx.get("local_time"),

@@ -485,6 +485,39 @@ def format_workflow_runtime_context_for_prompt(
 from workers.run_async import run_async
 
 
+def _get_slack_delivery_context(output_config: dict[str, Any] | None) -> dict[str, str] | None:
+    """Normalize Slack delivery metadata stored on a workflow."""
+    if not output_config:
+        return None
+
+    platform = str(
+        output_config.get("platform")
+        or output_config.get("provider")
+        or output_config.get("type")
+        or ""
+    ).strip().lower()
+    if platform != "slack":
+        return None
+
+    channel_id = str(
+        output_config.get("channel_id")
+        or output_config.get("channel")
+        or ""
+    ).strip()
+    if not channel_id:
+        return None
+
+    delivery_context: dict[str, str] = {"channel_id": channel_id}
+    thread_ts = str(
+        output_config.get("thread_ts")
+        or output_config.get("thread_id")
+        or ""
+    ).strip()
+    if thread_ts:
+        delivery_context["thread_ts"] = thread_ts
+    return delivery_context
+
+
 async def _check_scheduled_workflows() -> dict[str, Any]:
     """
     Check for workflows scheduled to run now.
@@ -843,6 +876,20 @@ async def _execute_workflow_via_agent(
     # guardrails are enforced without being shown in workflow run UI.
     prompt = workflow.prompt
     persisted_prompt = workflow.prompt
+    slack_delivery_context = _get_slack_delivery_context(getattr(workflow, "output_config", None))
+
+    if slack_delivery_context:
+        delivery_instruction = (
+            "When this workflow completes, deliver the reminder back to Slack by calling "
+            f"send_slack with channel='{slack_delivery_context['channel_id']}'"
+        )
+        if slack_delivery_context.get("thread_ts"):
+            delivery_instruction += (
+                f" and thread_ts='{slack_delivery_context['thread_ts']}'"
+            )
+        delivery_instruction += ". Do not leave the result only in the workflow conversation."
+        prompt += f"\n\n{delivery_instruction}"
+        persisted_prompt += f"\n\n{delivery_instruction}"
 
     runtime_context = build_workflow_runtime_context(
         workflow=workflow,
@@ -894,6 +941,12 @@ async def _execute_workflow_via_agent(
         workflow_auto_approve_tools=workflow.auto_approve_tools,
         parent_auto_approve_tools=parent_auto_approve_tools,
     )
+    if slack_delivery_context and "send_slack" not in effective_auto_approve_tools:
+        effective_auto_approve_tools = [*effective_auto_approve_tools, "send_slack"]
+        logger.info(
+            "[Workflow] Added send_slack auto-approval for workflow %s due to Slack output_config",
+            workflow.id,
+        )
     effective_auto_approve_tools = await apply_user_auto_approve_permissions(
         session=session,
         user_id=workflow.created_by_user_id,
@@ -918,13 +971,19 @@ async def _execute_workflow_via_agent(
         "call_stack": call_stack,  # For nested workflow recursion detection
         "execution_guardrails": [WORKFLOW_NESTING_GUARDRAIL],
     }
-    
+    orchestrator_source = "workflow"
+    if slack_delivery_context:
+        workflow_context["slack_channel_id"] = slack_delivery_context["channel_id"]
+        if slack_delivery_context.get("thread_ts"):
+            workflow_context["slack_thread_ts"] = slack_delivery_context["thread_ts"]
+        orchestrator_source = "slack"
+
     orchestrator = ChatOrchestrator(
         user_id=str(workflow.created_by_user_id),
         organization_id=str(workflow.organization_id),
         conversation_id=str(conversation.id),
         workflow_context=workflow_context,
-        source="workflow",
+        source=orchestrator_source,
     )
     
     # Process the prompt (this streams through the agent)
