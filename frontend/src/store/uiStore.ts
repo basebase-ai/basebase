@@ -10,12 +10,17 @@ import { persist } from "zustand/middleware";
 import type { View } from "./types";
 import { useChatStore } from "./chatStore";
 
+/** User-selected color theme; `system` follows OS preference. */
+export type UITheme = "light" | "dark" | "system";
+
 // ---------------------------------------------------------------------------
 // Store interface
 // ---------------------------------------------------------------------------
 
 export interface UIState {
   // State
+  /** Persisted appearance preference. */
+  theme: UITheme;
   sidebarCollapsed: boolean;
   sidebarWidth: number;
   currentView: View;
@@ -37,6 +42,7 @@ export interface UIState {
   openApp: (appId: string) => void;
   startNewChat: () => void;
   togglePinChat: (id: string) => void;
+  setTheme: (theme: UITheme) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -47,6 +53,7 @@ export const useUIStore = create<UIState>()(
   persist(
     (set, get) => ({
       // Initial state
+      theme: "dark",
       sidebarCollapsed: false,
       sidebarWidth: 256,
       currentView: "home",
@@ -104,10 +111,12 @@ export const useUIStore = create<UIState>()(
         );
         set({ pinnedChatIds: updated });
       },
+      setTheme: (theme) => set({ theme }),
     }),
     {
       name: "revtops-ui-store",
       partialize: (state) => ({
+        theme: state.theme,
         sidebarCollapsed: state.sidebarCollapsed,
         sidebarWidth: state.sidebarWidth,
         pinnedChatIds: state.pinnedChatIds,

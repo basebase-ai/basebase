@@ -2045,7 +2045,7 @@ function MessageWithBlocks({
         {meUser ? (
           <Avatar user={meUser} size="md" className="flex-shrink-0 rounded-full" />
         ) : (
-          <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-primary-800">
+          <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-primary-500">
             <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
             </svg>
@@ -2054,7 +2054,7 @@ function MessageWithBlocks({
 
         {/* Content: bubble + attachments + timestamp, all right-aligned */}
         <div className="flex-1 max-w-[85%] overflow-hidden text-right">
-          <div className="inline-block max-w-full px-3 py-2 rounded-xl rounded-tr-sm bg-primary-800 text-white text-[13px] leading-relaxed">
+          <div className="inline-block max-w-full px-3 py-2 rounded-xl rounded-tr-sm bg-primary-500 text-white text-[13px] leading-relaxed">
             <div className="whitespace-pre-wrap break-words text-left">{textContent}</div>
           </div>
           {attachments.length > 0 && (
@@ -2301,8 +2301,8 @@ function AssistantTextBlock({
   const displayText: string = isStreaming ? text.trimEnd() : text;
   
   return (
-    <div className="inline-block max-w-full px-3 py-2 rounded-xl rounded-tl-sm bg-surface-800/80 text-surface-200 text-[13px] leading-relaxed">
-      <div className={`prose prose-sm prose-invert max-w-none overflow-x-auto prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-pre:my-2 prose-code:text-primary-300 prose-code:bg-surface-900/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-pre:bg-surface-900/80 prose-pre:text-xs prose-table:text-xs prose-th:bg-surface-700/50 prose-th:px-2 prose-th:py-1 prose-td:px-2 prose-td:py-1 prose-td:border-surface-700 prose-th:border-surface-700 ${isStreaming ? '[&>p:last-of-type]:inline [&>p:last-of-type]:mb-0' : ''}`}>
+    <div className="inline-block max-w-full px-3 py-2 rounded-xl rounded-tl-sm bg-surface-700/90 text-surface-200 text-[13px] leading-relaxed">
+      <div className={`prose prose-sm max-w-none overflow-x-auto text-surface-200 dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-headings:text-surface-200 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-pre:my-2 prose-code:text-primary-300 prose-code:bg-surface-900/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-pre:bg-surface-900/80 prose-pre:text-xs prose-a:text-primary-400 prose-a:no-underline hover:prose-a:text-primary-300 prose-strong:text-surface-100 prose-table:text-xs prose-table:text-surface-200 prose-th:text-surface-200 prose-th:bg-surface-700/50 prose-th:px-2 prose-th:py-1 prose-td:text-surface-200 prose-td:px-2 prose-td:py-1 prose-td:border-surface-700 prose-th:border-surface-700 [&_a]:text-primary-400 [&_a:hover]:text-primary-300 ${isStreaming ? '[&>p:last-of-type]:inline [&>p:last-of-type]:mb-0' : ''}`}>
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayText}</ReactMarkdown>
         {isStreaming && (
           <span className="inline-block w-1.5 h-3 bg-current animate-pulse ml-0.5 align-middle" />

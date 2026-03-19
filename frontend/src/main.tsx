@@ -4,6 +4,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import App from './App';
 import { queryClient } from './lib/queryClient';
 import { logMissingEnvVars } from './lib/env';
+import { ThemeSync } from './hooks/useThemeSync';
 import './index.css';
 
 const rootElement = document.getElementById('root');
@@ -16,6 +17,7 @@ logMissingEnvVars();
 ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
+      <ThemeSync />
       <App />
     </QueryClientProvider>
   </React.StrictMode>

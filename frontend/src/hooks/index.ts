@@ -27,3 +27,4 @@ export type { Integration, TeamConnection, SyncStats } from "../store";
 // Other hooks
 export { useWebSocket } from "./useWebSocket";
 export { useIsMobile } from "./useIsMobile";
+export { useThemeSync, ThemeSync } from "./useThemeSync";
