@@ -147,6 +147,7 @@ async def backfill(
             texts.append(emb_text)
             valid_convs.append(conv)
 
+        org_processed = 0
         for i in range(0, len(valid_convs), batch_size):
             batch_convs = valid_convs[i : i + batch_size]
             batch_texts = texts[i : i + batch_size]
@@ -155,13 +156,16 @@ async def backfill(
             async with get_session(organization_id=oid) as session:
                 for c, vec in zip(batch_convs, vectors):
                     conv = await session.get(Conversation, c.id)
-                    if conv and conv.embedding.is_(None):
+                    if conv and conv.embedding is None:
                         conv.embedding = vec
                         conv.embedding_message_count = conv.message_count
                         total_processed += 1
+                        org_processed += 1
                 await session.commit()
 
-        print(f"Org {oid}: processed {min(len(convs), len(valid_convs))} conversations (total so far: {total_processed})")
+            print(f"  [{oid[:8]}] batch {i // batch_size + 1}: {org_processed}/{len(valid_convs)} done")
+
+        print(f"Org {oid[:8]}: {org_processed} conversations embedded (total: {total_processed})")
 
     print(f"\nDone. Total conversations embedded: {total_processed}")
 

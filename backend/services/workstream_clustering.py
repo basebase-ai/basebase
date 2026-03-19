@@ -32,7 +32,7 @@ async def _fetch_embeddings_for_window(
     window_hours: int,
 ) -> tuple[list[str], np.ndarray]:
     """Fetch shared conversations with embeddings updated in the last window. Returns (ids, matrix)."""
-    since = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+    since = datetime.utcnow() - timedelta(hours=window_hours)
     async with get_session(organization_id=organization_id) as session:
         result = await session.execute(
             select(Conversation.id, Conversation.embedding)
