@@ -905,6 +905,9 @@ export const useChatStore = create<ChatState>()(
             | "running"
             | "complete"
             | undefined) ?? "running",
+        ...(updates.statusText !== undefined
+          ? { statusText: updates.statusText }
+          : {}),
       };
 
       if (!current) {
@@ -959,6 +962,9 @@ export const useChatStore = create<ChatState>()(
                   | "running"
                   | "complete"
                   | undefined) ?? block.status,
+              ...(updates.statusText !== undefined
+                ? { statusText: updates.statusText }
+                : {}),
             };
           }
           return block;

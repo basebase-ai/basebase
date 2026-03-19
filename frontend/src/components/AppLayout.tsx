@@ -781,6 +781,9 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
                           ...block,
                           input: data.tool_input as Record<string, unknown>,
                           status: 'running' as const,
+                          ...(typeof data.status_text === 'string' && data.status_text
+                            ? { statusText: data.status_text }
+                            : {}),
                         };
                       }
                       return block;
@@ -811,6 +814,9 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
                             name: data.tool_name as string,
                             input: data.tool_input as Record<string, unknown>,
                             status: 'running' as const,
+                            ...(typeof data.status_text === 'string' && data.status_text
+                              ? { statusText: data.status_text }
+                              : {}),
                           },
                         ],
                       };
@@ -831,6 +837,9 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
                         name: data.tool_name as string,
                         input: data.tool_input as Record<string, unknown>,
                         status: 'running',
+                        ...(typeof data.status_text === 'string' && data.status_text
+                          ? { statusText: data.status_text }
+                          : {}),
                       }],
                       timestamp: new Date(),
                     });
@@ -845,6 +854,9 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
               };
               if (data.tool_input != null && typeof data.tool_input === 'object') {
                 updates.input = data.tool_input as Record<string, unknown>;
+              }
+              if (typeof data.status_text === 'string' && data.status_text) {
+                updates.statusText = data.status_text;
               }
               updateConversationToolMessage(conversation_id, data.tool_id as string, updates);
               
@@ -1204,6 +1216,9 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
                     toolName: data.tool_name as string,
                     input: data.tool_input as Record<string, unknown>,
                     status: 'running',
+                    ...(typeof data.status_text === 'string' && data.status_text
+                      ? { statusText: data.status_text }
+                      : {}),
                   });
                 } else if (data.type === 'tool_result') {
                   const updates: Partial<ToolCallData> = {
@@ -1212,6 +1227,9 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
                   };
                   if (data.tool_input != null && typeof data.tool_input === 'object') {
                     updates.input = data.tool_input as Record<string, unknown>;
+                  }
+                  if (typeof data.status_text === 'string' && data.status_text) {
+                    updates.statusText = data.status_text;
                   }
                   updateConversationToolMessage(conversationId, data.tool_id as string, updates);
                 } else if (data.type === 'artifact') {

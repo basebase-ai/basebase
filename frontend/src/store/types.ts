@@ -136,6 +136,8 @@ export interface ToolUseBlock {
   input: Record<string, unknown>;
   result?: Record<string, unknown>;
   status?: "pending" | "running" | "complete" | "streaming";
+  /** Human-friendly status from registry; set from stream events. */
+  statusText?: string;
 }
 
 export interface ErrorBlock {
@@ -194,6 +196,8 @@ export interface ToolCallData {
   input: Record<string, unknown>;
   result?: Record<string, unknown>;
   status: "running" | "complete" | "error";
+  /** Human-friendly status from registry (e.g. "Querying your database"); set from stream events. */
+  statusText?: string;
 }
 
 export interface ChatMessage {

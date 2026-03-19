@@ -619,6 +619,10 @@ class WorkspaceMessenger(BaseMessenger):
         await _flush(reason="stream_end", force=True)
         return total_length
 
+    def format_tool_status_for_display(self, status_text: str) -> str:
+        """Format status text for this platform (e.g. Slack may wrap in italics). Default: return as-is."""
+        return status_text
+
     async def _handle_json_chunk(
         self,
         chunk: str,
@@ -627,7 +631,31 @@ class WorkspaceMessenger(BaseMessenger):
         workspace_id: str | None,
         organization_id: str | None,
     ) -> None:
-        """Process a JSON orchestrator chunk (artifacts, apps, etc.). Override to post links."""
+        """Process a JSON orchestrator chunk (artifacts, apps, etc.). Post tool status when present."""
+        try:
+            data: dict[str, Any] = json.loads(chunk)
+        except (json.JSONDecodeError, TypeError):
+            return
+        if data.get("type") != "tool_call":
+            return
+        status_text: str | None = data.get("status_text") if isinstance(data.get("status_text"), str) else None
+        if not status_text or not status_text.strip():
+            return
+        message: str = self.format_tool_status_for_display(status_text.strip())
+
+        async def _post() -> None:
+            try:
+                await self.post_message(
+                    channel_id=channel_id,
+                    text=message,
+                    thread_id=thread_id,
+                    workspace_id=workspace_id,
+                    organization_id=organization_id,
+                )
+            except Exception as exc:
+                logger.debug("[%s] Tool status message failed: %s", self.meta.slug, exc)
+
+        asyncio.create_task(_post())
 
     # ------------------------------------------------------------------
     # Overridden process_inbound with streaming + typing indicator support
