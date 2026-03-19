@@ -879,6 +879,10 @@ class ChatOrchestrator:
                             })
                     await session.commit()
 
+            # Notify frontend of persisted attachment IDs so it can update optimistic message
+            if attachment_meta:
+                yield json.dumps({"type": "attachment_meta", "attachments": attachment_meta})
+
         # Fire-and-forget user message save — it's for persistence, not the Claude call.
         if save_user_message:
             message_to_persist = persisted_user_message if persisted_user_message is not None else user_message

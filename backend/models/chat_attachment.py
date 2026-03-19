@@ -34,7 +34,6 @@ class ChatAttachment(Base):
     )
     message_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("chat_messages.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
