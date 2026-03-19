@@ -192,6 +192,7 @@ export function ProfilePanel({ user, onClose, onLogout, onUpdateUser }: ProfileP
   useEffect(() => { setSmsConsent(user.smsConsent ?? false); }, [user.smsConsent]);
   useEffect(() => { setWhatsappConsent(user.whatsappConsent ?? false); }, [user.whatsappConsent]);
   const [showPhoneModal, setShowPhoneModal] = useState(false);
+  const [removePhoneLoading, setRemovePhoneLoading] = useState(false);
   const [newAvatarFile, setNewAvatarFile] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -267,6 +268,28 @@ export function ProfilePanel({ user, onClose, onLogout, onUpdateUser }: ProfileP
   const handlePhoneVerified = (verifiedPhone: string): void => {
     onUpdateUser({ phoneNumber: verifiedPhone, phoneNumberVerified: true });
     setShowPhoneModal(false);
+  };
+
+  const handleRemovePhone = async (): Promise<void> => {
+    if (!window.confirm('Remove this phone number? You can add a new one later.')) return;
+    setRemovePhoneLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/auth/me?user_id=${user.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone_number: '' }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as { detail?: string };
+        throw new Error(d.detail ?? 'Failed to remove phone');
+      }
+      setError(null);
+      onUpdateUser({ phoneNumber: null, phoneNumberVerified: false });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong');
+    } finally {
+      setRemovePhoneLoading(false);
+    }
   };
 
   return (
@@ -387,10 +410,11 @@ export function ProfilePanel({ user, onClose, onLogout, onUpdateUser }: ProfileP
                   </span>
                   <button
                     type="button"
-                    onClick={() => setShowPhoneModal(true)}
-                    className="text-sm text-primary-400 hover:text-primary-300 ml-auto"
+                    onClick={() => void handleRemovePhone()}
+                    disabled={removePhoneLoading}
+                    className="text-sm text-red-400 hover:text-red-300 ml-auto disabled:opacity-50"
                   >
-                    Change
+                    {removePhoneLoading ? 'Removing…' : 'Remove'}
                   </button>
                 </div>
               ) : (
