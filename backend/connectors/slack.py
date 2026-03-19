@@ -655,6 +655,12 @@ Send a message to a Slack channel, DM, or user.
         channels_with_messages = 0
         user_info_cache: dict[str, dict[str, Any]] = {}
         session_user_id: str | None = None
+        if self.user_id:
+            session_user_id = self.user_id
+        elif self._integration and self._integration.user_id:
+            session_user_id = str(self._integration.user_id)
+        elif self._integration and self._integration.connected_by_user_id:
+            session_user_id = str(self._integration.connected_by_user_id)
         logger.info(
             "[Slack Sync] Opening activity sync DB session org=%s session_user_id=%s connector_user_id=%s integration_id=%s",
             self.organization_id,
@@ -662,7 +668,10 @@ Send a message to a Slack channel, DM, or user.
             self.user_id,
             self._integration.id if self._integration else None,
         )
-        async with get_session(organization_id=self.organization_id) as session:
+        async with get_session(
+            organization_id=self.organization_id,
+            user_id=session_user_id,
+        ) as session:
             for channel in channels:
                 channel_id = channel.get("id", "")
                 channel_name = channel.get("name", "unknown")
@@ -725,6 +734,9 @@ Send a message to a Slack channel, DM, or user.
                                 .values(
                                     id=activity.id,
                                     organization_id=activity.organization_id,
+                                    integration_id=activity.integration_id,
+                                    owner_user_id=activity.owner_user_id,
+                                    visibility=activity.visibility,
                                     source_system=activity.source_system,
                                     source_id=activity.source_id,
                                     type=activity.type,
@@ -742,6 +754,9 @@ Send a message to a Slack channel, DM, or user.
                                     ],
                                     index_where=Activity.source_id.is_not(None),
                                     set_={
+                                        "integration_id": activity.integration_id,
+                                        "owner_user_id": activity.owner_user_id,
+                                        "visibility": activity.visibility,
                                         "subject": activity.subject,
                                         "description": activity.description,
                                         "custom_fields": activity.custom_fields,
