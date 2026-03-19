@@ -299,6 +299,24 @@ function getActivityLabel(provider: string, count: number, step?: string): strin
   }
 }
 
+async function getResponseErrorMessage(response: Response, fallback: string): Promise<string> {
+  const responseText = await response.text();
+  if (!responseText) return fallback;
+
+  try {
+    const payload = JSON.parse(responseText) as { detail?: string; message?: string } | string;
+    if (typeof payload === 'string' && payload.trim()) return payload;
+    if (payload && typeof payload === 'object') {
+      if (typeof payload.detail === 'string' && payload.detail.trim()) return payload.detail;
+      if (typeof payload.message === 'string' && payload.message.trim()) return payload.message;
+    }
+  } catch {
+    // Fall through to raw response text.
+  }
+
+  return responseText.trim() || fallback;
+}
+
 export function DataSources(): JSX.Element {
   // Get user/org from Zustand (auth state)
   const { user, organization } = useAppStore();
@@ -467,6 +485,7 @@ export function DataSources(): JSX.Element {
     step: 'confirm' | 'ask-delete';
   }
   const [disconnectModal, setDisconnectModal] = useState<DisconnectModalState | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
   const [disconnectSuccess, setDisconnectSuccess] = useState<string | null>(null);
   const [sharingError, setSharingError] = useState<string | null>(null);
@@ -936,6 +955,7 @@ export function DataSources(): JSX.Element {
 
   const handleDisconnect = (provider: string): void => {
     if (!organizationId || !userId || disconnectingProviders.has(provider)) return;
+    setSyncError(null);
     setDisconnectError(null);
     setDisconnectModal({ provider, step: 'confirm' });
   };
@@ -957,7 +977,20 @@ export function DataSources(): JSX.Element {
       const responseText = await response.text();
 
       if (!response.ok) {
-        throw new Error(responseText);
+        let message = `Failed to disconnect ${getConnectorDisplay(provider).name}`;
+        if (responseText) {
+          try {
+            const payload = JSON.parse(responseText) as { detail?: string; message?: string } | string;
+            if (typeof payload === 'string' && payload.trim()) {
+              message = payload;
+            } else if (payload && typeof payload === 'object') {
+              message = payload.detail ?? payload.message ?? message;
+            }
+          } catch {
+            message = responseText;
+          }
+        }
+        throw new Error(message);
       }
 
       // Parse response to show deletion summary
@@ -1067,6 +1100,7 @@ export function DataSources(): JSX.Element {
   const handleSync = async (provider: string): Promise<void> => {
     if (syncingProviders.has(provider) || !organizationId) return;
 
+    setSyncError(null);
     setSyncingProviders((prev) => new Set(prev).add(provider));
 
     try {
@@ -1091,7 +1125,7 @@ export function DataSources(): JSX.Element {
         method: 'POST',
       });
 
-      if (!response.ok) throw new Error('Sync failed');
+      if (!response.ok) throw new Error(await getResponseErrorMessage(response, `Failed to sync ${getConnectorDisplay(provider).name}`));
 
       // Poll for completion (GitHub sync can take 1–2 min; allow 2.5 min)
       let attempts = 0;
@@ -1106,6 +1140,13 @@ export function DataSources(): JSX.Element {
             next.delete(provider);
             return next;
           });
+
+          if (status.status === 'failed') {
+            const providerName = getConnectorDisplay(provider).name;
+            const detail = typeof status.error === 'string' && status.error.trim() ? status.error : `Failed to sync ${providerName}`;
+            setSyncError(detail);
+            setTimeout(() => setSyncError(null), 8000);
+          }
 
           // Always refetch: on completion, failure, or timeout (slow syncs like GitHub can exceed 30s)
           void fetchIntegrations();
@@ -1122,6 +1163,8 @@ export function DataSources(): JSX.Element {
       void checkStatus();
     } catch (error) {
       console.error('Sync error:', error);
+      setSyncError(error instanceof Error ? error.message : `Failed to sync ${getConnectorDisplay(provider).name}`);
+      setTimeout(() => setSyncError(null), 8000);
       setSyncingProviders((prev) => {
         const next = new Set(prev);
         next.delete(provider);
@@ -2182,6 +2225,11 @@ export function DataSources(): JSX.Element {
       </div>
 
       {/* Disconnect / error / success banners */}
+      {syncError && (
+        <div className="fixed bottom-4 right-4 z-50 bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-lg text-sm max-w-sm shadow-lg">
+          {syncError}
+        </div>
+      )}
       {disconnectError && (
         <div className="fixed bottom-4 right-4 z-50 bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-lg text-sm max-w-sm shadow-lg">
           {disconnectError}

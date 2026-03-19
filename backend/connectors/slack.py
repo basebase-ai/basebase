@@ -94,7 +94,7 @@ def markdown_to_mrkdwn(text: str) -> tuple[str, Optional[list[dict[str, Any]]]]:
     return (text, out_blocks)
 
 from api.websockets import broadcast_sync_progress
-from connectors.base import BaseConnector
+from connectors.base import BaseConnector, ExternalConnectionRevokedError, build_connection_removed_message
 from connectors.registry import (
     AuthType, Capability, ConnectorAction, ConnectorMeta, ConnectorScope,
 )
@@ -363,7 +363,19 @@ Send a message to a Slack channel, DM, or user.
                 data: dict[str, Any] = response.json()
 
                 if not data.get("ok"):
-                    raise ValueError(f"Slack API error: {data.get('error', 'Unknown')}")
+                    error_code = str(data.get("error", "Unknown"))
+                    if error_code in {"invalid_auth", "account_inactive", "token_revoked", "not_authed"}:
+                        logger.warning(
+                            "[Slack API] Slack connection was revoked org=%s user=%s endpoint=%s error=%s",
+                            self.organization_id,
+                            self.user_id,
+                            endpoint,
+                            error_code,
+                        )
+                        raise ExternalConnectionRevokedError(
+                            build_connection_removed_message(self.source_system)
+                        )
+                    raise ValueError(f"Slack API error: {error_code}")
 
                 return data
 

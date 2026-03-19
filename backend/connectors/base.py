@@ -24,9 +24,54 @@ logger = logging.getLogger(__name__)
 
 PENDING_SHARING_CONFIG_TIMEOUT = timedelta(minutes=30)
 
+_CONNECTION_REMOVED_ERROR_SNIPPETS: tuple[str, ...] = (
+    "connection not found",
+    "404 not found",
+    "404 client error",
+    "invalid_auth",
+    "account_inactive",
+    "token_revoked",
+    "not_authed",
+    "auth revoked",
+)
+
+_PROVIDER_DISPLAY_NAMES: dict[str, str] = {
+    "google_calendar": "Google Calendar",
+    "google-calendar": "Google Calendar",
+    "google_mail": "Google Mail",
+    "google-mail": "Google Mail",
+}
+
+
+def get_provider_display_name(provider: str) -> str:
+    """Return a human-readable provider label for user-facing errors."""
+    normalized = provider.strip()
+    if normalized in _PROVIDER_DISPLAY_NAMES:
+        return _PROVIDER_DISPLAY_NAMES[normalized]
+    return normalized.replace("_", " ").replace("-", " ").title()
+
+
+def build_connection_removed_message(provider: str) -> str:
+    """Return a coherent reconnect message when upstream access was removed."""
+    provider_name = get_provider_display_name(provider)
+    return (
+        f"The {provider_name} connection was removed or revoked in {provider_name}. "
+        f"Please disconnect it in Basebase and reconnect it if you still want to sync."
+    )
+
+
+def is_connection_removed_error(error: Exception | str) -> bool:
+    """Return True when an error looks like a revoked or deleted upstream connection."""
+    message = str(error).lower()
+    return any(snippet in message for snippet in _CONNECTION_REMOVED_ERROR_SNIPPETS)
+
 
 class SyncCancelledError(RuntimeError):
     """Raised when a sync should stop because the integration was disconnected."""
+
+
+class ExternalConnectionRevokedError(RuntimeError):
+    """Raised when the upstream integration was removed or revoked outside Basebase."""
 
 
 class BaseConnector(ABC):
@@ -442,6 +487,20 @@ class BaseConnector(ABC):
             return self._token, ""
         except Exception as e:
             print(f"[Connector] Failed to get token: {e}")
+            if is_connection_removed_error(e):
+                logger.warning(
+                    "Upstream connection appears removed while getting token",
+                    extra={
+                        "organization_id": self.organization_id,
+                        "provider": self.source_system,
+                        "user_id": self.user_id,
+                        "connection_id": connection_id,
+                    },
+                    exc_info=True,
+                )
+                raise ExternalConnectionRevokedError(
+                    build_connection_removed_message(self.source_system)
+                ) from e
             raise ValueError(
                 f"Failed to get token from Nango for {self.source_system}: {str(e)}"
             )
@@ -473,9 +532,26 @@ class BaseConnector(ABC):
                 f"No Nango connection ID stored for {self.source_system} integration"
             )
 
-        self._credentials = await nango.get_credentials(
-            nango_integration_id, connection_id
-        )
+        try:
+            self._credentials = await nango.get_credentials(
+                nango_integration_id, connection_id
+            )
+        except Exception as exc:
+            if is_connection_removed_error(exc):
+                logger.warning(
+                    "Upstream connection appears removed while getting credentials",
+                    extra={
+                        "organization_id": self.organization_id,
+                        "provider": self.source_system,
+                        "user_id": self.user_id,
+                        "connection_id": connection_id,
+                    },
+                    exc_info=True,
+                )
+                raise ExternalConnectionRevokedError(
+                    build_connection_removed_message(self.source_system)
+                ) from exc
+            raise
         return self._credentials
 
     async def update_last_sync(self, counts: Optional[dict[str, int]] = None) -> None:
