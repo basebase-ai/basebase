@@ -42,6 +42,10 @@ from models.tracker_team import TrackerTeam
 
 # Import the unified tool registry
 from agents.registry import get_tools_for_claude, get_tool, requires_approval
+from agents.memory_guardrails import (
+    normalize_memory_entity_type,
+    validate_memory_entity_type,
+)
 from access_control import (
     ConnectorContext,
     RightsContext,
@@ -5710,9 +5714,10 @@ async def _save_memory(
     if not user_id:
         return {"error": "Cannot save memory without a user context."}
 
-    entity_type: str = params.get("entity_type", "user").strip()
-    if entity_type not in ("user", "organization_member"):
-        return {"error": f"Invalid entity_type '{entity_type}'. Must be 'user' or 'organization_member'."}
+    entity_type = normalize_memory_entity_type(params.get("entity_type", "user"))
+    entity_type_error = validate_memory_entity_type(entity_type)
+    if entity_type_error:
+        return {"error": entity_type_error}
 
     if skip_approval:
         logger.info("[Tools._save_memory] Auto-approved, saving memory immediately")
@@ -5750,7 +5755,10 @@ async def execute_save_memory(
     if not content:
         return {"status": "failed", "error": "content is required."}
 
-    entity_type: str = params.get("entity_type", "user").strip()
+    entity_type = normalize_memory_entity_type(params.get("entity_type", "user"))
+    entity_type_error = validate_memory_entity_type(entity_type)
+    if entity_type_error:
+        return {"status": "failed", "error": entity_type_error}
     category: str | None = _normalize_memory_category(params.get("category"))
     content_error = _validate_memory_content_for_category(content, category)
     if content_error:

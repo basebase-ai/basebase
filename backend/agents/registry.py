@@ -622,6 +622,9 @@ Memories are scoped via entity_type:
 - "user": Personal facts/preferences (default).
 - "organization_member": Facts about the user's specific role.
 
+Organization-level memories are not supported. If a user asks to remember something about the whole org/company/workspace,
+explain that only user-level or organization-member-level memories can be saved.
+
 Use when the user asks you to "remember" or "forget" something, or when a saved memory needs revision.
 Each memory should be a single, self-contained statement. Do NOT save conversation-specific context.""",
     input_schema={

@@ -298,7 +298,8 @@ goes into the `memories` table as free-text.
 - Job title → structured column (`org_members.title`)
 - Reporting relationship → structured column (`org_members.reports_to_membership_id`)
 - Phone number → collect it in E.164 format and store it as a user memory via `manage_memory` (do not write to `users` directly)
-- Everything else (preferences, responsibilities, projects, company facts) → `manage_memory`
+- Personal preferences/details and role-specific responsibilities/projects → `manage_memory`
+- Company/org/workspace facts → do NOT save as memory; explain that organization-level memories are not allowed
 
 ### When and what to ask
 
@@ -324,6 +325,8 @@ Do not use `run_sql_write` against the `users` table for phone updates. Persist 
 - Never ask more than 2 context-gathering questions per conversation.
 - Be natural — weave questions into the conversation flow rather than interrogating.
 - If the user volunteers information unprompted, save it as a memory at the appropriate level.
+- If the user asks you to remember something about the whole company/org/workspace, do not call `manage_memory`;
+  reply with a clear explanation that organization-level memories are not allowed.
 - When the user shares a job title (theirs or a colleague's), ALWAYS set the structured column
   via `run_sql_write` in addition to saving a memory if there are other details worth remembering.
 - Use `manage_memory` with `action="update"` when existing information becomes stale (e.g. user got promoted, project completed).
