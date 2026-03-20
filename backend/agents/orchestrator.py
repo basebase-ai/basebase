@@ -136,6 +136,13 @@ async def update_tool_result(
             
             for block in new_blocks:
                 if block.get("type") == "tool_use" and block.get("id") == tool_id:
+                    if block.get("status") == status and block.get("result") == result:
+                        logger.info(
+                            "[update_tool_result] Skipping duplicate tool update for tool=%s status=%s",
+                            tool_id[:8] if tool_id else None,
+                            status,
+                        )
+                        return False
                     block["result"] = result
                     block["status"] = status
                     updated = True
