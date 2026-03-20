@@ -145,6 +145,8 @@ async def get_workstreams(
 
             participant_ids: set[UUID] = set()
             for c in convs.values():
+                if c.user_id:
+                    participant_ids.add(c.user_id)
                 for uid in c.participating_user_ids or []:
                     participant_ids.add(uid)
             users_result = await session.execute(
@@ -156,8 +158,24 @@ async def get_workstreams(
                 conv = convs.get(cid)
                 if not conv:
                     continue
+                seen_uids: set[UUID] = set()
                 participants: list[WorkstreamParticipant] = []
+                # Always include the conversation creator first
+                if conv.user_id and conv.user_id not in seen_uids:
+                    seen_uids.add(conv.user_id)
+                    u = users_by_id.get(conv.user_id)
+                    participants.append(
+                        WorkstreamParticipant(
+                            id=str(conv.user_id),
+                            name=u.name if u else None,
+                            avatar_url=u.avatar_url if u else None,
+                            message_count_in_window=0,
+                        )
+                    )
                 for uid in conv.participating_user_ids or []:
+                    if uid in seen_uids:
+                        continue
+                    seen_uids.add(uid)
                     u = users_by_id.get(uid)
                     participants.append(
                         WorkstreamParticipant(
