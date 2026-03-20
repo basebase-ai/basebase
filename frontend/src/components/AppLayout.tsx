@@ -1022,15 +1022,20 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
                 });
               } else if (connectData.action === 'connect_builtin') {
                 // Connect built-in connector directly
-                fetch(`${API_BASE}/auth/integrations/connect-builtin`, {
+                void apiRequest<{ status: string; provider: string }>('/auth/integrations/connect-builtin', {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                     provider: connectData.provider,
                     organization_id: orgId,
+                    user_id: currentUserId,
                   }),
                 })
-                  .then(() => queryClient.invalidateQueries({ queryKey: ['integrations'] }))
+                  .then(({ error }) => {
+                    if (error) {
+                      throw new Error(error);
+                    }
+                    return queryClient.invalidateQueries({ queryKey: ['integrations'] });
+                  })
                   .catch((err) => console.error('Failed to connect builtin:', err));
               }
             } else if (data.type === 'context_usage') {

@@ -3252,7 +3252,10 @@ class ConnectBuiltinRequest(BaseModel):
 
 
 @router.post("/integrations/connect-builtin")
-async def connect_builtin(request: ConnectBuiltinRequest) -> dict[str, Any]:
+async def connect_builtin(
+    request: ConnectBuiltinRequest,
+    auth: AuthContext = Depends(get_current_auth),
+) -> dict[str, Any]:
     """
     Create an Integration row for a built-in connector (Web Search, Code Sandbox, Twilio).
 
@@ -3273,6 +3276,46 @@ async def connect_builtin(request: ConnectBuiltinRequest) -> dict[str, Any]:
         user_uuid = UUID(request.user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid user ID")
+
+    if auth.user_id != user_uuid:
+        logger.warning(
+            "connect_builtin rejected due to mismatched user auth_user=%s request_user=%s provider=%s",
+            auth.user_id,
+            user_uuid,
+            request.provider,
+        )
+        raise HTTPException(status_code=403, detail="Authenticated user does not match requested user")
+
+    if auth.organization_id != org_uuid:
+        logger.warning(
+            "connect_builtin rejected due to mismatched org auth_org=%s request_org=%s provider=%s user=%s",
+            auth.organization_id,
+            org_uuid,
+            request.provider,
+            auth.user_id,
+        )
+        raise HTTPException(status_code=403, detail="Authenticated organization does not match requested organization")
+
+    async with get_admin_session() as guard_session:
+        requesting_user = await guard_session.get(User, user_uuid)
+        if not requesting_user or requesting_user.organization_id != org_uuid:
+            raise HTTPException(status_code=403, detail="Not authorized for this organization")
+        if requesting_user.is_guest:
+            raise HTTPException(status_code=403, detail="Guest users cannot connect integrations")
+        if request.provider == "code_sandbox" and not await _can_administer_org(
+            guard_session,
+            requesting_user,
+            org_uuid,
+        ):
+            logger.warning(
+                "connect_builtin rejected: code_sandbox requires org admin/global admin org=%s user=%s",
+                org_uuid,
+                user_uuid,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Code Sandbox can only be connected by organization admins or global admins",
+            )
 
     # iSpot.tv: store client_id and client_secret in extra_data (client_credentials flow)
     connection_extra_data: dict[str, Any] | None = None

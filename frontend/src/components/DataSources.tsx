@@ -319,7 +319,7 @@ async function getResponseErrorMessage(response: Response, fallback: string): Pr
 
 export function DataSources(): JSX.Element {
   // Get user/org from Zustand (auth state)
-  const { user, organization } = useAppStore();
+  const { user, organization, organizations } = useAppStore();
   
   // Check if on mobile device
   const isMobile = useIsMobile();
@@ -492,6 +492,32 @@ export function DataSources(): JSX.Element {
 
   const organizationId = organization?.id ?? '';
   const userId = user?.id ?? '';
+  const activeMembership = organizations.find((org) => org.id === organizationId);
+  const canConnectCodeSandbox = (user?.roles.includes('global_admin') ?? false) || activeMembership?.role === 'admin';
+
+  const connectBuiltinConnector = useCallback(
+    async (
+      provider: string,
+      extraData?: Record<string, unknown> | null,
+    ): Promise<void> => {
+      const { data, error } = await apiRequest<{ status: string; provider: string }>(
+        '/auth/integrations/connect-builtin',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            organization_id: organizationId,
+            provider,
+            user_id: userId,
+            ...(extraData ? { extra_data: extraData } : {}),
+          }),
+        },
+      );
+      if (error || !data) {
+        throw new Error(error ?? 'Failed to connect');
+      }
+    },
+    [organizationId, userId],
+  );
 
   const slackIntegration = rawIntegrations.find((integration) => integration.provider === 'slack');
   const slackConnected = Boolean(slackIntegration?.isActive);
@@ -752,7 +778,7 @@ export function DataSources(): JSX.Element {
     };
   });
 
-  const handleConnect = async (provider: string): Promise<void> => {
+  const handleConnect = useCallback(async (provider: string): Promise<void> => {
     if (connectingProvider || !organizationId || !userId) return;
 
     setConnectingProvider(provider);
@@ -777,19 +803,10 @@ export function DataSources(): JSX.Element {
       }
 
       if (connectionFlow === 'builtin') {
-        const res = await fetch(`${API_BASE}/auth/integrations/connect-builtin`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            organization_id: organizationId,
-            provider,
-            user_id: userId,
-          }),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ detail: res.statusText }));
-          throw new Error((err as { detail?: string }).detail ?? 'Failed to connect');
+        if (provider === 'code_sandbox' && !canConnectCodeSandbox) {
+          throw new Error('Code Sandbox can only be connected by organization admins or global admins');
         }
+        await connectBuiltinConnector(provider);
         void fetchIntegrations();
         setConnectingProvider(null);
         return;
@@ -870,9 +887,9 @@ export function DataSources(): JSX.Element {
       console.error('Failed to connect:', error);
       setConnectingProvider(null);
     }
-  };
+  }, [canConnectCodeSandbox, connectBuiltinConnector, connectingProvider, fetchIntegrations, getConnectorDisplay, organizationId, userId]);
 
-  const handleMcpConnect = async (): Promise<void> => {
+  const handleMcpConnect = useCallback(async (): Promise<void> => {
     if (!organizationId || !userId || mcpConnecting) return;
     const trimmedUrl: string = mcpEndpointUrl.trim();
     const trimmedName: string = mcpName.trim();
@@ -888,24 +905,11 @@ export function DataSources(): JSX.Element {
     setMcpConnecting(true);
     setMcpError(null);
     try {
-      const res: Response = await fetch(`${API_BASE}/auth/integrations/connect-builtin`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          organization_id: organizationId,
-          provider: 'mcp',
-          user_id: userId,
-          extra_data: {
-            display_name: trimmedName,
-            endpoint_url: trimmedUrl,
-            auth_header: mcpBearerToken.trim() || null,
-          },
-        }),
+      await connectBuiltinConnector('mcp', {
+        display_name: trimmedName,
+        endpoint_url: trimmedUrl,
+        auth_header: mcpBearerToken.trim() || null,
       });
-      if (!res.ok) {
-        const err: { detail?: string } = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail ?? 'Failed to connect');
-      }
       setShowMcpForm(false);
       void fetchIntegrations();
     } catch (error) {
@@ -913,9 +917,9 @@ export function DataSources(): JSX.Element {
     } finally {
       setMcpConnecting(false);
     }
-  };
+  }, [connectBuiltinConnector, fetchIntegrations, mcpBearerToken, mcpConnecting, mcpEndpointUrl, mcpName, organizationId, userId]);
 
-  const handleIspotConnect = async (): Promise<void> => {
+  const handleIspotConnect = useCallback(async (): Promise<void> => {
     if (!organizationId || !userId || ispotConnecting) return;
     const clientId: string = ispotClientId.trim();
     const clientSecret: string = ispotClientSecret.trim();
@@ -930,20 +934,7 @@ export function DataSources(): JSX.Element {
     setIspotConnecting(true);
     setIspotError(null);
     try {
-      const res: Response = await fetch(`${API_BASE}/auth/integrations/connect-builtin`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          organization_id: organizationId,
-          provider: 'ispot_tv',
-          user_id: userId,
-          extra_data: { client_id: clientId, client_secret: clientSecret },
-        }),
-      });
-      if (!res.ok) {
-        const err: { detail?: string } = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail ?? 'Failed to connect');
-      }
+      await connectBuiltinConnector('ispot_tv', { client_id: clientId, client_secret: clientSecret });
       setShowIspotForm(false);
       void fetchIntegrations();
     } catch (error) {
@@ -951,7 +942,7 @@ export function DataSources(): JSX.Element {
     } finally {
       setIspotConnecting(false);
     }
-  };
+  }, [connectBuiltinConnector, fetchIntegrations, ispotClientId, ispotClientSecret, ispotConnecting, organizationId, userId]);
 
   const handleDisconnect = (provider: string): void => {
     if (!organizationId || !userId || disconnectingProviders.has(provider)) return;
@@ -1331,6 +1322,7 @@ export function DataSources(): JSX.Element {
     state: TileState
   ): JSX.Element => {
     const isConnecting = connectingProvider === integration.provider;
+    const codeSandboxConnectBlocked = integration.provider === 'code_sandbox' && !canConnectCodeSandbox;
     const isStartingSync =
       (state === 'connected' || state === 'org-connected') &&
       getConnectorDisplay(integration.provider).hasSync !== false &&
@@ -1378,12 +1370,18 @@ export function DataSources(): JSX.Element {
       }
       // team-only and available: show Connect
       return {
-        text: isMobile ? 'Use desktop to connect' : (isConnecting ? 'Connecting...' : 'Connect'),
+        text: isMobile
+          ? 'Use desktop to connect'
+          : codeSandboxConnectBlocked
+            ? 'Admins only'
+            : (isConnecting ? 'Connecting...' : 'Connect'),
         className: isMobile
           ? 'px-4 py-2 text-sm font-medium text-surface-500 border border-surface-700 rounded-lg cursor-not-allowed'
+          : codeSandboxConnectBlocked
+            ? 'px-4 py-2 text-sm font-medium text-surface-500 border border-surface-700 rounded-lg cursor-not-allowed'
           : 'px-4 py-2 text-sm font-medium text-primary-400 border border-primary-500/30 hover:bg-primary-500/10 disabled:opacity-50 rounded-lg transition-colors',
         action: () => { if (!isMobile) void handleConnect(integration.provider); },
-        disabled: isMobile || isConnecting,
+        disabled: isMobile || isConnecting || codeSandboxConnectBlocked,
       };
     };
     const buttonConfig = getButtonConfig();
@@ -1664,6 +1662,11 @@ export function DataSources(): JSX.Element {
                   )}
                 </div>
               )}
+              {state === 'available' && codeSandboxConnectBlocked && (
+                <p className="mt-2 text-xs text-amber-400">
+                  Requires organization admin or global admin access to connect.
+                </p>
+              )}
             </div>
           </div>
 
@@ -1811,6 +1814,7 @@ export function DataSources(): JSX.Element {
               ) : (
                 filteredConnectModalIntegrations.map((integration) => {
                   const isConnecting: boolean = connectingProvider === integration.provider;
+                  const codeSandboxBlocked: boolean = integration.provider === 'code_sandbox' && !canConnectCodeSandbox;
                   return (
                     <li key={integration.provider}>
                       <button
@@ -1818,7 +1822,7 @@ export function DataSources(): JSX.Element {
                           setShowConnectModal(false);
                           void handleConnect(integration.provider);
                         }}
-                        disabled={isConnecting}
+                        disabled={isConnecting || codeSandboxBlocked}
                         className="w-full flex items-center gap-4 px-4 py-3 rounded-xl hover:bg-surface-800 transition-colors text-left group disabled:opacity-50"
                       >
                         <div className={`${isImageIcon(integration.icon) ? '' : getColorClass(integration.color) + ' p-2 text-white'} rounded-lg flex-shrink-0 w-10 h-10 flex items-center justify-center overflow-hidden`}>
@@ -1829,7 +1833,9 @@ export function DataSources(): JSX.Element {
                             {integration.name}
                           </div>
                           <div className="text-xs text-surface-500 truncate mt-0.5">
-                            {integration.description}
+                            {codeSandboxBlocked
+                              ? `${integration.description} • Admin access required to connect`
+                              : integration.description}
                           </div>
                         </div>
                         {isConnecting ? (
