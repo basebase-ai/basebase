@@ -622,6 +622,8 @@ Memories are scoped via entity_type:
 - "user": Personal facts/preferences (default).
 - "organization_member": Facts about the user's specific role.
 
+Organization-scoped memories are not allowed.
+
 Use when the user asks you to "remember" or "forget" something, or when a saved memory needs revision.
 Each memory should be a single, self-contained statement. Do NOT save conversation-specific context.""",
     input_schema={
@@ -644,7 +646,7 @@ Each memory should be a single, self-contained statement. Do NOT save conversati
             "entity_type": {
                 "type": "string",
                 "enum": ["user", "organization_member"],
-                "description": "Scope level. Defaults to 'user'.",
+                "description": "Scope level. Defaults to 'user'. Organization-scoped memories are not allowed.",
                 "default": "user",
             },
             "category": {
