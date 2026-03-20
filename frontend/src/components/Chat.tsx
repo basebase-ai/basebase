@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Components } from 'react-markdown';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -20,8 +21,9 @@ import { AppPreviewPanel } from './apps/AppPreviewPanel';
 import { Avatar } from './Avatar';
 import { PendingApprovalCard, type ApprovalResult } from './PendingApprovalCard';
 import { getConversation, updateConversation, uploadChatFile, type UploadResponse } from '../api/client';
-import { useTeamMembers } from '../hooks/useOrganization';
-import { apiRequest } from '../lib/api';
+import { useTeamMembers, type TeamMember } from '../hooks/useOrganization';
+import { API_BASE, apiRequest } from '../lib/api';
+import { supabase } from '../lib/supabase';
 import { crossTab } from '../lib/crossTab';
 import { APP_NAME, LOGO_PATH } from '../lib/brand';
 import {
@@ -93,6 +95,123 @@ interface ToolApprovalState {
   toolName: string;
   isProcessing: boolean;
   result: WsToolApprovalResult | null;
+}
+
+function isSlackIdentitySource(source: string): boolean {
+  return source.toLowerCase().includes('slack');
+}
+
+/** Map Slack external user IDs (e.g. U09GYNDKNBT) to org display names from team member identities. */
+function buildSlackUserIdToNameMap(members: readonly TeamMember[]): ReadonlyMap<string, string> {
+  const map: Map<string, string> = new Map();
+  for (const member of members) {
+    const fallbackLabel: string = (member.name?.trim() || member.email || 'Unknown').trim();
+    const identities = member.identities ?? [];
+    for (const identity of identities) {
+      if (!identity.externalUserid) continue;
+      if (!isSlackIdentitySource(identity.source)) continue;
+      map.set(identity.externalUserid, fallbackLabel);
+    }
+  }
+  return map;
+}
+
+function escapeMarkdownLinkLabel(label: string): string {
+  return label.replace(/\\/g, '\\\\').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+}
+
+function formatAtMentionLabel(display: string): string {
+  const t: string = display.trim();
+  return t.startsWith('@') ? t : `@${t}`;
+}
+
+function preprocessSlackMentionsForMarkdown(text: string, slackIdToName: ReadonlyMap<string, string>): string {
+  let result: string = text;
+  result = result.replace(/<!channel>/gi, '[@channel](mention:broadcast:channel)');
+  result = result.replace(/<!here>/gi, '[@here](mention:broadcast:here)');
+  result = result.replace(/<!everyone>/gi, '[@everyone](mention:broadcast:everyone)');
+  result = result.replace(
+    /<@([A-Z0-9]+)(?:\|([^>\n]*))?>/g,
+    (_full: string, slackUserId: string, inlineLabel: string | undefined) => {
+      const trimmedInline: string | undefined = inlineLabel?.trim();
+      const label: string =
+        trimmedInline !== undefined && trimmedInline.length > 0
+          ? trimmedInline
+          : slackIdToName.get(slackUserId) ?? slackUserId;
+      return `[${escapeMarkdownLinkLabel(formatAtMentionLabel(label))}](mention:slack:${slackUserId})`;
+    },
+  );
+  return result;
+}
+
+function createSlackMentionRegex(): RegExp {
+  return /<@([A-Z0-9]+)(?:\|([^>\n]*))?>|<!channel>|<!here>|<!everyone>/gi;
+}
+
+function UserMessageTextWithMentions({
+  text,
+  slackIdToName,
+  bodyClassName = 'mt-0.5',
+}: {
+  text: string;
+  slackIdToName: ReadonlyMap<string, string>;
+  bodyClassName?: string;
+}): JSX.Element {
+  const re: RegExp = createSlackMentionRegex();
+  const nodes: JSX.Element[] = [];
+  let lastIndex: number = 0;
+  let match: RegExpExecArray | null;
+  let key: number = 0;
+  while ((match = re.exec(text)) !== null) {
+    const start: number = match.index;
+    if (start > lastIndex) {
+      nodes.push(<span key={`plain-${key++}`}>{text.slice(lastIndex, start)}</span>);
+    }
+    const full: string = match[0];
+    const lower: string = full.toLowerCase();
+    let display: string;
+    if (lower === '<!channel>') display = '@channel';
+    else if (lower === '<!here>') display = '@here';
+    else if (lower === '<!everyone>') display = '@everyone';
+    else {
+      const uid: string = match[1] ?? '';
+      const trimmedInline: string | undefined = match[2]?.trim();
+      display =
+        trimmedInline !== undefined && trimmedInline.length > 0
+          ? formatAtMentionLabel(trimmedInline)
+          : formatAtMentionLabel(slackIdToName.get(uid) ?? uid);
+    }
+    nodes.push(
+      <span
+        key={`mention-${key++}`}
+        className="inline-flex items-center rounded bg-primary-500/15 text-primary-700 dark:text-primary-300 px-1 py-px text-[12.5px] font-semibold align-baseline mx-px"
+      >
+        {display}
+      </span>,
+    );
+    lastIndex = start + full.length;
+  }
+  const bodyClasses: string = `text-[13px] leading-relaxed text-surface-200 whitespace-pre-wrap break-words ${bodyClassName}`;
+  if (nodes.length === 0) {
+    return <div className={bodyClasses}>{text}</div>;
+  }
+  if (lastIndex < text.length) {
+    nodes.push(<span key={`plain-${key++}`}>{text.slice(lastIndex)}</span>);
+  }
+  return <div className={bodyClasses}>{nodes}</div>;
+}
+
+function shouldGroupMessageWithPrevious(
+  prev: ChatMessage | undefined,
+  current: ChatMessage,
+  currentUserId: string | null | undefined,
+): boolean {
+  if (!prev) return false;
+  if (prev.role !== current.role) return false;
+  if (current.role === 'assistant') return true;
+  const prevUid: string = prev.userId ?? currentUserId ?? 'self';
+  const currUid: string = current.userId ?? currentUserId ?? 'self';
+  return prevUid === currUid;
 }
 
 function SummaryCard({ summary }: { summary: ConversationSummaryData }): JSX.Element {
@@ -212,7 +331,11 @@ export function Chat({
   const [showScrollToBottom, setShowScrollToBottom] = useState<boolean>(false);
   const [isLoadingOlder, setIsLoadingOlder] = useState<boolean>(false);
   const { data: teamMembersData } = useTeamMembers(organizationId ?? null, userId ?? null);
-  
+  const slackUserIdToName: ReadonlyMap<string, string> = useMemo(
+    () => buildSlackUserIdToNameMap(teamMembersData?.members ?? []),
+    [teamMembersData?.members],
+  );
+
   // Attachment state
   const [pendingAttachments, setPendingAttachments] = useState<UploadResponse[]>([]);
   const [isUploading, setIsUploading] = useState<boolean>(false);
@@ -1528,11 +1651,14 @@ export function Chat({
                 {messages.map((msg, idx) => {
                   const prevMsg: ChatMessage | undefined = idx > 0 ? messages[idx - 1] : undefined;
                   const showDivider: boolean = !!prevMsg && prevMsg.role !== msg.role;
+                  const isGroupedWithPrevious: boolean = shouldGroupMessageWithPrevious(prevMsg, msg, userId);
                   return (
                     <div key={msg.id}>
                       {showDivider && <div className="h-2" />}
                       <MessageWithBlocks
                         message={msg}
+                        isGroupedWithPrevious={isGroupedWithPrevious}
+                        slackUserIdToName={slackUserIdToName}
                         toolApprovals={toolApprovals}
                         onArtifactClick={(a) => { setCurrentArtifactId(a.id); setCurrentAttachmentId(null); setCurrentAttachmentMeta(null); }}
                         onAttachmentClick={(id, meta) => { setCurrentAttachmentId(id); setCurrentAttachmentMeta(meta); setCurrentArtifactId(null); }}
@@ -1951,6 +2077,8 @@ function InviteParticipantModal({
  */
 function MessageWithBlocks({
   message,
+  isGroupedWithPrevious = false,
+  slackUserIdToName,
   toolApprovals,
   onArtifactClick,
   onAppClick,
@@ -1963,6 +2091,8 @@ function MessageWithBlocks({
   currentUserId,
 }: {
   message: ChatMessage;
+  isGroupedWithPrevious?: boolean;
+  slackUserIdToName: ReadonlyMap<string, string>;
   toolApprovals: Map<string, { operationId: string; toolName: string; isProcessing: boolean; result: unknown }>;
   onArtifactClick: (artifact: AnyArtifact) => void;
   onAppClick: (app: AppBlock["app"]) => void;
@@ -1982,6 +2112,10 @@ function MessageWithBlocks({
     console.warn('[MessageWithBlocks] Empty contentBlocks for message:', message.id, message.role);
     return <></>;
   }
+
+  const rowPad: string = isGroupedWithPrevious ? 'py-0.5' : 'py-1.5';
+  const rowHover: string =
+    'group/msg flex items-start gap-2.5 px-5 -mx-5 hover:bg-surface-800/40 dark:hover:bg-surface-800/40 transition-colors';
 
   // For user messages, use the simple Message component (with attachment cards if any)
   if (isUser) {
@@ -2007,17 +2141,27 @@ function MessageWithBlocks({
       };
       
       return (
-        <div className="group/msg flex items-start gap-2.5 px-5 py-1.5 -mx-5 hover:bg-surface-800/40 dark:hover:bg-surface-800/40 transition-colors animate-slide-up">
-          <Avatar user={senderUser} size="md" className="flex-shrink-0 rounded-lg mt-0.5" />
+        <div className={`${rowHover} ${rowPad} animate-slide-up`}>
+          {isGroupedWithPrevious ? (
+            <div className="w-8 flex-shrink-0 mt-0.5" aria-hidden />
+          ) : (
+            <Avatar user={senderUser} size="md" className="flex-shrink-0 rounded-lg mt-0.5" />
+          )}
 
           <div className="flex-1 min-w-0 overflow-hidden">
-            <div className="flex items-baseline gap-2">
-              <span className="text-[13px] font-bold text-surface-100">{senderName}</span>
-              <span className="text-[11px] text-surface-500">
-                {message.timestamp.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
-              </span>
-            </div>
-            <div className="text-[13px] leading-relaxed text-surface-200 whitespace-pre-wrap break-words mt-0.5">{textContent}</div>
+            {!isGroupedWithPrevious && (
+              <div className="flex items-baseline gap-2">
+                <span className="text-[13px] font-bold text-surface-100">{senderName}</span>
+                <span className="text-[11px] text-surface-500">
+                  {message.timestamp.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                </span>
+              </div>
+            )}
+            <UserMessageTextWithMentions
+              text={textContent}
+              slackIdToName={slackUserIdToName}
+              bodyClassName={isGroupedWithPrevious ? 'mt-0' : 'mt-0.5'}
+            />
             {attachments.length > 0 && (
               <div className="flex flex-wrap gap-2 mt-1.5">
                 {attachments.map((att, i) => {
@@ -2055,8 +2199,10 @@ function MessageWithBlocks({
       : null;
     const displayName: string = currentUser?.name ?? currentUser?.email ?? 'You';
     return (
-      <div className="group/msg flex items-start gap-2.5 px-5 py-1.5 -mx-5 hover:bg-surface-800/40 dark:hover:bg-surface-800/40 transition-colors animate-slide-up">
-        {meUser ? (
+      <div className={`${rowHover} ${rowPad} animate-slide-up`}>
+        {isGroupedWithPrevious ? (
+          <div className="w-8 flex-shrink-0 mt-0.5" aria-hidden />
+        ) : meUser ? (
           <Avatar user={meUser} size="md" className="flex-shrink-0 rounded-lg mt-0.5" />
         ) : (
           <div className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center bg-primary-500 mt-0.5">
@@ -2067,13 +2213,19 @@ function MessageWithBlocks({
         )}
 
         <div className="flex-1 min-w-0 overflow-hidden">
-          <div className="flex items-baseline gap-2">
-            <span className="text-[13px] font-bold text-surface-100">{displayName}</span>
-            <span className="text-[11px] text-surface-500">
-              {message.timestamp.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
-            </span>
-          </div>
-          <div className="text-[13px] leading-relaxed text-surface-200 whitespace-pre-wrap break-words mt-0.5">{textContent}</div>
+          {!isGroupedWithPrevious && (
+            <div className="flex items-baseline gap-2">
+              <span className="text-[13px] font-bold text-surface-100">{displayName}</span>
+              <span className="text-[11px] text-surface-500">
+                {message.timestamp.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+              </span>
+            </div>
+          )}
+          <UserMessageTextWithMentions
+            text={textContent}
+            slackIdToName={slackUserIdToName}
+            bodyClassName={isGroupedWithPrevious ? 'mt-0' : 'mt-0.5'}
+          />
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-1.5">
               {attachments.map((att, i) => {
@@ -2102,9 +2254,9 @@ function MessageWithBlocks({
   }
 
   // For assistant messages, render blocks in order (interleaved)
-  // Find the last text block index for timestamp placement
-  const lastTextIndex = blocks.reduce((lastIdx, block, idx) => 
+  const lastTextIndex: number = blocks.reduce((lastIdx, block, idx) =>
     block.type === 'text' ? idx : lastIdx, -1);
+  const firstTextBlockIndex: number = blocks.findIndex((b) => b.type === 'text');
 
   const renderToolBlock = (block: ToolUseBlock): JSX.Element => {
     // Check if this is a pending_approval response from any tool
@@ -2157,23 +2309,29 @@ function MessageWithBlocks({
   };
 
   return (
-    <div className="group/msg flex items-start gap-2.5 px-5 py-1.5 -mx-5 hover:bg-surface-800/40 dark:hover:bg-surface-800/40 transition-colors">
-      <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-surface-800 flex items-center justify-center overflow-hidden mt-0.5">
-        <img 
-          src={LOGO_PATH} 
-          alt={APP_NAME} 
-          className="w-4 h-4 object-contain" 
-        />
-      </div>
+    <div className={`${rowHover} ${rowPad}`}>
+      {isGroupedWithPrevious ? (
+        <div className="w-8 flex-shrink-0 mt-0.5" aria-hidden />
+      ) : (
+        <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-surface-800 flex items-center justify-center overflow-hidden mt-0.5">
+          <img
+            src={LOGO_PATH}
+            alt={APP_NAME}
+            className="w-4 h-4 object-contain"
+          />
+        </div>
+      )}
 
       <div className="flex-1 min-w-0 overflow-hidden">
-        <div className="flex items-baseline gap-2">
-          <span className="text-[13px] font-bold text-surface-100">{APP_NAME}</span>
-          <span className="inline-flex items-center px-1 py-px rounded text-[10px] font-medium bg-surface-700 text-surface-400">APP</span>
-          <span className="text-[11px] text-surface-500">
-            {message.timestamp.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
-          </span>
-        </div>
+        {!isGroupedWithPrevious && (
+          <div className="flex items-baseline gap-2">
+            <span className="text-[13px] font-bold text-surface-100">{APP_NAME}</span>
+            <span className="inline-flex items-center px-1 py-px rounded text-[10px] font-medium bg-surface-700 text-surface-400">APP</span>
+            <span className="text-[11px] text-surface-500">
+              {message.timestamp.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+            </span>
+          </div>
+        )}
         {blocks.map((block, index) => {
           if (block.type === 'thinking') {
             if (!block.text && !block.isStreaming) return null;
@@ -2184,12 +2342,19 @@ function MessageWithBlocks({
             );
           }
           if (block.type === 'text') {
-            const isLast = index === lastTextIndex;
+            const isLast: boolean = index === lastTextIndex;
+            const textTop: string =
+              index > 0
+                ? 'mt-1'
+                : isGroupedWithPrevious && index === firstTextBlockIndex
+                  ? 'mt-0'
+                  : 'mt-0.5';
             return (
-              <div key={`text-${index}`} className={index > 0 ? 'mt-1' : 'mt-0.5'}>
-                <AssistantTextBlock 
-                  text={block.text} 
+              <div key={`text-${index}`} className={textTop}>
+                <AssistantTextBlock
+                  text={block.text}
                   isStreaming={isLast && message.isStreaming}
+                  slackUserIdToName={slackUserIdToName}
                 />
               </div>
             );
@@ -2293,23 +2458,49 @@ function ThinkingBlockIndicator({
   );
 }
 
+/** Renders Slack-style @mentions embedded as markdown links with href `mention:…`. */
+const ASSISTANT_MARKDOWN_COMPONENTS: Components = {
+  a({ href, children, node, ...rest }) {
+    void node;
+    if (href?.startsWith('mention:')) {
+      return (
+        <span className="inline-flex items-center rounded bg-primary-500/15 text-primary-700 dark:text-primary-300 px-1 py-px text-[13px] font-semibold align-baseline mx-px">
+          {children}
+        </span>
+      );
+    }
+    return (
+      <a href={href} rel="noopener noreferrer" target="_blank" {...rest}>
+        {children}
+      </a>
+    );
+  },
+};
+
 /**
  * Assistant text block - renders markdown without avatar (avatar is at parent level)
  */
 function AssistantTextBlock({
   text,
   isStreaming,
+  slackUserIdToName,
 }: {
   text: string;
   isStreaming?: boolean;
+  slackUserIdToName: ReadonlyMap<string, string>;
 }): JSX.Element {
-  // Trim trailing whitespace when streaming to prevent cursor appearing on empty line
-  const displayText: string = isStreaming ? text.trimEnd() : text;
-  
+  const raw: string = isStreaming ? text.trimEnd() : text;
+  const displayText: string = useMemo(
+    () => preprocessSlackMentionsForMarkdown(raw, slackUserIdToName),
+    [raw, slackUserIdToName],
+  );
+
   return (
     <div className="max-w-full text-[13px] leading-relaxed text-surface-200">
       <div className={`prose prose-sm max-w-none overflow-x-auto text-surface-200 dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-headings:text-surface-200 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-pre:my-2 prose-code:text-primary-300 prose-code:bg-surface-800/70 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-pre:bg-surface-800/70 prose-pre:text-xs prose-pre:border prose-pre:border-surface-700 prose-a:text-primary-400 prose-a:no-underline hover:prose-a:text-primary-300 prose-strong:text-surface-100 prose-table:text-xs prose-table:text-surface-200 prose-th:text-surface-200 prose-th:bg-surface-700/50 prose-th:px-2 prose-th:py-1 prose-td:text-surface-200 prose-td:px-2 prose-td:py-1 prose-td:border-surface-700 prose-th:border-surface-700 [&_a]:text-primary-400 [&_a:hover]:text-primary-300 ${isStreaming ? '[&>p:last-of-type]:inline [&>p:last-of-type]:mb-0' : ''}`}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayText}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={ASSISTANT_MARKDOWN_COMPONENTS}>
+          {displayText}
+        </ReactMarkdown>
         {isStreaming && (
           <span className="inline-block w-1.5 h-3 bg-current animate-pulse ml-0.5 align-middle" />
         )}
@@ -2852,6 +3043,71 @@ function formatFileSize(bytes: number): string {
 }
 
 /**
+ * Loads a chat attachment image via authenticated fetch and shows a thumbnail (Slack-style).
+ */
+function ChatAttachmentImageThumbnail({
+  attachmentId,
+  mimeType,
+}: {
+  attachmentId: string;
+  mimeType: string;
+}): JSX.Element {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState<boolean>(false);
+  const urlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!mimeType.startsWith('image/')) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const token: string | undefined = session?.access_token ?? undefined;
+        const response: Response = await fetch(
+          `${API_BASE}/chat/attachments/${encodeURIComponent(attachmentId)}`,
+          { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+        );
+        if (!response.ok || cancelled) throw new Error('attachment fetch failed');
+        const blob: Blob = await response.blob();
+        if (cancelled) return;
+        const nextUrl: string = URL.createObjectURL(blob);
+        if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+        urlRef.current = nextUrl;
+        setObjectUrl(nextUrl);
+      } catch {
+        if (!cancelled) setFailed(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (urlRef.current) {
+        URL.revokeObjectURL(urlRef.current);
+        urlRef.current = null;
+      }
+    };
+  }, [attachmentId, mimeType]);
+
+  if (!mimeType.startsWith('image/') || failed) {
+    return <></>;
+  }
+  if (!objectUrl) {
+    return (
+      <div
+        className="flex-shrink-0 w-[72px] h-[72px] rounded-md bg-surface-700/80 animate-pulse border border-surface-600"
+        aria-hidden
+      />
+    );
+  }
+  return (
+    <img
+      src={objectUrl}
+      alt=""
+      className="flex-shrink-0 w-[72px] h-[72px] rounded-md object-cover border border-surface-600"
+    />
+  );
+}
+
+/**
  * File-type icon color based on extension.
  */
 function getFileIconColor(filename: string, mimeType: string): string {
@@ -2887,9 +3143,11 @@ function AttachmentCard({
   const sizeStr: string = formatFileSize(size);
   const iconColor: string = getFileIconColor(filename, mimeType);
   const isClickable: boolean = Boolean(attachmentId && onClick);
+  const showImageThumb: boolean = mimeType.startsWith('image/') && Boolean(attachmentId);
 
-  const baseClasses: string =
-    "relative group inline-flex items-center gap-2.5 rounded-xl bg-surface-800 border border-surface-700 px-3 py-2 max-w-[220px]";
+  const baseClasses: string = showImageThumb
+    ? "relative group inline-flex items-center gap-3 rounded-xl bg-surface-800 border border-surface-700 px-3 py-2 max-w-[min(100%,300px)]"
+    : "relative group inline-flex items-center gap-2.5 rounded-xl bg-surface-800 border border-surface-700 px-3 py-2 max-w-[220px]";
   const clickableClasses: string = isClickable
     ? " cursor-pointer hover:bg-surface-750 hover:border-surface-600 transition-colors"
     : "";
@@ -2911,10 +3169,13 @@ function AttachmentCard({
           : undefined
       }
     >
-      {/* File type icon */}
-      <div className={`flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-[10px] font-bold ${iconColor}`}>
-        {label}
-      </div>
+      {showImageThumb && attachmentId ? (
+        <ChatAttachmentImageThumbnail attachmentId={attachmentId} mimeType={mimeType} />
+      ) : (
+        <div className={`flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-[10px] font-bold ${iconColor}`}>
+          {label}
+        </div>
+      )}
       {/* Name + size */}
       <div className="min-w-0 flex flex-col">
         <span className="text-xs text-surface-200 font-medium truncate">{filename}</span>
