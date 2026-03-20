@@ -1,0 +1,472 @@
+/**
+ * Grid of workstream cards replacing the old bubble map.
+ * Sorted by activity (messages + participants in window). Each card shows
+ * a human-readable label, scrollable recent chats, and overlapping avatars.
+ * Labels are editable inline; renames propagate to all clients via workstreams_stale.
+ */
+
+import { useEffect, useMemo, useState } from "react";
+import { renameWorkstream } from "../api/workstreams";
+import { useUser } from "../store";
+import type { WorkstreamConversation, WorkstreamItem } from "../store/types";
+import { WorkstreamDetailView } from "./WorkstreamDetailView";
+
+function relativeTime(iso: string): string {
+  const sec: number = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (sec < 10) return "now";
+  if (sec < 60) return `${sec}s`;
+  const min: number = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr: number = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h`;
+  const d: number = Math.floor(hr / 24);
+  return `${d}d`;
+}
+
+const RECENT_ACTIVITY_MS = 60_000; // gold outline for activity in last minute
+
+interface WorkstreamGridProps {
+  workstreams: WorkstreamItem[];
+  unclustered: WorkstreamConversation[];
+  onSelectConversation: (conversationId: string) => void;
+}
+
+function activityScore(ws: WorkstreamItem): number {
+  const msgCount: number = ws.conversations.reduce(
+    (sum, c) => sum + (c.messages_in_window ?? 0),
+    0
+  );
+  const participantIds = new Set<string>();
+  for (const c of ws.conversations) {
+    for (const p of c.participants) {
+      participantIds.add(p.id);
+    }
+  }
+  return msgCount * 2 + ws.conversations.length * 3 + participantIds.size * 5;
+}
+
+function collectParticipants(
+  ws: WorkstreamItem
+): { id: string; name: string | null; avatar_url: string | null }[] {
+  const seen = new Map<
+    string,
+    { id: string; name: string | null; avatar_url: string | null }
+  >();
+  for (const c of ws.conversations) {
+    for (const p of c.participants) {
+      if (!seen.has(p.id)) {
+        seen.set(p.id, {
+          id: p.id,
+          name: p.name,
+          avatar_url: p.avatar_url,
+        });
+      }
+    }
+  }
+  return Array.from(seen.values());
+}
+
+function sortedConversations(ws: WorkstreamItem): WorkstreamConversation[] {
+  return [...ws.conversations].sort((a, b) => {
+    const aTime: number = a.last_message_at
+      ? new Date(a.last_message_at).getTime()
+      : 0;
+    const bTime: number = b.last_message_at
+      ? new Date(b.last_message_at).getTime()
+      : 0;
+    return bTime - aTime;
+  });
+}
+
+function WorkstreamCard({
+  workstream,
+  onSelectConversation,
+  onOpenDetail,
+}: {
+  workstream: WorkstreamItem;
+  onSelectConversation: (id: string) => void;
+  onOpenDetail: (ws: WorkstreamItem) => void;
+}): JSX.Element {
+  const currentUser = useUser();
+  const [isEditing, setIsEditing] = useState<boolean>(false);
+  const [draftLabel, setDraftLabel] = useState<string>(workstream.label);
+  const [saving, setSaving] = useState<boolean>(false);
+
+  const participants = useMemo(
+    () => collectParticipants(workstream),
+    [workstream]
+  );
+  const displayParticipants = useMemo((): {
+    id: string;
+    name: string | null;
+    avatar_url: string | null;
+  }[] => {
+    if (!currentUser) return participants;
+    const merged = participants.map((p) =>
+      p.id === currentUser.id
+        ? {
+            id: p.id,
+            name: currentUser.name,
+            avatar_url: currentUser.avatarUrl,
+          }
+        : p
+    );
+    const idx: number = merged.findIndex((p) => p.id === currentUser.id);
+    if (idx <= 0) return merged;
+    const current = merged[idx]!;
+    return [current, ...merged.slice(0, idx), ...merged.slice(idx + 1)];
+  }, [participants, currentUser]);
+  const recentChats: WorkstreamConversation[] = useMemo(
+    () => sortedConversations(workstream),
+    [workstream]
+  );
+  const totalMessages: number = workstream.conversations.reduce(
+    (sum, c) => sum + (c.messages_in_window ?? 0),
+    0
+  );
+
+  const latestMessageAt: string | null = useMemo(() => {
+    let latest: number = 0;
+    for (const c of workstream.conversations) {
+      if (c.last_message_at) {
+        const t = new Date(c.last_message_at).getTime();
+        if (t > latest) latest = t;
+      }
+    }
+    return latest ? new Date(latest).toISOString() : null;
+  }, [workstream.conversations]);
+
+  const [tick, setTick] = useState<number>(0);
+  const now = useMemo(() => (tick ? Date.now() : Date.now()), [tick]);
+  const isRecentlyActive: boolean = useMemo(() => {
+    if (!latestMessageAt) return false;
+    return now - new Date(latestMessageAt).getTime() < RECENT_ACTIVITY_MS;
+  }, [latestMessageAt, now]);
+
+  useEffect(() => {
+    if (!isRecentlyActive || !latestMessageAt) return;
+    const elapsed = now - new Date(latestMessageAt).getTime();
+    const msUntilMinute = RECENT_ACTIVITY_MS - elapsed;
+    if (msUntilMinute <= 0) return;
+    const t = setTimeout(() => setTick((n) => n + 1), msUntilMinute);
+    return () => clearTimeout(t);
+  }, [isRecentlyActive, latestMessageAt, now]);
+
+  const handleStartEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDraftLabel(workstream.label);
+    setIsEditing(true);
+  };
+
+  const saveRename = async (): Promise<void> => {
+    const trimmed = draftLabel.trim();
+    if (!trimmed || trimmed === workstream.label) {
+      setIsEditing(false);
+      return;
+    }
+    setSaving(true);
+    const { error } = await renameWorkstream(workstream.id, trimmed);
+    setSaving(false);
+    if (!error) {
+      setIsEditing(false);
+    }
+  };
+
+  const handleSaveRename = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    void saveRename();
+  };
+
+  const handleCancelEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDraftLabel(workstream.label);
+    setIsEditing(false);
+  };
+
+  return (
+    <div
+      className={`group flex flex-col rounded-xl border bg-surface-850 hover:bg-surface-800 transition-all cursor-pointer overflow-hidden ${
+        isRecentlyActive
+          ? "border-amber-400/90 shadow-[0_0_0_1px_rgba(251,191,36,0.3)]"
+          : "border-surface-700 hover:border-surface-500"
+      }`}
+      onClick={() => onOpenDetail(workstream)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpenDetail(workstream);
+        }
+      }}
+    >
+      {/* Header */}
+      <div className="px-4 pt-4 pb-2" onClick={(e) => isEditing && e.stopPropagation()}>
+        {isEditing ? (
+          <div className="space-y-2">
+            <input
+              type="text"
+              value={draftLabel}
+              onChange={(e) => setDraftLabel(e.target.value)}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void saveRename();
+                }
+                if (e.key === "Escape") {
+                  setDraftLabel(workstream.label);
+                  setIsEditing(false);
+                }
+              }}
+              className="w-full px-2 py-1 text-sm bg-surface-800 border border-surface-600 rounded text-surface-100"
+              autoFocus
+            />
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleSaveRename}
+                disabled={saving || !draftLabel.trim()}
+                className="px-2 py-1 text-xs font-medium bg-primary-600 text-white rounded hover:bg-primary-500 disabled:opacity-50"
+              >
+                {saving ? "Saving…" : "Save"}
+              </button>
+              <button
+                type="button"
+                onClick={handleCancelEdit}
+                disabled={saving}
+                className="px-2 py-1 text-xs font-medium text-surface-400 hover:text-surface-200 rounded"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-start gap-2">
+              <h3 className="text-sm font-semibold text-surface-100 leading-tight truncate flex-1 min-w-0">
+                {workstream.label}
+              </h3>
+              <button
+                type="button"
+                onClick={handleStartEdit}
+                className="opacity-0 group-hover:opacity-100 flex-shrink-0 p-0.5 rounded text-surface-500 hover:text-surface-300 hover:bg-surface-700 transition-opacity"
+                aria-label="Rename workstream"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+              </button>
+            </div>
+            {workstream.description && (
+              <p className="text-xs text-surface-400 mt-1 line-clamp-2">
+                {workstream.description}
+              </p>
+            )}
+            <div className="flex items-center gap-3 mt-2 text-xs text-surface-500 flex-wrap">
+              <span>{workstream.conversations.length} chats</span>
+              <span className="w-px h-3 bg-surface-700" />
+              <span>{totalMessages} messages</span>
+              <span className="w-px h-3 bg-surface-700" />
+              <span>{participants.length} people</span>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Recent chats (scrollable) */}
+      <div className="flex-1 px-2 py-1 max-h-[140px] overflow-y-auto scrollbar-thin">
+        {recentChats.map((conv) => (
+          <button
+            key={conv.id}
+            type="button"
+            className="w-full text-left px-2 py-1.5 rounded-md hover:bg-surface-700/60 transition-colors group/chat flex items-center gap-1.5"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelectConversation(conv.id);
+            }}
+          >
+            <span className="text-xs text-surface-300 group-hover/chat:text-surface-100 truncate flex-1 min-w-0">
+              {conv.title || "Untitled"}
+            </span>
+            {conv.participants.length > 0 && (
+              <span className="flex -space-x-1.5 flex-shrink-0">
+                {conv.participants.slice(0, 3).map((p) => (
+                  <span
+                    key={p.id}
+                    className="w-4 h-4 rounded-full border border-surface-200 dark:border-surface-800 bg-surface-600 flex items-center justify-center overflow-hidden"
+                    title={p.name ?? "Unknown"}
+                  >
+                    {p.avatar_url ? (
+                      <img src={p.avatar_url} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="text-[7px] font-medium text-surface-300">
+                        {(p.name ?? "?")[0]?.toUpperCase()}
+                      </span>
+                    )}
+                  </span>
+                ))}
+              </span>
+            )}
+            {conv.last_message_at && (
+              <span className="text-[10px] text-surface-600 flex-shrink-0">
+                {relativeTime(conv.last_message_at)}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Participant avatars + timestamp */}
+      {(participants.length > 0 || latestMessageAt) && (
+        <div className="px-4 py-3 border-t border-surface-700/50">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center min-w-0">
+              {participants.length > 0 && (
+                <>
+                  <div className="flex -space-x-2">
+                    {displayParticipants.slice(0, 5).map((p) => {
+                      const isYou =
+                        currentUser !== null && p.id === currentUser.id;
+                      return (
+                        <div
+                          key={p.id}
+                          className="w-6 h-6 rounded-full border-2 border-surface-200 dark:border-surface-800 bg-surface-600 flex items-center justify-center overflow-hidden flex-shrink-0"
+                          title={isYou ? "You" : p.name ?? "Unknown"}
+                        >
+                          {p.avatar_url ? (
+                            <img
+                              src={p.avatar_url}
+                              alt={isYou ? "You" : p.name ?? ""}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <span className="text-[10px] font-medium text-surface-300">
+                              {(isYou ? "You" : p.name ?? "?")[0]?.toUpperCase()}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {participants.length > 5 && (
+                      <div className="w-6 h-6 rounded-full border-2 border-surface-200 dark:border-surface-800 bg-surface-700 flex items-center justify-center flex-shrink-0">
+                        <span className="text-[9px] font-medium text-surface-300">
+                          +{participants.length - 5}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <span className="ml-2 text-xs text-surface-500 truncate">
+                    {displayParticipants
+                      .slice(0, 3)
+                      .map((p) =>
+                        currentUser && p.id === currentUser.id
+                          ? "You"
+                          : p.name?.split(" ")[0] ?? "Unknown"
+                      )
+                      .join(", ")}
+                    {participants.length > 3 ? ` +${participants.length - 3}` : ""}
+                  </span>
+                </>
+              )}
+            </div>
+            {latestMessageAt && (
+              <span className="text-[11px] text-surface-500 flex-shrink-0">
+                {relativeTime(latestMessageAt)}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function WorkstreamGrid({
+  workstreams,
+  unclustered,
+  onSelectConversation,
+}: WorkstreamGridProps): JSX.Element {
+  const [selectedWorkstream, setSelectedWorkstream] =
+    useState<WorkstreamItem | null>(null);
+
+  const sorted: WorkstreamItem[] = useMemo(
+    () => [...workstreams].sort((a, b) => activityScore(b) - activityScore(a)),
+    [workstreams]
+  );
+
+  if (selectedWorkstream) {
+    return (
+      <WorkstreamDetailView
+        workstream={selectedWorkstream}
+        onBack={() => setSelectedWorkstream(null)}
+        onSelectConversation={onSelectConversation}
+      />
+    );
+  }
+
+  return (
+    <div className="h-full overflow-y-auto">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pr-2 md:pr-4">
+        {sorted.map((ws) => (
+          <WorkstreamCard
+            key={ws.id}
+            workstream={ws}
+            onSelectConversation={onSelectConversation}
+            onOpenDetail={setSelectedWorkstream}
+          />
+        ))}
+      </div>
+
+      {unclustered.length > 0 && (
+        <div className="mt-6 pr-2 md:pr-4">
+          <h4 className="text-xs font-medium text-surface-500 uppercase tracking-wider mb-3 px-1">
+            Other conversations ({unclustered.length})
+          </h4>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {[...unclustered].sort((a, b) => {
+              const aT: number = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+              const bT: number = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+              return bT - aT;
+            }).map((conv) => (
+              <button
+                key={conv.id}
+                type="button"
+                className="text-left px-3 py-2 rounded-lg border border-surface-700 bg-surface-850 hover:bg-surface-800 hover:border-surface-500 transition-colors flex items-center gap-1.5"
+                onClick={() => onSelectConversation(conv.id)}
+              >
+                <span className="text-xs text-surface-300 truncate flex-1 min-w-0">
+                  {conv.title || "Untitled"}
+                </span>
+                {conv.participants.length > 0 && (
+                  <span className="flex -space-x-1.5 flex-shrink-0">
+                    {conv.participants.slice(0, 3).map((p) => (
+                      <span
+                        key={p.id}
+                        className="w-4 h-4 rounded-full border border-surface-200 dark:border-surface-800 bg-surface-600 flex items-center justify-center overflow-hidden"
+                        title={p.name ?? "Unknown"}
+                      >
+                        {p.avatar_url ? (
+                          <img src={p.avatar_url} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="text-[7px] font-medium text-surface-300">
+                            {(p.name ?? "?")[0]?.toUpperCase()}
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                  </span>
+                )}
+                {conv.last_message_at && (
+                  <span className="text-[10px] text-surface-600 flex-shrink-0">
+                    {relativeTime(conv.last_message_at)}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

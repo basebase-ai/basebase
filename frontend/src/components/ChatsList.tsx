@@ -320,7 +320,7 @@ function ChatRow({
                   <Avatar key={p.id} user={p} size="xs" bordered style={{ zIndex: 3 - idx }} />
                 ))}
                 {chat.participants.length > 3 && (
-                  <div className="w-5 h-5 rounded-full border border-surface-800 bg-surface-700 flex items-center justify-center text-[10px] font-medium text-surface-300">
+                  <div className="w-5 h-5 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[10px] font-medium text-surface-300">
                     +{chat.participants.length - 3}
                   </div>
                 )}

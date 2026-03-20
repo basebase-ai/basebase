@@ -352,7 +352,7 @@ function OrgSwitcherSection({
                   src={m.avatarUrl!}
                   alt={m.name ?? m.email ?? ''}
                   referrerPolicy="no-referrer"
-                  className="w-6 h-6 rounded-full object-cover border border-surface-800"
+                  className="w-6 h-6 rounded-full object-cover border border-surface-700 dark:border-surface-600"
                   style={{ zIndex: 3 - idx }}
                 />
               ))}
@@ -877,7 +877,7 @@ function ChatAccordion({
               ))}
               {chat.participants.length > 3 && (
                 <div
-                  className="w-5 h-5 rounded-full border border-surface-800 bg-surface-700 flex items-center justify-center text-[10px] font-medium text-surface-300"
+                  className="w-5 h-5 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[10px] font-medium text-surface-300"
                   title={`${chat.participants.length - 3} more`}
                 >
                   +{chat.participants.length - 3}

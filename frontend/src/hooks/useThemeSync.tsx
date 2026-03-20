@@ -5,7 +5,7 @@
 import { useEffect } from "react";
 import { useUIStore, type UITheme } from "../store/uiStore";
 
-const DARK_MEDIA_QUERY: string = "(prefers-color-scheme: dark)";
+const DARK_MEDIA_QUERY = "(prefers-color-scheme: dark)" as const;
 
 function shouldUseDarkClass(theme: UITheme, prefersDark: boolean): boolean {
   if (theme === "dark") return true;
@@ -13,11 +13,8 @@ function shouldUseDarkClass(theme: UITheme, prefersDark: boolean): boolean {
   return prefersDark;
 }
 
-/**
- * Subscribes to `theme` in uiStore and toggles `class="dark"` on `<html>`.
- */
-// eslint-disable-next-line react-refresh/only-export-components
-export function useThemeSync(): void {
+/** Mount once under the app root to keep `<html>` in sync with the store. */
+export function ThemeSync(): null {
   const theme: UITheme = useUIStore((s) => s.theme);
 
   useEffect(() => {
@@ -42,10 +39,6 @@ export function useThemeSync(): void {
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, [theme]);
-}
 
-/** Mount once under the app root to keep `<html>` in sync with the store. */
-export function ThemeSync(): null {
-  useThemeSync();
   return null;
 }

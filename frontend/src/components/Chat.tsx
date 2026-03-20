@@ -1236,38 +1236,50 @@ export function Chat({
   }, [chatId]);
 
   if (isLoading) {
-    const skeletonTitle: string =
-      useAppStore.getState().recentChats.find((c) => c.id === chatId)?.title ?? 'Loading…';
-
     return (
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-        {/* Header skeleton */}
         <header className="hidden md:flex h-14 border-b border-surface-800 items-center px-4 md:px-6 flex-shrink-0">
-          <h1 className="text-lg font-semibold text-surface-100 truncate max-w-md">{skeletonTitle}</h1>
+          <div className="h-5 w-48 rounded bg-surface-800 animate-pulse" />
         </header>
 
-        {/* Message skeletons */}
         <div className="flex-1 overflow-hidden p-3 md:p-6">
-          <div className="max-w-3xl mx-auto space-y-4">
-            {Array.from({ length: 6 }, (_, i) => (
-              <div key={i} className={`flex gap-3 ${i % 2 === 0 ? '' : 'justify-end'}`}>
-                <div className={`flex gap-2 ${i % 2 === 0 ? 'max-w-[70%]' : 'max-w-[60%] flex-row-reverse'}`}>
-                  <div className="w-6 h-6 rounded-md bg-surface-800 animate-pulse flex-shrink-0" />
-                  <div className="space-y-1.5 flex-1">
-                    <div className={`h-3.5 rounded bg-surface-800 animate-pulse ${i % 3 === 0 ? 'w-3/4' : 'w-full'}`} />
-                    <div className={`h-3.5 rounded bg-surface-800 animate-pulse ${i % 2 === 0 ? 'w-5/6' : 'w-2/3'}`} />
-                    {i % 3 === 0 && <div className="h-3.5 rounded bg-surface-800 animate-pulse w-1/2" />}
-                  </div>
-                </div>
+          <div className="max-w-3xl mx-auto space-y-6">
+            <div className="flex gap-3">
+              <div className="w-7 h-7 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-0.5" />
+              <div className="space-y-2 flex-1 max-w-[65%]">
+                <div className="h-3 rounded-full bg-surface-800 animate-pulse w-4/5" />
+                <div className="h-3 rounded-full bg-surface-800 animate-pulse w-3/5" />
               </div>
-            ))}
+            </div>
+            <div className="flex gap-3">
+              <div className="w-7 h-7 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-0.5" />
+              <div className="space-y-2 flex-1 max-w-[80%]">
+                <div className="h-3 rounded-full bg-surface-800 animate-pulse w-full" style={{ animationDelay: '75ms' }} />
+                <div className="h-3 rounded-full bg-surface-800 animate-pulse w-11/12" style={{ animationDelay: '150ms' }} />
+                <div className="h-3 rounded-full bg-surface-800 animate-pulse w-3/4" style={{ animationDelay: '225ms' }} />
+                <div className="h-3 rounded-full bg-surface-800 animate-pulse w-5/6" style={{ animationDelay: '300ms' }} />
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <div className="w-7 h-7 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-0.5" />
+              <div className="space-y-2 flex-1 max-w-[55%]">
+                <div className="h-3 rounded-full bg-surface-800 animate-pulse w-full" style={{ animationDelay: '375ms' }} />
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <div className="w-7 h-7 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-0.5" />
+              <div className="space-y-2 flex-1 max-w-[75%]">
+                <div className="h-3 rounded-full bg-surface-800 animate-pulse w-full" style={{ animationDelay: '450ms' }} />
+                <div className="h-3 rounded-full bg-surface-800 animate-pulse w-5/6" style={{ animationDelay: '525ms' }} />
+                <div className="h-3 rounded-full bg-surface-800 animate-pulse w-2/3" style={{ animationDelay: '600ms' }} />
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Input skeleton */}
         <div className="flex-shrink-0 border-t border-surface-800 p-3 md:p-4">
           <div className="max-w-3xl mx-auto">
-            <div className="h-11 rounded-xl bg-surface-800/50 animate-pulse" />
+            <div className="h-11 rounded-xl bg-surface-800 animate-pulse" />
           </div>
         </div>
       </div>
@@ -1410,7 +1422,7 @@ export function Chat({
                 ))}
                 {conversationParticipants.length > 4 && (
                   <div
-                    className="w-6 h-6 rounded-full border-2 border-surface-900 bg-surface-700 flex items-center justify-center text-xs font-medium text-surface-300"
+                    className="w-6 h-6 rounded-full border-2 border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-xs font-medium text-surface-300"
                     title={`${conversationParticipants.length - 4} more participants`}
                   >
                     +{conversationParticipants.length - 4}
@@ -1436,7 +1448,7 @@ export function Chat({
       {/* Content area with messages and optional artifact sidebar */}
       <div className="flex-1 flex overflow-hidden">
         {/* Messages column (vertical flex with optional app preview above) */}
-        <div ref={dragContainerRef} className={`flex flex-col md:transition-all md:duration-300 md:ease-in-out ${currentArtifact ? 'md:w-1/2' : ''} flex-1 min-w-0 min-h-0`}>
+        <div ref={dragContainerRef} className={`flex flex-col md:transition-[width] md:duration-300 md:ease-in-out ${currentArtifact ? 'md:w-1/2' : ''} flex-1 min-w-0 min-h-0`}>
           {/* App preview panel (above messages) */}
           {conversationApps.length > 0 && !previewDismissed && (
             <>

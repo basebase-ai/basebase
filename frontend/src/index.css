@@ -53,7 +53,7 @@
   }
 
   ::-webkit-scrollbar-track {
-    @apply bg-surface-900;
+    @apply bg-transparent;
   }
 
   ::-webkit-scrollbar-thumb {
