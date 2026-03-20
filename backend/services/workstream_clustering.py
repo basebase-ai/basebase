@@ -146,6 +146,30 @@ async def _generate_cluster_labels(
     return results
 
 
+async def _fetch_no_embedding_ids(
+    organization_id: str,
+    window_hours: int,
+    exclude: set[str] | None = None,
+) -> list[str]:
+    """Fetch shared conversation IDs in the window that have no embedding but do have messages."""
+    since = datetime.utcnow() - timedelta(hours=window_hours)
+    async with get_session(organization_id=organization_id) as session:
+        result = await session.execute(
+            select(Conversation.id)
+            .where(
+                Conversation.organization_id == organization_id,
+                Conversation.scope == "shared",
+                Conversation.embedding.is_(None),
+                Conversation.updated_at >= since,
+                Conversation.message_count > 0,
+            )
+        )
+        ids: list[str] = [str(row[0]) for row in result.all()]
+    if exclude:
+        ids = [cid for cid in ids if cid not in exclude]
+    return ids
+
+
 async def compute_workstream_clusters(
     organization_id: str,
     window_hours: int = 24,
@@ -162,17 +186,19 @@ async def compute_workstream_clusters(
     conv_ids, matrix = await _fetch_embeddings_for_window(organization_id, window_hours)
 
     if len(conv_ids) == 0:
+        no_emb: list[str] = await _fetch_no_embedding_ids(organization_id, window_hours)
         return {
             "workstreams": [],
-            "unclustered_ids": [],
+            "unclustered_ids": no_emb,
             "conversation_positions": {},
             "computed_at": datetime.now(timezone.utc).isoformat(),
         }
 
     if matrix.shape[0] < 2:
+        no_emb = await _fetch_no_embedding_ids(organization_id, window_hours, exclude=set(conv_ids))
         return {
             "workstreams": [],
-            "unclustered_ids": conv_ids,
+            "unclustered_ids": conv_ids + no_emb,
             "conversation_positions": {cid: [0.5, 0.5] for cid in conv_ids},
             "computed_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -371,6 +397,14 @@ async def compute_workstream_clusters(
         {"id": wid, "label": lbl, "description": desc, "position": pos, "conversation_ids": cids}
         for wid, lbl, desc, pos, cids in workstream_out_tuples
     ]
+
+    clustered_set: set[str] = set()
+    for ws in workstreams_out:
+        for cid in ws["conversation_ids"]:
+            clustered_set.add(cid)
+    exclude_set: set[str] = clustered_set | set(unclustered_ids)
+    no_emb_ids: list[str] = await _fetch_no_embedding_ids(organization_id, window_hours, exclude=exclude_set)
+    unclustered_ids.extend(no_emb_ids)
 
     return {
         "workstreams": workstreams_out,

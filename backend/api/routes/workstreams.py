@@ -143,6 +143,15 @@ async def get_workstreams(
             )
             messages_in_window_by_conv: dict[UUID, int] = dict(msg_count_result.all())
 
+            last_msg_result = await session.execute(
+                select(ChatMessage.conversation_id, func.max(ChatMessage.created_at))
+                .where(
+                    ChatMessage.conversation_id.in_([UUID(cid) for cid in all_conv_ids]),
+                )
+                .group_by(ChatMessage.conversation_id)
+            )
+            last_message_at_by_conv: dict[UUID, datetime] = dict(last_msg_result.all())
+
             participant_ids: set[UUID] = set()
             for c in convs.values():
                 if c.user_id:
@@ -185,12 +194,13 @@ async def get_workstreams(
                             message_count_in_window=0,
                         )
                     )
+                last_at: datetime | None = last_message_at_by_conv.get(UUID(cid)) or conv.updated_at
                 conv_details[cid] = WorkstreamConversation(
                     id=cid,
                     title=conv.title,
                     message_count=conv.message_count,
                     messages_in_window=messages_in_window_by_conv.get(UUID(cid), 0),
-                    last_message_at=conv.updated_at.isoformat() + "Z" if conv.updated_at else "",
+                    last_message_at=last_at.isoformat() + "Z" if last_at else "",
                     participants=participants,
                     position=positions.get(cid),
                 )

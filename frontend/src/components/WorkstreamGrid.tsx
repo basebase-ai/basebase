@@ -12,15 +12,15 @@ import type { WorkstreamConversation, WorkstreamItem } from "../store/types";
 import { WorkstreamDetailView } from "./WorkstreamDetailView";
 
 function relativeTime(iso: string): string {
-  const sec = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  const sec: number = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
   if (sec < 10) return "now";
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const d = Math.floor(hr / 24);
-  return `${d}d ago`;
+  if (sec < 60) return `${sec}s`;
+  const min: number = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr: number = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h`;
+  const d: number = Math.floor(hr / 24);
+  return `${d}d`;
 }
 
 const RECENT_ACTIVITY_MS = 60_000; // gold outline for activity in last minute
@@ -111,13 +111,10 @@ function WorkstreamCard({
           }
         : p
     );
-    const idx = merged.findIndex((p) => p.id === currentUser.id);
+    const idx: number = merged.findIndex((p) => p.id === currentUser.id);
     if (idx <= 0) return merged;
-    return [
-      merged[idx],
-      ...merged.slice(0, idx),
-      ...merged.slice(idx + 1),
-    ];
+    const current = merged[idx]!;
+    return [current, ...merged.slice(0, idx), ...merged.slice(idx + 1)];
   }, [participants, currentUser]);
   const recentChats: WorkstreamConversation[] = useMemo(
     () => sortedConversations(workstream),
@@ -283,15 +280,39 @@ function WorkstreamCard({
           <button
             key={conv.id}
             type="button"
-            className="w-full text-left px-2 py-1.5 rounded-md hover:bg-surface-700/60 transition-colors group/chat"
+            className="w-full text-left px-2 py-1.5 rounded-md hover:bg-surface-700/60 transition-colors group/chat flex items-center gap-1.5"
             onClick={(e) => {
               e.stopPropagation();
               onSelectConversation(conv.id);
             }}
           >
-            <span className="text-xs text-surface-300 group-hover/chat:text-surface-100 truncate block">
+            <span className="text-xs text-surface-300 group-hover/chat:text-surface-100 truncate flex-1 min-w-0">
               {conv.title || "Untitled"}
             </span>
+            {conv.participants.length > 0 && (
+              <span className="flex -space-x-1.5 flex-shrink-0">
+                {conv.participants.slice(0, 3).map((p) => (
+                  <span
+                    key={p.id}
+                    className="w-4 h-4 rounded-full border border-surface-200 dark:border-surface-800 bg-surface-600 flex items-center justify-center overflow-hidden"
+                    title={p.name ?? "Unknown"}
+                  >
+                    {p.avatar_url ? (
+                      <img src={p.avatar_url} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="text-[7px] font-medium text-surface-300">
+                        {(p.name ?? "?")[0]?.toUpperCase()}
+                      </span>
+                    )}
+                  </span>
+                ))}
+              </span>
+            )}
+            {conv.last_message_at && (
+              <span className="text-[10px] text-surface-600 flex-shrink-0">
+                {relativeTime(conv.last_message_at)}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -310,7 +331,7 @@ function WorkstreamCard({
                       return (
                         <div
                           key={p.id}
-                          className="w-6 h-6 rounded-full border-2 border-surface-700 dark:border-surface-600 bg-surface-600 flex items-center justify-center overflow-hidden flex-shrink-0"
+                          className="w-6 h-6 rounded-full border-2 border-surface-200 dark:border-surface-800 bg-surface-600 flex items-center justify-center overflow-hidden flex-shrink-0"
                           title={isYou ? "You" : p.name ?? "Unknown"}
                         >
                           {p.avatar_url ? (
@@ -328,7 +349,7 @@ function WorkstreamCard({
                       );
                     })}
                     {participants.length > 5 && (
-                      <div className="w-6 h-6 rounded-full border-2 border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center flex-shrink-0">
+                      <div className="w-6 h-6 rounded-full border-2 border-surface-200 dark:border-surface-800 bg-surface-700 flex items-center justify-center flex-shrink-0">
                         <span className="text-[9px] font-medium text-surface-300">
                           +{participants.length - 5}
                         </span>
@@ -403,16 +424,44 @@ export function WorkstreamGrid({
             Other conversations ({unclustered.length})
           </h4>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-            {unclustered.map((conv) => (
+            {[...unclustered].sort((a, b) => {
+              const aT: number = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+              const bT: number = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+              return bT - aT;
+            }).map((conv) => (
               <button
                 key={conv.id}
                 type="button"
-                className="text-left px-3 py-2 rounded-lg border border-surface-700/50 bg-surface-850 hover:bg-surface-800 hover:border-surface-600 transition-colors"
+                className="text-left px-3 py-2 rounded-lg border border-surface-700 bg-surface-850 hover:bg-surface-800 hover:border-surface-500 transition-colors flex items-center gap-1.5"
                 onClick={() => onSelectConversation(conv.id)}
               >
-                <span className="text-xs text-surface-300 truncate block">
+                <span className="text-xs text-surface-300 truncate flex-1 min-w-0">
                   {conv.title || "Untitled"}
                 </span>
+                {conv.participants.length > 0 && (
+                  <span className="flex -space-x-1.5 flex-shrink-0">
+                    {conv.participants.slice(0, 3).map((p) => (
+                      <span
+                        key={p.id}
+                        className="w-4 h-4 rounded-full border border-surface-200 dark:border-surface-800 bg-surface-600 flex items-center justify-center overflow-hidden"
+                        title={p.name ?? "Unknown"}
+                      >
+                        {p.avatar_url ? (
+                          <img src={p.avatar_url} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="text-[7px] font-medium text-surface-300">
+                            {(p.name ?? "?")[0]?.toUpperCase()}
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                  </span>
+                )}
+                {conv.last_message_at && (
+                  <span className="text-[10px] text-surface-600 flex-shrink-0">
+                    {relativeTime(conv.last_message_at)}
+                  </span>
+                )}
               </button>
             ))}
           </div>
