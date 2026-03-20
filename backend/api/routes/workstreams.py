@@ -3,6 +3,7 @@ Workstreams API for semantic Home: clusters of shared conversations by topic.
 """
 
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -72,7 +73,13 @@ async def get_workstreams(
     """Get workstream clusters for the org. Recomputed if snapshot is stale or missing."""
     org_id: str = auth.organization_id_str or ""
     window_hours = window
-    now = datetime.utcnow()
+    now: datetime = datetime.now(timezone.utc)
+
+    # Do not hold a DB session across compute_workstream_clusters: it can take 60s+ (UMAP + LLM),
+    # and pooled connections may be closed as idle before commit (asyncpg: connection is closed).
+    snapshot_id: UUID | None = None
+    should_recompute: bool = False
+    cached_data: dict[str, Any] = {}
 
     async with get_session(organization_id=org_id) as session:
         result = await session.execute(
@@ -84,22 +91,42 @@ async def get_workstreams(
         )
         snapshot = result.scalar_one_or_none()
 
-        should_recompute: bool = (
+        should_recompute = (
             snapshot is None
             or snapshot.stale_since is not None
             or (snapshot is not None and _computed_at_old(snapshot, _STALE_MINUTES))
         )
 
-        if should_recompute:
-            data = await compute_workstream_clusters(org_id, window_hours=window_hours)
-            if snapshot:
-                snapshot.computed_at = now
-                snapshot.stale_since = None
-                snapshot.data = data
-                session.add(snapshot)
-            else:
-                from uuid import uuid4
+        if snapshot is not None:
+            snapshot_id = snapshot.id
+        if not should_recompute and snapshot is not None:
+            raw = snapshot.data
+            cached_data = raw if isinstance(raw, dict) else {}
 
+    data: dict[str, Any]
+    if should_recompute:
+        data = await compute_workstream_clusters(org_id, window_hours=window_hours)
+        from uuid import uuid4
+
+        async with get_session(organization_id=org_id) as session:
+            if snapshot_id is not None:
+                row = await session.get(WorkstreamSnapshot, snapshot_id)
+                if row is not None:
+                    row.computed_at = now
+                    row.stale_since = None
+                    row.data = data
+                    session.add(row)
+                else:
+                    new_snap = WorkstreamSnapshot(
+                        id=uuid4(),
+                        organization_id=UUID(org_id),
+                        window_hours=window_hours,
+                        computed_at=now,
+                        stale_since=None,
+                        data=data,
+                    )
+                    session.add(new_snap)
+            else:
                 new_snap = WorkstreamSnapshot(
                     id=uuid4(),
                     organization_id=UUID(org_id),
@@ -110,8 +137,8 @@ async def get_workstreams(
                 )
                 session.add(new_snap)
             await session.commit()
-        else:
-            data = snapshot.data if snapshot else {}
+    else:
+        data = cached_data
 
     # Enrich with conversation details and participants
     all_conv_ids: list[str] = []
