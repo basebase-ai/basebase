@@ -1,7 +1,6 @@
 /**
  * Syncs document root `dark` class with persisted UI theme (light / dark / system).
  */
-/* eslint-disable react-refresh/only-export-components */
 
 import { useEffect } from "react";
 import { useUIStore, type UITheme } from "../store/uiStore";
@@ -14,10 +13,8 @@ function shouldUseDarkClass(theme: UITheme, prefersDark: boolean): boolean {
   return prefersDark;
 }
 
-/**
- * Subscribes to `theme` in uiStore and toggles `class="dark"` on `<html>`.
- */
-export function useThemeSync(): void {
+/** Mount once under the app root to keep `<html>` in sync with the store. */
+export function ThemeSync(): null {
   const theme: UITheme = useUIStore((s) => s.theme);
 
   useEffect(() => {
@@ -42,10 +39,6 @@ export function useThemeSync(): void {
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, [theme]);
-}
 
-/** Mount once under the app root to keep `<html>` in sync with the store. */
-export function ThemeSync(): null {
-  useThemeSync();
   return null;
 }
