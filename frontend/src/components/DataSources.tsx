@@ -26,7 +26,7 @@ import {
   SiJira,
   SiAsana,
 } from 'react-icons/si';
-import { HiOutlineCalendar, HiOutlineMail, HiGlobeAlt, HiUserGroup, HiDeviceMobile, HiMicrophone, HiLightningBolt, HiX, HiCog, HiShare, HiLockClosed, HiDocumentText, HiCube, HiLink } from 'react-icons/hi';
+import { HiOutlineCalendar, HiOutlineMail, HiGlobeAlt, HiUserGroup, HiDeviceMobile, HiMicrophone, HiLightningBolt, HiX, HiCog, HiShare, HiLockClosed, HiDocumentText, HiCube, HiLink, HiExclamation } from 'react-icons/hi';
 // Custom Apollo.io icon - 8-ray starburst matching their brand
 const ApolloIcon: IconType = ({ className, ...props }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={className} {...props}>
@@ -349,6 +349,7 @@ export function DataSources(): JSX.Element {
   const [slackVerifyCodeLoading, setSlackVerifyCodeLoading] = useState<boolean>(false);
   const [showSlackVerificationModal, setShowSlackVerificationModal] = useState(false);
   const [showConnectModal, setShowConnectModal] = useState(false);
+  const [showCodeSandboxWarningModal, setShowCodeSandboxWarningModal] = useState(false);
   const [connectSearch, setConnectSearch] = useState('');
 
   // MCP connect form state
@@ -778,8 +779,16 @@ export function DataSources(): JSX.Element {
     };
   });
 
-  const handleConnect = useCallback(async (provider: string): Promise<void> => {
+  const handleConnect = useCallback(async (
+    provider: string,
+    options?: { skipCodeSandboxWarning?: boolean },
+  ): Promise<void> => {
     if (connectingProvider || !organizationId || !userId) return;
+
+    if (provider === 'code_sandbox' && !options?.skipCodeSandboxWarning) {
+      setShowCodeSandboxWarningModal(true);
+      return;
+    }
 
     setConnectingProvider(provider);
 
@@ -2295,6 +2304,72 @@ export function DataSources(): JSX.Element {
                   </div>
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Code Sandbox Warning Modal */}
+      {showCodeSandboxWarningModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowCodeSandboxWarningModal(false)}
+        >
+          <div
+            className="bg-surface-900 border border-amber-500/30 rounded-xl shadow-xl w-full max-w-lg mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6">
+              <div className="flex items-start justify-between gap-4 mb-4">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-full bg-amber-500/15 text-amber-300">
+                    <HiExclamation className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold text-surface-100">Connect Code Sandbox?</h2>
+                    <p className="mt-1 text-sm text-surface-400">
+                      This connector can run insecure code, shell commands, and third-party packages inside a sandboxed runtime.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowCodeSandboxWarningModal(false)}
+                  className="p-1 text-surface-400 hover:text-surface-200 rounded"
+                >
+                  <HiX className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-100 space-y-3">
+                <p>
+                  Use this connector only if you understand the risk: malicious or untrusted code may attempt data exfiltration, leak secrets, or trigger a data breach.
+                </p>
+                <p>
+                  For safety, only organization admins or global admins can connect Code Sandbox. Only enable it when your team explicitly needs it.
+                </p>
+              </div>
+
+              <p className="mt-4 text-sm text-surface-400">
+                By continuing, you acknowledge that your workspace is enabling a high-risk connector and you are using it at your own risk.
+              </p>
+
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  onClick={() => setShowCodeSandboxWarningModal(false)}
+                  className="px-4 py-2 text-sm font-medium text-surface-300 hover:text-surface-100 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setShowCodeSandboxWarningModal(false);
+                    void handleConnect('code_sandbox', { skipCodeSandboxWarning: true });
+                  }}
+                  className="px-4 py-2 text-sm font-medium bg-amber-600 hover:bg-amber-500 text-white rounded-lg transition-colors"
+                >
+                  I Understand, Connect
+                </button>
+              </div>
             </div>
           </div>
         </div>
