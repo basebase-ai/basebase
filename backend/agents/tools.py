@@ -5669,6 +5669,12 @@ async def execute_keep_notes(
 
 GLOBAL_COMMAND_CATEGORY = "global_commands"
 GLOBAL_COMMAND_MAX_LENGTH = 400
+SUPPORTED_MEMORY_ENTITY_TYPES = {"user", "organization_member"}
+ORG_LEVEL_MEMORY_ERROR = (
+    "Org-level memories are not allowed. "
+    "Use entity_type='user' for personal memories or "
+    "entity_type='organization_member' for role-specific memories."
+)
 
 
 def _normalize_memory_category(category: str | None) -> str | None:
@@ -5683,6 +5689,21 @@ def _normalize_memory_category(category: str | None) -> str | None:
 def _validate_memory_content_for_category(content: str, category: str | None) -> str | None:
     if category == GLOBAL_COMMAND_CATEGORY and len(content) > GLOBAL_COMMAND_MAX_LENGTH:
         return f"Global command memories must be {GLOBAL_COMMAND_MAX_LENGTH} characters or fewer."
+    return None
+
+
+def _validate_memory_entity_type(entity_type: str) -> str | None:
+    normalized_entity_type = entity_type.strip()
+    if not normalized_entity_type:
+        return "entity_type is required."
+    if normalized_entity_type == "organization":
+        logger.info("[Tools.manage_memory] Rejected org-level memory save attempt")
+        return ORG_LEVEL_MEMORY_ERROR
+    if normalized_entity_type not in SUPPORTED_MEMORY_ENTITY_TYPES:
+        return (
+            f"Invalid entity_type '{normalized_entity_type}'. "
+            "Must be 'user' or 'organization_member'."
+        )
     return None
 
 async def _manage_memory(
@@ -5711,8 +5732,9 @@ async def _save_memory(
         return {"error": "Cannot save memory without a user context."}
 
     entity_type: str = params.get("entity_type", "user").strip()
-    if entity_type not in ("user", "organization_member"):
-        return {"error": f"Invalid entity_type '{entity_type}'. Must be 'user' or 'organization_member'."}
+    entity_type_error = _validate_memory_entity_type(entity_type)
+    if entity_type_error:
+        return {"error": entity_type_error}
 
     if skip_approval:
         logger.info("[Tools._save_memory] Auto-approved, saving memory immediately")
@@ -5752,6 +5774,9 @@ async def execute_save_memory(
 
     entity_type: str = params.get("entity_type", "user").strip()
     category: str | None = _normalize_memory_category(params.get("category"))
+    entity_type_error = _validate_memory_entity_type(entity_type)
+    if entity_type_error:
+        return {"status": "failed", "error": entity_type_error}
     content_error = _validate_memory_content_for_category(content, category)
     if content_error:
         return {"status": "failed", "error": content_error}
@@ -5777,7 +5802,13 @@ async def execute_save_memory(
                 return {"status": "failed", "error": "No organization membership found for this user."}
             entity_id = membership_id
     else:
-        return {"status": "failed", "error": f"Invalid entity_type '{entity_type}'."}
+        return {
+            "status": "failed",
+            "error": (
+                f"Invalid entity_type '{entity_type}'. "
+                "Must be 'user' or 'organization_member'."
+            ),
+        }
 
     memory = Memory(
         entity_type=entity_type,
