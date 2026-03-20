@@ -5,10 +5,25 @@
  * Labels are editable inline; renames propagate to all clients via workstreams_stale.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { renameWorkstream } from "../api/workstreams";
+import { useUser } from "../store";
 import type { WorkstreamConversation, WorkstreamItem } from "../store/types";
 import { WorkstreamDetailView } from "./WorkstreamDetailView";
+
+function relativeTime(iso: string): string {
+  const sec = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (sec < 10) return "now";
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const d = Math.floor(hr / 24);
+  return `${d}d ago`;
+}
+
+const RECENT_ACTIVITY_MS = 60_000; // gold outline for activity in last minute
 
 interface WorkstreamGridProps {
   workstreams: WorkstreamItem[];
@@ -72,6 +87,7 @@ function WorkstreamCard({
   onSelectConversation: (id: string) => void;
   onOpenDetail: (ws: WorkstreamItem) => void;
 }): JSX.Element {
+  const currentUser = useUser();
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [draftLabel, setDraftLabel] = useState<string>(workstream.label);
   const [saving, setSaving] = useState<boolean>(false);
@@ -80,6 +96,29 @@ function WorkstreamCard({
     () => collectParticipants(workstream),
     [workstream]
   );
+  const displayParticipants = useMemo((): {
+    id: string;
+    name: string | null;
+    avatar_url: string | null;
+  }[] => {
+    if (!currentUser) return participants;
+    const merged = participants.map((p) =>
+      p.id === currentUser.id
+        ? {
+            id: p.id,
+            name: currentUser.name,
+            avatar_url: currentUser.avatarUrl,
+          }
+        : p
+    );
+    const idx = merged.findIndex((p) => p.id === currentUser.id);
+    if (idx <= 0) return merged;
+    return [
+      merged[idx],
+      ...merged.slice(0, idx),
+      ...merged.slice(idx + 1),
+    ];
+  }, [participants, currentUser]);
   const recentChats: WorkstreamConversation[] = useMemo(
     () => sortedConversations(workstream),
     [workstream]
@@ -88,6 +127,33 @@ function WorkstreamCard({
     (sum, c) => sum + (c.messages_in_window ?? 0),
     0
   );
+
+  const latestMessageAt: string | null = useMemo(() => {
+    let latest: number = 0;
+    for (const c of workstream.conversations) {
+      if (c.last_message_at) {
+        const t = new Date(c.last_message_at).getTime();
+        if (t > latest) latest = t;
+      }
+    }
+    return latest ? new Date(latest).toISOString() : null;
+  }, [workstream.conversations]);
+
+  const [tick, setTick] = useState<number>(0);
+  const now = useMemo(() => (tick ? Date.now() : Date.now()), [tick]);
+  const isRecentlyActive: boolean = useMemo(() => {
+    if (!latestMessageAt) return false;
+    return now - new Date(latestMessageAt).getTime() < RECENT_ACTIVITY_MS;
+  }, [latestMessageAt, now]);
+
+  useEffect(() => {
+    if (!isRecentlyActive || !latestMessageAt) return;
+    const elapsed = now - new Date(latestMessageAt).getTime();
+    const msUntilMinute = RECENT_ACTIVITY_MS - elapsed;
+    if (msUntilMinute <= 0) return;
+    const t = setTimeout(() => setTick((n) => n + 1), msUntilMinute);
+    return () => clearTimeout(t);
+  }, [isRecentlyActive, latestMessageAt, now]);
 
   const handleStartEdit = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -122,7 +188,11 @@ function WorkstreamCard({
 
   return (
     <div
-      className="group flex flex-col rounded-xl border border-surface-700 bg-surface-850 hover:border-surface-500 hover:bg-surface-800 transition-all cursor-pointer overflow-hidden"
+      className={`group flex flex-col rounded-xl border bg-surface-850 hover:bg-surface-800 transition-all cursor-pointer overflow-hidden ${
+        isRecentlyActive
+          ? "border-amber-400/90 shadow-[0_0_0_1px_rgba(251,191,36,0.3)]"
+          : "border-surface-700 hover:border-surface-500"
+      }`}
       onClick={() => onOpenDetail(workstream)}
       role="button"
       tabIndex={0}
@@ -183,7 +253,7 @@ function WorkstreamCard({
               <button
                 type="button"
                 onClick={handleStartEdit}
-                className="flex-shrink-0 p-0.5 rounded text-surface-500 hover:text-surface-300 hover:bg-surface-700 transition-colors"
+                className="opacity-0 group-hover:opacity-100 flex-shrink-0 p-0.5 rounded text-surface-500 hover:text-surface-300 hover:bg-surface-700 transition-opacity"
                 aria-label="Rename workstream"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -196,7 +266,7 @@ function WorkstreamCard({
                 {workstream.description}
               </p>
             )}
-            <div className="flex items-center gap-3 mt-2 text-xs text-surface-500">
+            <div className="flex items-center gap-3 mt-2 text-xs text-surface-500 flex-wrap">
               <span>{workstream.conversations.length} chats</span>
               <span className="w-px h-3 bg-surface-700" />
               <span>{totalMessages} messages</span>
@@ -226,45 +296,64 @@ function WorkstreamCard({
         ))}
       </div>
 
-      {/* Participant avatars */}
-      {participants.length > 0 && (
+      {/* Participant avatars + timestamp */}
+      {(participants.length > 0 || latestMessageAt) && (
         <div className="px-4 py-3 border-t border-surface-700/50">
-          <div className="flex items-center">
-            <div className="flex -space-x-2">
-              {participants.slice(0, 5).map((p) => (
-                <div
-                  key={p.id}
-                  className="w-6 h-6 rounded-full border-2 border-surface-850 bg-surface-600 flex items-center justify-center overflow-hidden flex-shrink-0"
-                  title={p.name ?? "Unknown"}
-                >
-                  {p.avatar_url ? (
-                    <img
-                      src={p.avatar_url}
-                      alt={p.name ?? ""}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <span className="text-[10px] font-medium text-surface-300">
-                      {(p.name ?? "?")[0]?.toUpperCase()}
-                    </span>
-                  )}
-                </div>
-              ))}
-              {participants.length > 5 && (
-                <div className="w-6 h-6 rounded-full border-2 border-surface-850 bg-surface-700 flex items-center justify-center flex-shrink-0">
-                  <span className="text-[9px] font-medium text-surface-300">
-                    +{participants.length - 5}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center min-w-0">
+              {participants.length > 0 && (
+                <>
+                  <div className="flex -space-x-2">
+                    {displayParticipants.slice(0, 5).map((p) => {
+                      const isYou =
+                        currentUser !== null && p.id === currentUser.id;
+                      return (
+                        <div
+                          key={p.id}
+                          className="w-6 h-6 rounded-full border-2 border-surface-700 dark:border-surface-600 bg-surface-600 flex items-center justify-center overflow-hidden flex-shrink-0"
+                          title={isYou ? "You" : p.name ?? "Unknown"}
+                        >
+                          {p.avatar_url ? (
+                            <img
+                              src={p.avatar_url}
+                              alt={isYou ? "You" : p.name ?? ""}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <span className="text-[10px] font-medium text-surface-300">
+                              {(isYou ? "You" : p.name ?? "?")[0]?.toUpperCase()}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {participants.length > 5 && (
+                      <div className="w-6 h-6 rounded-full border-2 border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center flex-shrink-0">
+                        <span className="text-[9px] font-medium text-surface-300">
+                          +{participants.length - 5}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <span className="ml-2 text-xs text-surface-500 truncate">
+                    {displayParticipants
+                      .slice(0, 3)
+                      .map((p) =>
+                        currentUser && p.id === currentUser.id
+                          ? "You"
+                          : p.name?.split(" ")[0] ?? "Unknown"
+                      )
+                      .join(", ")}
+                    {participants.length > 3 ? ` +${participants.length - 3}` : ""}
                   </span>
-                </div>
+                </>
               )}
             </div>
-            <span className="ml-2 text-xs text-surface-500 truncate">
-              {participants
-                .slice(0, 3)
-                .map((p) => p.name?.split(" ")[0] ?? "Unknown")
-                .join(", ")}
-              {participants.length > 3 ? ` +${participants.length - 3}` : ""}
-            </span>
+            {latestMessageAt && (
+              <span className="text-[11px] text-surface-500 flex-shrink-0">
+                {relativeTime(latestMessageAt)}
+              </span>
+            )}
           </div>
         </div>
       )}
@@ -296,8 +385,8 @@ export function WorkstreamGrid({
   }
 
   return (
-    <div className="p-4 h-full overflow-y-auto">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div className="h-full overflow-y-auto">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pr-2 md:pr-4">
         {sorted.map((ws) => (
           <WorkstreamCard
             key={ws.id}
@@ -309,7 +398,7 @@ export function WorkstreamGrid({
       </div>
 
       {unclustered.length > 0 && (
-        <div className="mt-6">
+        <div className="mt-6 pr-2 md:pr-4">
           <h4 className="text-xs font-medium text-surface-500 uppercase tracking-wider mb-3 px-1">
             Other conversations ({unclustered.length})
           </h4>

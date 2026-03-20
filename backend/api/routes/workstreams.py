@@ -21,7 +21,7 @@ from services.workstream_clustering import compute_workstream_clusters
 
 router = APIRouter()
 
-_STALE_MINUTES = 30
+_STALE_MINUTES = 60  # Cache workstream result; slow recompute only when stale or after embedding updates
 
 
 class WorkstreamParticipant(BaseModel):

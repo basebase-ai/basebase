@@ -67,7 +67,9 @@ export function Avatar({
   const [imgError, setImgError] = useState(false);
   const { container, text } = SIZE_CONFIG[size];
   const displayName = user.name ?? user.email ?? 'Unknown';
-  const borderClass = bordered ? 'border border-surface-800' : '';
+  const borderClass = bordered
+    ? 'border border-surface-700 dark:border-surface-600'
+    : '';
 
   if (user.isGuest) {
     return (

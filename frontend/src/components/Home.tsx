@@ -212,7 +212,14 @@ export function Home(): JSX.Element {
     <div className="flex-1 flex flex-col overflow-hidden">
       <header className="hidden md:flex h-14 border-b border-surface-800 items-center justify-between px-4 md:px-6">
         <h1 className="text-lg font-semibold text-surface-100">Home</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setCurrentView('chats')}
+            className="text-sm text-primary-400 hover:text-primary-300 font-medium"
+          >
+            View as list
+          </button>
           <select
             value={workstreamWindow}
             onChange={(e) => setWorkstreamWindow(Number(e.target.value))}
@@ -241,11 +248,11 @@ export function Home(): JSX.Element {
         </div>
       </header>
 
-      <div className="flex-1 overflow-auto p-4 md:p-6 flex flex-col">
-
+      <div className="flex-1 overflow-auto flex flex-col">
+        <div className="pt-4 pl-2 md:pl-4 flex flex-col min-h-full">
         {/* Connect data sources banner */}
         {!hasConnectedSources && (
-          <div className="mb-4 md:mb-6 bg-gradient-to-r from-primary-500/20 to-primary-600/10 border border-primary-500/30 rounded-xl p-4 md:p-5">
+          <div className="mb-4 md:mb-6 mr-2 md:mr-4 bg-gradient-to-r from-primary-500/20 to-primary-600/10 border border-primary-500/30 rounded-xl p-4 md:p-5">
             <div className="flex flex-col sm:flex-row items-start gap-3 md:gap-4">
               <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-primary-500/20 flex items-center justify-center">
                 <svg className="w-5 h-5 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -306,19 +313,13 @@ export function Home(): JSX.Element {
           )}
         </div>
 
-        <div className="mt-4 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => setCurrentView('chats')}
-            className="text-sm text-primary-400 hover:text-primary-300 font-medium"
-          >
-            View all chats
-          </button>
-          {workstreamData?.computed_at && (
+        {workstreamData?.computed_at && (
+          <div className="mt-4 pr-2 md:pr-4 flex justify-end">
             <span className="text-xs text-surface-500">
               Updated {new Date(workstreamData.computed_at).toLocaleTimeString()}
             </span>
-          )}
+          </div>
+        )}
         </div>
       </div>
 

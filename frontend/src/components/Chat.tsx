@@ -1410,7 +1410,7 @@ export function Chat({
                 ))}
                 {conversationParticipants.length > 4 && (
                   <div
-                    className="w-6 h-6 rounded-full border-2 border-surface-900 bg-surface-700 flex items-center justify-center text-xs font-medium text-surface-300"
+                    className="w-6 h-6 rounded-full border-2 border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-xs font-medium text-surface-300"
                     title={`${conversationParticipants.length - 4} more participants`}
                   >
                     +{conversationParticipants.length - 4}

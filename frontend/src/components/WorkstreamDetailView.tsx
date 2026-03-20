@@ -207,7 +207,7 @@ export function WorkstreamDetailView({
                         {conv.participants.slice(0, 4).map((p) => (
                           <div
                             key={p.id}
-                            className="w-5 h-5 rounded-full border border-surface-850 bg-surface-600 flex items-center justify-center overflow-hidden"
+                            className="w-5 h-5 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-600 flex items-center justify-center overflow-hidden"
                             title={p.name ?? "Unknown"}
                           >
                             {p.avatar_url ? (
