@@ -119,6 +119,7 @@ export interface ChatSummary {
   type?: "agent" | "workflow";
   workflowId?: string;
   scope: "private" | "shared";
+  agentResponding?: boolean;
   userId?: string; // Creator's user ID
   participants?: Participant[];
 }
@@ -272,6 +273,7 @@ export interface ConversationState {
   summary: ConversationSummaryData | null;
   hasMore: boolean;
   contextTokens: number | null;
+  agentResponding?: boolean;
 }
 
 // Task state from backend

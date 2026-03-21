@@ -31,6 +31,7 @@ from models.tracker_team import TrackerTeam
 from models.tracker_project import TrackerProject
 from models.tracker_issue import TrackerIssue
 from models.workstream_snapshot import WorkstreamSnapshot
+from models.notification import Notification
 
 __all__ = [
     "Base",
@@ -70,4 +71,5 @@ __all__ = [
     "TrackerProject",
     "TrackerIssue",
     "WorkstreamSnapshot",
+    "Notification",
 ]

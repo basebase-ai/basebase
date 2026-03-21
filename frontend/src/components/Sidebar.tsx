@@ -14,7 +14,7 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import type { View, ChatSummary, OrganizationInfo } from './AppLayout';
-import { useAppStore, useIsGlobalAdmin, useActiveTasksByConversation, type UserOrganization } from '../store';
+import { useAppStore, useChatStore, useIsGlobalAdmin, useActiveTasksByConversation, type UserOrganization } from '../store';
 import { updateConversation } from '../api/client';
 import { apiRequest } from '../lib/api';
 import { FaLifeRing } from 'react-icons/fa';
@@ -511,6 +511,7 @@ export function Sidebar({
   const togglePinChat = useAppStore((state) => state.togglePinChat);
   const isGlobalAdmin = useIsGlobalAdmin();
   const activeTasksByConversation = useActiveTasksByConversation();
+  const unreadConversationIds = useChatStore((state) => state.unreadConversationIds);
   const storedWidth = useAppStore((state) => state.sidebarWidth);
   const widthPx = collapsed ? 64 : storedWidth;
 
@@ -676,6 +677,7 @@ export function Sidebar({
         orderedChats={orderedChats}
         currentChatId={currentChatId}
         activeTasksByConversation={activeTasksByConversation}
+        unreadConversationIds={unreadConversationIds}
         pinnedChatIds={pinnedChatIds}
         currentUserId={user?.id ?? null}
         onSelectChat={onSelectChat}
@@ -734,6 +736,7 @@ function ChatAccordion({
   orderedChats,
   currentChatId,
   activeTasksByConversation,
+  unreadConversationIds,
   pinnedChatIds,
   currentUserId,
   onSelectChat,
@@ -745,6 +748,7 @@ function ChatAccordion({
   orderedChats: ChatSummary[];
   currentChatId: string | null;
   activeTasksByConversation: Record<string, string>;
+  unreadConversationIds: Set<string>;
   pinnedChatIds: string[];
   currentUserId: string | null;
   onSelectChat: (id: string) => void;
@@ -806,6 +810,7 @@ function ChatAccordion({
 
   const renderChatItem = (chat: ChatSummary, showLockIcon: boolean) => {
     const hasActiveTask = chat.id in activeTasksByConversation;
+    const isUnread = unreadConversationIds.has(chat.id);
     const isPinned = pinnedChatIds.includes(chat.id);
     const isEditing = editingChatId === chat.id;
     const isRenamable = canRename(chat);
@@ -860,6 +865,9 @@ function ChatAccordion({
             >
               {chat.title}
             </div>
+          )}
+          {isUnread && (
+            <span className="w-2 h-2 rounded-full bg-primary-500 flex-shrink-0" title="Unread" />
           )}
           {hasActiveTask && (
             <svg className="w-3 h-3 text-primary-400 flex-shrink-0 animate-spin" fill="none" viewBox="0 0 24 24">

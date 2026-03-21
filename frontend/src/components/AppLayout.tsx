@@ -39,7 +39,7 @@ const ArtifactFullView = lazy(() => import('./ArtifactFullView').then(m => ({ de
 const DocumentsGallery = lazy(() => import('./documents/DocumentsGallery').then(m => ({ default: m.DocumentsGallery })));
 import { APP_NAME, LOGO_PATH, RELEASE_STAGE } from '../lib/brand';
 import { ProfilePanel } from './ProfilePanel';
-import { useAppStore, useUIStore, useMasquerade, useIntegrations, type ActiveTask, type ToolCallData, type ChatMessage, type ContentBlock } from '../store';
+import { useAppStore, useChatStore, useUIStore, useMasquerade, useIntegrations, type ActiveTask, type ToolCallData, type ChatMessage, type ContentBlock } from '../store';
 import { useTeamMembers, useWebSocket } from '../hooks';
 import { apiRequest } from '../lib/api';
 
@@ -146,7 +146,18 @@ interface WsWorkstreamsStale {
   type: 'workstreams_stale';
 }
 
-type WsMessage = WsActiveTasks | WsTaskStarted | WsTaskChunk | WsTaskComplete | WsConversationCreated | WsCatchup | WsCrmApprovalResult | WsToolApprovalResult | WsToolProgress | WsError | WsNewMessage | WsSummaryUpdated | WsWorkstreamsStale;
+interface WsNotification {
+  type: 'notification';
+  notification?: { conversation_id?: string };
+}
+
+interface WsMessageSent {
+  type: 'message_sent';
+  conversation_id?: string;
+  agent_responding?: boolean;
+}
+
+type WsMessage = WsActiveTasks | WsTaskStarted | WsTaskChunk | WsTaskComplete | WsConversationCreated | WsCatchup | WsCrmApprovalResult | WsToolApprovalResult | WsToolProgress | WsError | WsNewMessage | WsSummaryUpdated | WsWorkstreamsStale | WsNotification | WsMessageSent;
 
 // Props
 interface AppLayoutProps {
@@ -1425,6 +1436,25 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
           break;
         }
 
+        case 'notification': {
+          const notif = (parsed as { notification?: { conversation_id?: string } }).notification;
+          if (notif?.conversation_id) {
+            useChatStore.getState().addUnreadConversation(notif.conversation_id);
+          }
+          break;
+        }
+
+        case 'message_sent': {
+          const { conversation_id, agent_responding } = parsed as { conversation_id?: string; agent_responding?: boolean };
+          if (conversation_id) {
+            setConversationThinking(conversation_id, false);
+            if (agent_responding !== undefined) {
+              useChatStore.getState().setConversationAgentResponding(conversation_id, agent_responding);
+            }
+          }
+          break;
+        }
+
         case 'summary_updated': {
           const { conversation_id, summary } = parsed;
           if (conversation_id && summary) {
@@ -1514,6 +1544,20 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
       void fetchConversations();
     }
   }, [userId, fetchConversations]);
+
+  // Fetch unread notifications on mount
+  useEffect(() => {
+    if (!userId) return;
+    void (async () => {
+      try {
+        const { data } = await apiRequest<Array<{ conversation_id: string }>>('/notifications/?unread_only=true');
+        const ids = [...new Set((data ?? []).map((n) => n.conversation_id))];
+        useChatStore.getState().setUnreadConversations(ids);
+      } catch {
+        // Best-effort; ignore errors
+      }
+    })();
+  }, [userId]);
 
   // Listen for navigation events from child components (e.g., Home banner)
   useEffect(() => {
