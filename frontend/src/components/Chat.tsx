@@ -319,6 +319,7 @@ export function Chat({
   
   // Local state
   const [input, setInput] = useState<string>('');
+  const [composerFocused, setComposerFocused] = useState<boolean>(false);
   const [currentArtifactId, setCurrentArtifactId] = useState<string | null>(null);
   const [currentAttachmentId, setCurrentAttachmentId] = useState<string | null>(null);
   const [currentAttachmentMeta, setCurrentAttachmentMeta] = useState<{ filename: string; mimeType: string } | null>(null);
@@ -374,6 +375,7 @@ export function Chat({
   const isProgrammaticScrollRef = useRef<boolean>(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const pendingTitleRef = useRef<string | null>(null);
   const pendingMessagesRef = useRef<ChatMessage[]>([]);
   const pendingAutoSendRef = useRef<string | null>(null);
@@ -619,6 +621,13 @@ export function Chat({
       return () => clearTimeout(timer);
     }
   }, [chatId, messages.length, isLoading, isConnected]);
+
+  // Re-focus the textarea after the composer expands (collapsed → expanded swaps the DOM element)
+  useEffect(() => {
+    if (composerFocused) {
+      requestAnimationFrame(() => inputRef.current?.focus());
+    }
+  }, [composerFocused]);
 
   // Load conversation when selecting an existing chat from sidebar
   useEffect(() => {
@@ -1800,140 +1809,191 @@ export function Chat({
             onChange={handleFileSelect}
           />
 
-          <div
-            onDrop={(e) => void handleDrop(e)}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            className={`relative rounded-lg border transition-all duration-150 ${
-              isDragOver
-                ? 'border-primary-500 ring-1 ring-primary-500/40 bg-surface-850'
-                : (!isConnected || outOfCredits)
-                  ? 'border-surface-700 opacity-50 bg-surface-900'
-                  : 'border-surface-600 focus-within:border-surface-500 bg-surface-900'
-            }`}
-          >
-            {isDragOver && (
-              <div className="absolute inset-0 rounded-lg bg-primary-500/10 flex items-center justify-center z-10 pointer-events-none">
-                <span className="text-sm font-medium text-primary-400">Drop files here</span>
-              </div>
-            )}
+          {(() => {
+            const composerExpanded: boolean = composerFocused || input.trim().length > 0 || pendingAttachments.length > 0;
 
-            {pendingAttachments.length > 0 && (
-              <div className="flex flex-wrap gap-2 px-3 pt-3">
-                {pendingAttachments.map((att) => (
-                  <AttachmentCard
-                    key={att.upload_id}
-                    filename={att.filename}
-                    mimeType={att.mime_type}
-                    size={att.size}
-                    onRemove={() => removeAttachment(att.upload_id)}
-                  />
-                ))}
-              </div>
-            )}
+            const handleComposerBlur = (e: React.FocusEvent<HTMLDivElement>): void => {
+              if (composerRef.current?.contains(e.relatedTarget as Node)) return;
+              setComposerFocused(false);
+            };
 
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                e.target.style.height = 'auto';
-                e.target.style.height = `${Math.min(e.target.scrollHeight, 240)}px`;
-              }}
-              onKeyDown={handleKeyDown}
-              onPaste={(e) => void handlePaste(e)}
-              placeholder={outOfCredits ? 'Out of credits — upgrade to continue' : agentRunning ? 'Agent working...' : 'Message...'}
-              className="w-full resize-none bg-transparent text-surface-100 px-3.5 pt-2.5 pb-2 text-[13px] placeholder-surface-500 focus:outline-none leading-[1.46] scrollbar-none disabled:cursor-not-allowed"
-              style={{ minHeight: '36px', maxHeight: '240px' }}
-              rows={1}
-              disabled={!isConnected || outOfCredits}
-              autoFocus={chatId === null}
-            />
+            const attachButton: JSX.Element = (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading || agentRunning}
+                className="flex shrink-0 w-7 h-7 rounded text-surface-400 hover:text-surface-200 hover:bg-surface-700 items-center justify-center transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Attach file"
+              >
+                {isUploading ? (
+                  <div className="w-4 h-4 border-2 border-surface-600 border-t-primary-500 rounded-full animate-spin" />
+                ) : (
+                  <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                )}
+              </button>
+            );
 
-            {/* Toolbar — separated by a thin border, like Slack */}
-            <div className="flex items-center justify-between border-t border-surface-700/60 px-1.5 py-1">
-              <div className="flex items-center gap-0.5">
-                {/* Attach / plus button */}
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isUploading || agentRunning}
-                  className="flex w-7 h-7 rounded text-surface-400 hover:text-surface-200 hover:bg-surface-700 items-center justify-center transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                  title="Attach file"
-                >
-                  {isUploading ? (
-                    <div className="w-4 h-4 border-2 border-surface-600 border-t-primary-500 rounded-full animate-spin" />
-                  ) : (
-                    <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            const sendStopButton: JSX.Element = agentRunning ? (
+              <button
+                onClick={handleStop}
+                className="shrink-0 w-7 h-7 rounded bg-red-600 text-white hover:bg-red-500 flex items-center justify-center transition-colors"
+                title="Stop"
+              >
+                <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                  <rect x="6" y="6" width="12" height="12" rx="1" />
+                </svg>
+              </button>
+            ) : (
+              <button
+                onClick={handleSend}
+                disabled={(!input.trim() && pendingAttachments.length === 0) || !isConnected || outOfCredits}
+                className={`shrink-0 w-7 h-7 rounded flex items-center justify-center transition-colors ${
+                  (input.trim() || pendingAttachments.length > 0) && isConnected && !outOfCredits
+                    ? 'bg-primary-600 text-white hover:bg-primary-500'
+                    : 'text-surface-500 cursor-default'
+                }`}
+              >
+                <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3 21l18-9L3 3l3 9zm0 0h8" />
+                </svg>
+              </button>
+            );
+
+            const scopeToggle: JSX.Element | null = (!chatId && !localConversationId) ? (
+              <button
+                type="button"
+                onClick={() => setNewConversationScope(prev => prev === 'shared' ? 'private' : 'shared')}
+                className={`flex items-center gap-1 px-1.5 py-1 rounded text-[11px] font-medium transition-colors ${
+                  newConversationScope === 'shared'
+                    ? 'text-primary-400 hover:bg-primary-500/10'
+                    : 'text-surface-400 hover:bg-surface-700'
+                }`}
+                title={newConversationScope === 'shared'
+                  ? 'Shared: Teammates can join this conversation'
+                  : 'Private: Only you can see this conversation'}
+              >
+                {newConversationScope === 'shared' ? (
+                  <>
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                     </svg>
-                  )}
-                </button>
+                    Shared
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                    Private
+                  </>
+                )}
+              </button>
+            ) : null;
 
-                {/* Divider */}
-                <div className="w-px h-4 bg-surface-700 mx-0.5" />
+            return (
+              <div
+                ref={composerRef}
+                onDrop={(e) => void handleDrop(e)}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onBlur={handleComposerBlur}
+                className={`relative rounded-lg border transition-all duration-150 ${
+                  isDragOver
+                    ? 'border-primary-500 ring-1 ring-primary-500/40 bg-surface-850'
+                    : (!isConnected || outOfCredits)
+                      ? 'border-surface-700 opacity-50 bg-surface-900'
+                      : 'border-surface-600 focus-within:border-surface-500 bg-surface-900'
+                }`}
+              >
+                {isDragOver && (
+                  <div className="absolute inset-0 rounded-lg bg-primary-500/10 flex items-center justify-center z-10 pointer-events-none">
+                    <span className="text-sm font-medium text-primary-400">Drop files here</span>
+                  </div>
+                )}
 
-                {/* Scope toggle — new conversations only */}
-                {!chatId && !localConversationId && (
-                  <button
-                    type="button"
-                    onClick={() => setNewConversationScope(prev => prev === 'shared' ? 'private' : 'shared')}
-                    className={`flex items-center gap-1 px-1.5 py-1 rounded text-[11px] font-medium transition-colors ${
-                      newConversationScope === 'shared'
-                        ? 'text-primary-400 hover:bg-primary-500/10'
-                        : 'text-surface-400 hover:bg-surface-700'
-                    }`}
-                    title={newConversationScope === 'shared'
-                      ? 'Shared: Teammates can join this conversation'
-                      : 'Private: Only you can see this conversation'}
-                  >
-                    {newConversationScope === 'shared' ? (
+                {composerExpanded ? (
+                  <>
+                    {pendingAttachments.length > 0 && (
+                      <div className="flex flex-wrap gap-2 px-3 pt-3">
+                        {pendingAttachments.map((att) => (
+                          <AttachmentCard
+                            key={att.upload_id}
+                            filename={att.filename}
+                            mimeType={att.mime_type}
+                            size={att.size}
+                            onRemove={() => removeAttachment(att.upload_id)}
+                          />
+                        ))}
+                      </div>
+                    )}
+
+                    <textarea
+                      ref={inputRef}
+                      value={input}
+                      onChange={(e) => {
+                        setInput(e.target.value);
+                        e.target.style.height = 'auto';
+                        e.target.style.height = `${Math.min(e.target.scrollHeight, 240)}px`;
+                      }}
+                      onKeyDown={handleKeyDown}
+                      onPaste={(e) => void handlePaste(e)}
+                      onFocus={() => setComposerFocused(true)}
+                      placeholder={outOfCredits ? 'Out of credits — upgrade to continue' : agentRunning ? 'Agent working...' : 'Message...'}
+                      className="w-full resize-none bg-transparent text-surface-100 px-3.5 pt-2.5 pb-2 text-[13px] placeholder-surface-500 focus:outline-none leading-[1.46] scrollbar-none disabled:cursor-not-allowed"
+                      style={{ minHeight: '36px', maxHeight: '240px' }}
+                      rows={1}
+                      disabled={!isConnected || outOfCredits}
+                      autoFocus={chatId === null}
+                    />
+
+                    <div className="flex items-center justify-between border-t border-surface-700/60 px-1.5 py-1">
+                      <div className="flex items-center gap-0.5">
+                        {attachButton}
+                        {scopeToggle && (
+                          <>
+                            <div className="w-px h-4 bg-surface-700 mx-0.5" />
+                            {scopeToggle}
+                          </>
+                        )}
+                      </div>
+                      {sendStopButton}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-1 px-1.5 py-1">
+                    {attachButton}
+                    {scopeToggle && (
                       <>
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                        </svg>
-                        Shared
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                        </svg>
-                        Private
+                        <div className="w-px h-4 bg-surface-700 mx-0.5" />
+                        {scopeToggle}
                       </>
                     )}
-                  </button>
+                    <textarea
+                      ref={inputRef}
+                      value={input}
+                      onChange={(e) => {
+                        setInput(e.target.value);
+                        e.target.style.height = 'auto';
+                        e.target.style.height = `${Math.min(e.target.scrollHeight, 240)}px`;
+                      }}
+                      onKeyDown={handleKeyDown}
+                      onPaste={(e) => void handlePaste(e)}
+                      onFocus={() => setComposerFocused(true)}
+                      placeholder={outOfCredits ? 'Out of credits — upgrade to continue' : agentRunning ? 'Agent working...' : 'Message...'}
+                      className="flex-1 min-w-0 resize-none bg-transparent text-surface-100 py-1 text-[13px] placeholder-surface-500 focus:outline-none leading-[1.46] scrollbar-none disabled:cursor-not-allowed"
+                      style={{ height: '28px' }}
+                      rows={1}
+                      disabled={!isConnected || outOfCredits}
+                      autoFocus={chatId === null}
+                    />
+                    {sendStopButton}
+                  </div>
                 )}
               </div>
-
-              {/* Send / Stop */}
-              {agentRunning ? (
-                <button
-                  onClick={handleStop}
-                  className="flex-shrink-0 w-7 h-7 rounded bg-red-600 text-white hover:bg-red-500 flex items-center justify-center transition-colors"
-                  title="Stop"
-                >
-                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-                    <rect x="6" y="6" width="12" height="12" rx="1" />
-                  </svg>
-                </button>
-              ) : (
-                <button
-                  onClick={handleSend}
-                  disabled={(!input.trim() && pendingAttachments.length === 0) || !isConnected || outOfCredits}
-                  className={`flex-shrink-0 w-7 h-7 rounded flex items-center justify-center transition-colors ${
-                    (input.trim() || pendingAttachments.length > 0) && isConnected && !outOfCredits
-                      ? 'bg-primary-600 text-white hover:bg-primary-500'
-                      : 'text-surface-500 cursor-default'
-                  }`}
-                >
-                  <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3 21l18-9L3 3l3 9zm0 0h8" />
-                  </svg>
-                </button>
-              )}
-            </div>
-          </div>
+            );
+          })()}
         </div>
       </div>
 
