@@ -311,7 +311,9 @@ export function Chat({
   const setConversationSummary = useAppStore((s) => s.setConversationSummary);
   const setConversationThinking = useAppStore((s) => s.setConversationThinking);
   const setConversationHasMore = useAppStore((s) => s.setConversationHasMore);
+  const setConversationAgentResponding = useAppStore((s) => s.setConversationAgentResponding);
   const fetchOlderMessages = useAppStore((s) => s.fetchOlderMessages);
+  const clearUnreadConversation = useAppStore((s) => s.clearUnreadConversation);
   const pendingChatInput = useAppStore((s) => s.pendingChatInput);
   const setPendingChatInput = useAppStore((s) => s.setPendingChatInput);
   const pendingChatAutoSend = useAppStore((s) => s.pendingChatAutoSend);
@@ -356,11 +358,36 @@ export function Chat({
   const [newConversationScope, setNewConversationScope] = useState<'private' | 'shared'>('shared');
   const [showScrollToBottom, setShowScrollToBottom] = useState<boolean>(false);
   const [isLoadingOlder, setIsLoadingOlder] = useState<boolean>(false);
+  const [messageMentions, setMessageMentions] = useState<Array<{ type: 'user'; userId: string } | { type: 'agent' }>>([]);
+  const [mentionPopover, setMentionPopover] = useState<{ open: boolean; query: string; selectedIndex: number }>({
+    open: false,
+    query: '',
+    selectedIndex: 0,
+  });
   const { data: teamMembersData } = useTeamMembers(organizationId ?? null, userId ?? null);
   const slackUserIdToName: ReadonlyMap<string, string> = useMemo(
     () => buildSlackUserIdToNameMap(teamMembersData?.members ?? []),
     [teamMembersData?.members],
   );
+
+  const mentionSuggestions = useMemo(() => {
+    const members = teamMembersData?.members ?? [];
+    const q = mentionPopover.query.toLowerCase();
+    const agentOption = { type: 'agent' as const, displayName: 'Basebase', userId: null };
+    const userOptions = members
+      .filter((m) => {
+        if (!q) return true;
+        const name = (m.name ?? '').toLowerCase();
+        const email = m.email.toLowerCase();
+        return name.includes(q) || email.includes(q);
+      })
+      .map((m) => ({
+        type: 'user' as const,
+        displayName: (m.name ?? m.email).trim() || m.email,
+        userId: m.id,
+      }));
+    return [agentOption, ...userOptions];
+  }, [teamMembersData?.members, mentionPopover.query]);
 
   // Attachment state
   const [pendingAttachments, setPendingAttachments] = useState<UploadResponse[]>([]);
@@ -702,6 +729,7 @@ export function Chat({
           setConversationType(data.type ?? null);
           setConversationScope((data.scope ?? 'shared') as 'private' | 'shared');
           setConversationCreatorId(data.user_id ?? null);
+          setConversationAgentResponding(chatId, data.agent_responding ?? true);
           setConversationParticipants(
             (data.participants ?? []).map((p: { id: string; name: string | null; email: string; avatar_url?: string | null }) => ({
               id: p.id,
@@ -745,7 +773,17 @@ export function Chat({
       loadInFlightChatIdRef.current = null; // Allow re-run to start load (e.g. Strict Mode)
       setIsLoading(false);
     };
-  }, [chatId, userId, setConversationMessages, setConversationTitle, setConversationSummary, setConversationHasMore, onConversationNotFound]);
+  }, [chatId, userId, setConversationMessages, setConversationTitle, setConversationSummary, setConversationHasMore, setConversationAgentResponding, onConversationNotFound]);
+
+  // Mark notifications as read when opening a conversation
+  useEffect(() => {
+    if (!chatId) return;
+    clearUnreadConversation(chatId);
+    void apiRequest('/notifications/read', {
+      method: 'POST',
+      body: JSON.stringify({ conversation_id: chatId }),
+    });
+  }, [chatId, clearUnreadConversation]);
 
   // Keep messagesRef in sync for polling comparison (avoids stale closure)
   useEffect(() => {
@@ -995,6 +1033,13 @@ export function Chat({
     // Build a local ISO-style string (no "Z" suffix) so the backend sees the
     // user's wall-clock time rather than UTC.
     const localIso: string = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+    const mentionsPayload =
+      messageMentions.length > 0
+        ? messageMentions.map((m) =>
+            m.type === 'agent' ? { type: 'agent' } : { type: 'user', user_id: m.userId }
+          )
+        : undefined;
+
     sendMessage({
       type: 'send_message',
       message,
@@ -1002,12 +1047,14 @@ export function Chat({
       local_time: localIso,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       ...(attachmentIds.length > 0 ? { attachment_ids: attachmentIds } : {}),
+      ...(mentionsPayload ? { mentions: mentionsPayload } : {}),
       // Include scope for new conversations
       ...(!currentConvId ? { scope: newConversationScope } : {}),
     });
 
-    console.log(`[Chat] Sent to WebSocket (${source}) with ${attachmentIds.length} attachment(s)`);
+    console.log(`[Chat] Sent to WebSocket (${source}) with ${attachmentIds.length} attachment(s) ${mentionsPayload ? `mentions=${mentionsPayload.length}` : ''}`);
     setInput('');
+    setMessageMentions([]);
     setPendingAttachments([]);
 
     // Reset textarea height to default
@@ -1023,6 +1070,7 @@ export function Chat({
     setConversationThinking,
     pendingAttachments,
     newConversationScope,
+    messageMentions,
   ]);
 
   // Handle retry: re-send the last user message
@@ -1102,7 +1150,59 @@ export function Chat({
     sendChatMessage(input, 'input');
   }, [input, sendChatMessage]);
 
+  const selectMention = useCallback(
+    (item: { type: 'agent' } | { type: 'user'; userId: string }, displayName: string) => {
+      const ta = inputRef.current;
+      if (!ta) return;
+      const cursor = ta.selectionStart ?? input.length;
+      const textBefore = input.substring(0, cursor);
+      const lastAt = textBefore.lastIndexOf('@');
+      if (lastAt === -1) return;
+      const before = input.substring(0, lastAt);
+      const after = input.substring(cursor);
+      const inserted = `@${displayName} `;
+      setInput(before + inserted + after);
+      setMessageMentions((prev) =>
+        item.type === 'agent' ? [...prev, { type: 'agent' }] : [...prev, { type: 'user', userId: item.userId }]
+      );
+      setMentionPopover({ open: false, query: '', selectedIndex: 0 });
+      requestAnimationFrame(() => {
+        ta.focus();
+        const newPos = lastAt + inserted.length;
+        ta.setSelectionRange(newPos, newPos);
+      });
+    },
+    [input]
+  );
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (mentionPopover.open && mentionSuggestions.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setMentionPopover((p) => ({ ...p, selectedIndex: Math.min(p.selectedIndex + 1, mentionSuggestions.length - 1) }));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionPopover((p) => ({ ...p, selectedIndex: Math.max(p.selectedIndex - 1, 0) }));
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const sel = mentionSuggestions[mentionPopover.selectedIndex];
+        if (sel) {
+          const displayName: string = sel.type === 'agent' ? 'Basebase' : (sel.displayName ?? sel.userId ?? '');
+          const mention = sel.type === 'agent' ? { type: 'agent' as const } : { type: 'user' as const, userId: sel.userId };
+          selectMention(mention, displayName);
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setMentionPopover({ open: false, query: '', selectedIndex: 0 });
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -1783,6 +1883,11 @@ export function Chat({
               You&apos;re out of credits. Upgrade your plan to continue chatting.
             </div>
           )}
+          {chatId && conversationState && conversationState.agentResponding === false && (
+            <div className="mb-2 px-3 py-2 rounded-lg bg-surface-700/50 border border-surface-600 text-surface-400 text-sm">
+              Basebase paused — use @Basebase to resume
+            </div>
+          )}
           {lowCredits && (
             <div className="mb-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 text-sm flex items-center gap-2">
               <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1832,13 +1937,34 @@ export function Chat({
               </div>
             )}
 
+            <div className="relative">
             <textarea
               ref={inputRef}
               value={input}
               onChange={(e) => {
-                setInput(e.target.value);
+                const val = e.target.value;
+                const cursor = e.target.selectionStart ?? val.length;
+                setInput(val);
                 e.target.style.height = 'auto';
                 e.target.style.height = `${Math.min(e.target.scrollHeight, 240)}px`;
+
+                const textBefore = val.substring(0, cursor);
+                const lastAt = textBefore.lastIndexOf('@');
+                if (lastAt !== -1) {
+                  const prevChar: string = lastAt > 0 ? (val[lastAt - 1] ?? ' ') : ' ';
+                  if (/\s/.test(prevChar) || lastAt === 0) {
+                    const query = textBefore.substring(lastAt + 1);
+                    if (!query.includes(' ')) {
+                      setMentionPopover(() => ({
+                        open: true,
+                        query,
+                        selectedIndex: 0,
+                      }));
+                      return;
+                    }
+                  }
+                }
+                setMentionPopover((prev) => (prev.open ? { ...prev, open: false } : prev));
               }}
               onKeyDown={handleKeyDown}
               onPaste={(e) => void handlePaste(e)}
@@ -1849,6 +1975,40 @@ export function Chat({
               disabled={!isConnected || outOfCredits}
               autoFocus={chatId === null}
             />
+            {mentionPopover.open && mentionSuggestions.length > 0 && (
+              <div
+                className="absolute left-0 bottom-full mb-1 w-56 max-h-44 overflow-y-auto rounded-lg border border-surface-700 bg-surface-900 shadow-xl z-50"
+                role="listbox"
+              >
+                {mentionSuggestions.slice(0, 8).map((item, idx) => (
+                  <button
+                    key={item.type === 'agent' ? 'agent' : item.userId}
+                    type="button"
+                    role="option"
+                    aria-selected={idx === mentionPopover.selectedIndex}
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors ${
+                      idx === mentionPopover.selectedIndex ? 'bg-primary-500/20 text-primary-200' : 'hover:bg-surface-800 text-surface-200'
+                    }`}
+                    onClick={() => {
+                      const displayName = item.type === 'agent' ? 'Basebase' : item.displayName;
+                      selectMention(
+                        item.type === 'agent' ? { type: 'agent' } : { type: 'user', userId: item.userId },
+                        displayName
+                      );
+                    }}
+                  >
+                    {item.type === 'agent' ? (
+                      <span className="font-medium">Basebase</span>
+                    ) : (
+                      <>
+                        <span className="truncate">{item.displayName}</span>
+                      </>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+            </div>
 
             {/* Toolbar — separated by a thin border, like Slack */}
             <div className="flex items-center justify-between border-t border-surface-700/60 px-1.5 py-1">

@@ -699,6 +699,51 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     }))
                     continue
 
+                mentions: list[dict] | None = data.get("mentions")
+                from services.chat_messages import resolve_agent_responding, save_user_message
+                from services.notifications import create_mention_notifications
+
+                should_invoke_agent: bool = await resolve_agent_responding(
+                    conversation_id=conversation_id,
+                    organization_id=organization_id,
+                    mentions=mentions,
+                )
+
+                if not should_invoke_agent:
+                    # Human-only path: save message, notify participants, no agent
+                    message_id = await save_user_message(
+                        conversation_id=conversation_id,
+                        user_id=user_id_str,
+                        organization_id=organization_id,
+                        message_text=user_message,
+                        attachment_ids=attachment_ids,
+                        sender_email=user_email,
+                    )
+                    async with get_session(organization_id=organization_id) as session:
+                        conv_row = await session.execute(
+                            select(Conversation.participating_user_ids).where(
+                                Conversation.id == UUID(conversation_id)
+                            )
+                        )
+                        row = conv_row.one_or_none()
+                    participant_ids: list[str] = (
+                        [str(uid) for uid in (row[0] or [])] if row else []
+                    )
+                    await create_mention_notifications(
+                        conversation_id=conversation_id,
+                        message_id=message_id,
+                        actor_user_id=user_id_str,
+                        organization_id=organization_id,
+                        mentions=mentions,
+                        participant_user_ids=participant_ids,
+                    )
+                    await websocket.send_text(json.dumps({
+                        "type": "message_sent",
+                        "conversation_id": conversation_id,
+                        "agent_responding": False,
+                    }))
+                    continue
+
                 if not await can_use_credits(organization_id):
                     await websocket.send_text(json.dumps({
                         "type": "error",

@@ -177,6 +177,7 @@ class ConversationResponse(BaseModel):
     message_count: int = 0
     last_message_preview: Optional[str] = None
     scope: str = "shared"
+    agent_responding: bool = True
     participants: list[ParticipantResponse] = []
 
 
@@ -209,6 +210,7 @@ class ConversationDetailResponse(BaseModel):
     updated_at: str
     type: Optional[str]
     scope: str = "shared"
+    agent_responding: bool = True
     participants: list[ParticipantResponse] = []
     messages: list[ChatMessageResponse]
     has_more: bool = False
@@ -362,6 +364,7 @@ async def list_conversations(
                 message_count=conv.message_count,
                 last_message_preview=conv.last_message_preview[:100] if conv.last_message_preview else None,
                 scope=conv.scope,
+                agent_responding=getattr(conv, "agent_responding", True),
                 participants=participants,
             ))
 
@@ -430,6 +433,7 @@ async def create_conversation(
             message_count=0,
             last_message_preview=None,
             scope=conv_scope,
+            agent_responding=True,
             participants=participants,
         )
 
@@ -535,6 +539,7 @@ async def get_conversation(
             updated_at=f"{conversation.updated_at.isoformat()}Z" if conversation.updated_at else "",
             type=conversation.type,
             scope=conversation.scope,
+            agent_responding=getattr(conversation, "agent_responding", True),
             participants=participants,
             messages=[
                 ChatMessageResponse(**msg.to_dict(sender_name=sender_name, sender_email=sender_email, sender_avatar_url=sender_avatar_url))
@@ -619,6 +624,7 @@ async def update_conversation(
             message_count=0,
             last_message_preview=None,
             scope=conv_scope,
+            agent_responding=getattr(conversation, "agent_responding", True),
             participants=participants,
         )
 
@@ -887,6 +893,7 @@ async def update_scope(
             message_count=0,
             last_message_preview=None,
             scope=conv_scope,
+            agent_responding=getattr(conversation, "agent_responding", True),
             participants=participants,
         )
 

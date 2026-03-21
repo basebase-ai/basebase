@@ -70,6 +70,7 @@ export interface ConversationDetailResponse {
   updated_at: string;
   type: "chat" | "workflow" | null;
   scope: "private" | "shared";
+  agent_responding?: boolean;
   participants: Array<{
     id: string;
     name: string | null;

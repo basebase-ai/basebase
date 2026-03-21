@@ -57,6 +57,9 @@ export interface ChatState {
   // Active task tracking (for quick lookups)
   activeTasksByConversation: Record<string, string>;
 
+  // Unread conversation IDs (for mention notification badges)
+  unreadConversationIds: Set<string>;
+
   // Integrations (data sources)
   integrations: Integration[];
   integrationsLoading: boolean;
@@ -110,6 +113,7 @@ export interface ChatState {
   setConversationSummary: (conversationId: string, summary: ConversationSummaryData) => void;
   setConversationContextTokens: (conversationId: string, tokens: number) => void;
   setConversationHasMore: (conversationId: string, hasMore: boolean) => void;
+  setConversationAgentResponding: (conversationId: string, agentResponding: boolean) => void;
   setChatScope: (conversationId: string, scope: "private" | "shared") => void;
   fetchOlderMessages: (conversationId: string) => Promise<boolean>;
   setConversationThinking: (
@@ -142,6 +146,11 @@ export interface ChatState {
   // Actions - Active tasks
   setActiveTasks: (tasks: ActiveTask[]) => void;
   hasActiveTask: (conversationId: string) => boolean;
+
+  // Actions - Unread notifications
+  addUnreadConversation: (conversationId: string) => void;
+  clearUnreadConversation: (conversationId: string) => void;
+  setUnreadConversations: (ids: string[]) => void;
 
   // Actions - Integrations
   fetchIntegrations: () => Promise<void>;
@@ -177,6 +186,7 @@ export const useChatStore = create<ChatState>()(
     pendingChatAutoSend: false,
     conversations: {},
     activeTasksByConversation: {},
+    unreadConversationIds: new Set<string>(),
     integrations: [],
     integrationsLoading: false,
     integrationsError: null,
@@ -250,6 +260,7 @@ export const useChatStore = create<ChatState>()(
                 messages,
                 title: data.title ?? "New Chat",
                 hasMore: data.has_more,
+                agentResponding: data.agent_responding ?? true,
                 summary: data.summary ? (() => {
                   try { return JSON.parse(data.summary!) as ConversationSummaryData; }
                   catch { return null; }
@@ -283,6 +294,7 @@ export const useChatStore = create<ChatState>()(
             type?: string;
             workflow_id?: string;
             scope?: "private" | "shared";
+            agent_responding?: boolean;
             participants?: Array<{
               id: string;
               name: string | null;
@@ -322,6 +334,7 @@ export const useChatStore = create<ChatState>()(
           type: (conv.type ?? "agent") as "agent" | "workflow",
           workflowId: conv.workflow_id,
           scope: (conv.scope ?? "shared") as "private" | "shared",
+          agentResponding: conv.agent_responding ?? true,
           participants: conv.participants?.map((p) => ({
             id: p.id,
             name: p.name,
@@ -795,6 +808,19 @@ export const useChatStore = create<ChatState>()(
       });
     },
 
+    setConversationAgentResponding: (conversationId, agentResponding) => {
+      const { conversations } = get();
+      const current = conversations[conversationId] ?? {
+        ...defaultConversationState,
+      };
+      set({
+        conversations: {
+          ...conversations,
+          [conversationId]: { ...current, agentResponding },
+        },
+      });
+    },
+
     setChatScope: (conversationId, scope) => {
       const { recentChats } = get();
       set({
@@ -1135,6 +1161,24 @@ export const useChatStore = create<ChatState>()(
     hasActiveTask: (conversationId) => {
       const { activeTasksByConversation } = get();
       return conversationId in activeTasksByConversation;
+    },
+
+    addUnreadConversation: (conversationId) => {
+      const { unreadConversationIds } = get();
+      if (unreadConversationIds.has(conversationId)) return;
+      set({ unreadConversationIds: new Set([...unreadConversationIds, conversationId]) });
+    },
+
+    clearUnreadConversation: (conversationId) => {
+      const { unreadConversationIds } = get();
+      if (!unreadConversationIds.has(conversationId)) return;
+      const next = new Set(unreadConversationIds);
+      next.delete(conversationId);
+      set({ unreadConversationIds: next });
+    },
+
+    setUnreadConversations: (ids) => {
+      set({ unreadConversationIds: new Set(ids) });
     },
 
     // Integrations actions
