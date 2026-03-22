@@ -19,6 +19,7 @@ import type {
   ContentBlock,
   Integration,
   SyncStats,
+  TypingUserEntry,
 } from "./types";
 import { useAuthStore } from "./authStore";
 import { useUIStore } from "./uiStore";
@@ -38,6 +39,7 @@ const defaultConversationState: ConversationState = {
   summary: null,
   hasMore: false,
   contextTokens: null,
+  typingUsers: {},
 };
 
 // ---------------------------------------------------------------------------
@@ -114,6 +116,12 @@ export interface ChatState {
   setConversationContextTokens: (conversationId: string, tokens: number) => void;
   setConversationHasMore: (conversationId: string, hasMore: boolean) => void;
   setConversationAgentResponding: (conversationId: string, agentResponding: boolean) => void;
+  setUserTyping: (
+    conversationId: string,
+    userId: string,
+    userName: string,
+  ) => void;
+  clearExpiredTyping: (conversationId: string) => void;
   setChatScope: (conversationId: string, scope: "private" | "shared") => void;
   fetchOlderMessages: (conversationId: string) => Promise<boolean>;
   setConversationThinking: (
@@ -817,6 +825,53 @@ export const useChatStore = create<ChatState>()(
         conversations: {
           ...conversations,
           [conversationId]: { ...current, agentResponding },
+        },
+      });
+    },
+
+    setUserTyping: (conversationId: string, userId: string, userName: string) => {
+      const { conversations } = get();
+      const current: ConversationState =
+        conversations[conversationId] ?? { ...defaultConversationState };
+      const existingTyping: Record<string, TypingUserEntry> =
+        current.typingUsers ?? {};
+      const typingUsers: Record<string, TypingUserEntry> = {
+        ...existingTyping,
+        [userId]: { name: userName, timestamp: Date.now() },
+      };
+      set({
+        conversations: {
+          ...conversations,
+          [conversationId]: { ...current, typingUsers },
+        },
+      });
+    },
+
+    clearExpiredTyping: (conversationId: string) => {
+      const { conversations } = get();
+      const current: ConversationState | undefined =
+        conversations[conversationId];
+      const tu: Record<string, TypingUserEntry> | undefined = current?.typingUsers;
+      if (!tu || Object.keys(tu).length === 0) {
+        return;
+      }
+      const cutoff: number = Date.now() - 5000;
+      const next: Record<string, TypingUserEntry> = {};
+      for (const [uid, v] of Object.entries(tu)) {
+        if (v.timestamp >= cutoff) {
+          next[uid] = v;
+        }
+      }
+      if (Object.keys(next).length === Object.keys(tu).length) {
+        return;
+      }
+      if (!current) {
+        return;
+      }
+      set({
+        conversations: {
+          ...conversations,
+          [conversationId]: { ...current, typingUsers: next },
         },
       });
     },

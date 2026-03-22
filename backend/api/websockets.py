@@ -576,6 +576,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     Protocol (client -> server):
     - {"type": "send_message", "message": "...", "conversation_id": "..."}
+    - {"type": "typing", "conversation_id": "..."}  # shared chats; throttled client-side
     - {"type": "subscribe", "task_id": "...", "since_index": 0}
     - {"type": "cancel", "task_id": "..."}
     - {"type": "crm_approval", "operation_id": "...", "approved": true/false}
@@ -587,6 +588,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     - {"type": "task_complete", "task_id": "...", "status": "..."}
     - {"type": "catchup", "task_id": "...", "chunks": [...]}
     - {"type": "crm_approval_result", ...}
+    - {"type": "user_typing", "conversation_id": "...", "user_id": "...", "user_name": "..."}
 
     Args:
         websocket: The WebSocket connection
@@ -636,6 +638,19 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         # Auto-subscribe to all active tasks
         for task in active_tasks:
             await task_manager.subscribe(task["id"], websocket)
+
+        user_display_name: str = (
+            user_email.split("@", 1)[0] if user_email else "Someone"
+        )
+        if organization_id:
+            async with get_session(organization_id=organization_id) as session:
+                name_row = await session.execute(
+                    select(User.name).where(User.id == UUID(user_id_str))
+                )
+                db_name: str | None = name_row.scalar_one_or_none()
+                if db_name:
+                    user_display_name = db_name
+
         while True:
             raw_message = await websocket.receive_text()
 
@@ -646,6 +661,43 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 data = {"type": "send_message", "message": raw_message}
 
             message_type = data.get("type", "send_message")
+
+            if message_type == "typing":
+                ty_conv_id = data.get("conversation_id")
+                if not ty_conv_id or not organization_id:
+                    continue
+                try:
+                    ty_conv_uuid = UUID(str(ty_conv_id))
+                except ValueError:
+                    continue
+                async with get_session(organization_id=organization_id) as session:
+                    ty_row = await session.execute(
+                        select(Conversation.scope, Conversation.participating_user_ids).where(
+                            Conversation.id == ty_conv_uuid
+                        )
+                    )
+                    ty_conv = ty_row.one_or_none()
+                if not ty_conv:
+                    continue
+                ty_scope: str = ty_conv[0] if ty_conv[0] else "private"
+                if ty_scope != "shared":
+                    continue
+                ty_participants: list[str] = [
+                    str(uid) for uid in (ty_conv[1] or [])
+                ]
+                if not ty_participants:
+                    continue
+                await conversation_broadcaster.broadcast_to_users(
+                    user_ids=ty_participants,
+                    event_type="user_typing",
+                    data={
+                        "conversation_id": str(ty_conv_id),
+                        "user_id": user_id_str,
+                        "user_name": user_display_name,
+                    },
+                    exclude_user_id=user_id_str,
+                )
+                continue
 
             # Handle send_message - start a new background task
             if message_type == "send_message" or message_type == "chat":

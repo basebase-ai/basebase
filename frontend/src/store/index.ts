@@ -44,6 +44,7 @@ export type {
   PendingChunk,
   ConversationState,
   ConversationSummaryData,
+  TypingUserEntry,
   ActiveTask,
   View,
 } from "./types";
