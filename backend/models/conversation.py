@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
@@ -114,6 +114,11 @@ class Conversation(Base):
         String(255), nullable=True
     )
 
+    # When false, agent does not respond until someone @mentions Basebase
+    agent_responding: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True
+    )
+
     # Cached fields for fast list queries (denormalized)
     message_count: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False
@@ -137,6 +142,9 @@ class Conversation(Base):
     )
     change_sessions: Mapped[list["ChangeSession"]] = relationship(
         "ChangeSession", back_populates="conversation"
+    )
+    notifications: Mapped[list["Notification"]] = relationship(
+        "Notification", back_populates="conversation"
     )
 
     def to_dict(self) -> dict[str, Any]:
@@ -165,6 +173,7 @@ class Conversation(Base):
         result["participating_user_ids"] = [
             str(user_id) for user_id in (self.participating_user_ids or [])
         ]
+        result["agent_responding"] = self.agent_responding
         return result
     
     @property
@@ -179,3 +188,4 @@ if TYPE_CHECKING:
     from models.chat_message import ChatMessage
     from models.workflow import Workflow
     from models.change_session import ChangeSession
+    from models.notification import Notification
