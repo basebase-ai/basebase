@@ -41,6 +41,7 @@ import {
   type ToolUseBlock,
   type ErrorBlock,
   type AttachmentBlock,
+  type TypingUserEntry,
 } from '../store';
 
 // Legacy data artifact format
@@ -317,6 +318,7 @@ export function Chat({
   const setConversationAgentResponding = useAppStore((s) => s.setConversationAgentResponding);
   const fetchOlderMessages = useAppStore((s) => s.fetchOlderMessages);
   const clearUnreadConversation = useAppStore((s) => s.clearUnreadConversation);
+  const clearExpiredTyping = useAppStore((s) => s.clearExpiredTyping);
   const pendingChatInput = useAppStore((s) => s.pendingChatInput);
   const setPendingChatInput = useAppStore((s) => s.setPendingChatInput);
   const pendingChatAutoSend = useAppStore((s) => s.pendingChatAutoSend);
@@ -414,6 +416,7 @@ export function Chat({
   const loadInFlightChatIdRef = useRef<string | null>(null); // Dedupe load requests for same chatId
   const prevAppCountRef = useRef(0); // Track app count for auto-switching preview
   const dragContainerRef = useRef<HTMLDivElement>(null); // Container for drag-resize
+  const lastTypingSentRef = useRef<number>(0);
 
   // Keep ref in sync with state
   pendingMessagesRef.current = pendingMessages;
@@ -458,6 +461,40 @@ export function Chat({
   }, [pendingMessages, conversationState?.messages]);
   const isThinking = pendingThinking || conversationThinking;
   const hasMoreMessages = conversationState?.hasMore ?? false;
+
+  const notifyTyping = useCallback((): void => {
+    const cid: string | null = localConversationId ?? chatId ?? null;
+    if (!cid || conversationScope !== 'shared' || !isConnected) {
+      return;
+    }
+    const now: number = Date.now();
+    if (now - lastTypingSentRef.current < 3000) {
+      return;
+    }
+    lastTypingSentRef.current = now;
+    sendMessage({ type: 'typing', conversation_id: cid });
+  }, [localConversationId, chatId, conversationScope, isConnected, sendMessage]);
+
+  useEffect(() => {
+    if (!chatId || conversationScope !== 'shared') {
+      return;
+    }
+    const id: ReturnType<typeof setInterval> = setInterval(() => {
+      clearExpiredTyping(chatId);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [chatId, conversationScope, clearExpiredTyping]);
+
+  const activeHumanTypers: Array<{ userId: string; name: string }> = useMemo(() => {
+    const tu: Record<string, TypingUserEntry> | undefined = conversationState?.typingUsers;
+    if (!tu || Object.keys(tu).length === 0) {
+      return [];
+    }
+    const cutoff: number = Date.now() - 5000;
+    return Object.entries(tu)
+      .filter(([, v]) => v.timestamp >= cutoff)
+      .map(([userId, v]) => ({ userId, name: v.name }));
+  }, [conversationState?.typingUsers]);
 
   // Agent is running if there's an active task OR we're in a thinking/pending state
   const agentRunning = activeTaskId !== null || isThinking;
@@ -1825,6 +1862,12 @@ export function Chat({
                   );
                 })}
 
+                {activeHumanTypers.length > 0 && (
+                  <HumanTypingIndicator
+                    typers={activeHumanTypers}
+                    participants={conversationParticipants}
+                  />
+                )}
                 {isThinking && <ThinkingIndicator />}
 
                 {isWorkflowPolling && messages.length > 0 && !isThinking && (
@@ -2097,11 +2140,13 @@ export function Chat({
                             const query: string = textBefore.substring(lastAt + 1);
                             if (!query.includes(' ')) {
                               setMentionPopover(() => ({ open: true, query, selectedIndex: 0 }));
+                              notifyTyping();
                               return;
                             }
                           }
                         }
                         setMentionPopover((prev) => (prev.open ? { ...prev, open: false } : prev));
+                        notifyTyping();
                       }}
                       onKeyDown={handleKeyDown}
                       onPaste={(e) => void handlePaste(e)}
@@ -2155,11 +2200,13 @@ export function Chat({
                               const query: string = textBefore.substring(lastAt + 1);
                               if (!query.includes(' ')) {
                                 setMentionPopover(() => ({ open: true, query, selectedIndex: 0 }));
+                                notifyTyping();
                                 return;
                               }
                             }
                           }
                           setMentionPopover((prev) => (prev.open ? { ...prev, open: false } : prev));
+                          notifyTyping();
                         }}
                         onKeyDown={handleKeyDown}
                         onPaste={(e) => void handlePaste(e)}
@@ -3248,6 +3295,54 @@ function ToolCallModal({
           <div className="text-xs text-surface-500 pt-2 border-t border-surface-800">
             Tool ID: {toolCall.toolId}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface HumanTypingParticipant {
+  id: string;
+  name: string | null;
+  email: string;
+  avatarUrl?: string | null;
+}
+
+/** Shows when another human is typing in a shared conversation (WebSocket `user_typing`). */
+function HumanTypingIndicator({
+  typers,
+  participants,
+}: {
+  typers: Array<{ userId: string; name: string }>;
+  participants: readonly HumanTypingParticipant[];
+}): JSX.Element {
+  const first: { userId: string; name: string } = typers[0]!;
+  const p: HumanTypingParticipant | undefined = participants.find((x) => x.id === first.userId);
+  const avatarUser = {
+    id: first.userId,
+    name: p?.name ?? first.name,
+    email: p?.email ?? '',
+    avatarUrl: p?.avatarUrl ?? null,
+  };
+  const extraCount: number = typers.length - 2;
+  const label: string =
+    typers.length === 1
+      ? `${first.name} is typing…`
+      : typers.length === 2
+        ? `${typers[0]!.name} and ${typers[1]!.name} are typing…`
+        : `${typers[0]!.name}, ${typers[1]!.name}, and ${extraCount} other${extraCount === 1 ? '' : 's'} are typing…`;
+
+  return (
+    <div className={`${CHAT_MSG_ROW} py-1`}>
+      <Avatar user={avatarUser} size="md" className={CHAT_MSG_AVATAR} />
+      <div className="flex-1 min-w-0">
+        <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0">
+          <span className={CHAT_MSG_NAME}>{label}</span>
+        </div>
+        <div className="flex items-center gap-1 mt-1">
+          <div className="w-1.5 h-1.5 bg-surface-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+          <div className="w-1.5 h-1.5 bg-surface-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+          <div className="w-1.5 h-1.5 bg-surface-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
         </div>
       </div>
     </div>

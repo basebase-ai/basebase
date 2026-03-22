@@ -157,7 +157,14 @@ interface WsMessageSent {
   agent_responding?: boolean;
 }
 
-type WsMessage = WsActiveTasks | WsTaskStarted | WsTaskChunk | WsTaskComplete | WsConversationCreated | WsCatchup | WsCrmApprovalResult | WsToolApprovalResult | WsToolProgress | WsError | WsNewMessage | WsSummaryUpdated | WsWorkstreamsStale | WsNotification | WsMessageSent;
+interface WsUserTyping {
+  type: 'user_typing';
+  conversation_id?: string;
+  user_id?: string;
+  user_name?: string;
+}
+
+type WsMessage = WsActiveTasks | WsTaskStarted | WsTaskChunk | WsTaskComplete | WsConversationCreated | WsCatchup | WsCrmApprovalResult | WsToolApprovalResult | WsToolProgress | WsError | WsNewMessage | WsSummaryUpdated | WsWorkstreamsStale | WsNotification | WsMessageSent | WsUserTyping;
 
 // Props
 interface AppLayoutProps {
@@ -1451,6 +1458,17 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
             if (agent_responding !== undefined) {
               useChatStore.getState().setConversationAgentResponding(conversation_id, agent_responding);
             }
+          }
+          break;
+        }
+
+        case 'user_typing': {
+          const ut = parsed as WsUserTyping;
+          const cid: string | undefined = ut.conversation_id;
+          const uid: string | undefined = ut.user_id;
+          const uname: string = ut.user_name?.trim() ? ut.user_name.trim() : 'Someone';
+          if (cid && uid) {
+            useChatStore.getState().setUserTyping(cid, uid, uname);
           }
           break;
         }

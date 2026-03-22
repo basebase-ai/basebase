@@ -262,6 +262,12 @@ export interface ConversationSummaryData {
 }
 
 // Per-conversation state
+/** Ephemeral human typing state (WebSocket-driven, auto-expires client-side). */
+export interface TypingUserEntry {
+  name: string;
+  timestamp: number;
+}
+
 export interface ConversationState {
   messages: ChatMessage[];
   title: string;
@@ -274,6 +280,8 @@ export interface ConversationState {
   hasMore: boolean;
   contextTokens: number | null;
   agentResponding?: boolean;
+  /** userId -> last typing ping (shared chats only) */
+  typingUsers?: Record<string, TypingUserEntry>;
 }
 
 // Task state from backend
