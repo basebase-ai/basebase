@@ -12,7 +12,7 @@ import asyncio
 import logging
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import httpx
@@ -669,7 +669,7 @@ Send a message to a Slack channel, DM, or user.
         # For incremental syncs, also skip channels with no recent messages
         # by peeking at the most recent message via conversations.history.
         all_channels = await self.get_channels()
-        oldest_ts: float = self.sync_since.timestamp() if self.sync_since else (datetime.utcnow().timestamp() - 7 * 24 * 60 * 60)
+        oldest_ts: float = self.sync_since.replace(tzinfo=timezone.utc).timestamp() if self.sync_since else (datetime.now(timezone.utc).timestamp() - 7 * 24 * 60 * 60)
         channels = []
         for ch in all_channels:
             if ch.get("is_archived"):
