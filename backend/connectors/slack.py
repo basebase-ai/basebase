@@ -224,6 +224,7 @@ Send a message to a Slack channel, DM, or user.
             sync_since_override=sync_since_override,
         )
         self.team_id = (team_id or "").strip() or None
+        self._user_info_cache: dict[str, dict[str, Any]] = {}
 
     async def _select_integration(
         self,
@@ -788,7 +789,6 @@ Send a message to a Slack channel, DM, or user.
 
         count = 0
         channels_with_messages = 0
-        user_info_cache: dict[str, dict[str, Any]] = {}
         session_user_id: str | None = None
         if self.user_id:
             session_user_id = self.user_id
@@ -821,21 +821,27 @@ Send a message to a Slack channel, DM, or user.
                 )
 
                 try:
-                    # Join public channels so we can read history (skip if already a member)
-                    if not channel.get("is_private") and not channel.get("is_member"):
+                    # Try to read history directly; only join if Slack says not_in_channel
+                    try:
+                        messages = await self.get_channel_messages(
+                            channel_id, oldest=oldest_ts, limit=100
+                        )
+                    except ValueError as hist_exc:
+                        if "not_in_channel" not in str(hist_exc):
+                            raise
                         await self.join_channel(channel_id)
-                    messages = await self.get_channel_messages(
-                        channel_id, oldest=oldest_ts, limit=100
-                    )
+                        messages = await self.get_channel_messages(
+                            channel_id, oldest=oldest_ts, limit=100
+                        )
                     if messages:
                         channels_with_messages += 1
 
                     for msg in messages:
                         user_id = msg.get("user")
                         if user_id and not msg.get("user_profile"):
-                            if user_id not in user_info_cache:
+                            if user_id not in self._user_info_cache:
                                 try:
-                                    user_info_cache[user_id] = await self.get_user_info(user_id)
+                                    self._user_info_cache[user_id] = await self.get_user_info(user_id)
                                 except Exception as exc:
                                     logger.warning(
                                         "[Slack Sync] Failed users.info lookup for user=%s channel=%s: %s",
@@ -844,8 +850,8 @@ Send a message to a Slack channel, DM, or user.
                                         exc,
                                         exc_info=True,
                                     )
-                                    user_info_cache[user_id] = {}
-                            profile = (user_info_cache[user_id] or {}).get("profile") or {}
+                                    self._user_info_cache[user_id] = {}
+                            profile = (self._user_info_cache[user_id] or {}).get("profile") or {}
                             if profile:
                                 msg["user_profile"] = profile
 
