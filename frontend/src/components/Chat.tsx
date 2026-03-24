@@ -30,6 +30,7 @@ import { crossTab } from '../lib/crossTab';
 import { APP_NAME, LOGO_PATH } from '../lib/brand';
 import {
   useAppStore,
+  useChatStore,
   useConversationState,
   useActiveTasksByConversation,
   useConnectedIntegrations,
@@ -364,6 +365,9 @@ export function Chat({
   }>>([]);
   const [isWorkflowPolling, setIsWorkflowPolling] = useState<boolean>(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [chatHeaderMenuOpen, setChatHeaderMenuOpen] = useState<boolean>(false);
+  const [shareChatLinkCopied, setShareChatLinkCopied] = useState<boolean>(false);
+  const chatHeaderMenuRef = useRef<HTMLDivElement>(null);
   const [newConversationScope, setNewConversationScope] = useState<'private' | 'shared'>('shared');
   /** True while PATCH /scope is in flight (optimistic UI already applied). */
   const [scopeToggleSaving, setScopeToggleSaving] = useState(false);
@@ -401,6 +405,7 @@ export function Chat({
         type: 'user' as const,
         displayName: (m.name ?? m.email).trim() || m.email,
         userId: m.id,
+        email: m.email,
       }));
     return showAgentOption ? [agentOption, ...userOptions] : userOptions;
   }, [teamMembersData?.members, mentionPopover.query]);
@@ -1469,10 +1474,60 @@ export function Chat({
     }
   }, [messages]);
 
+  const handleMenuCopyConversation = useCallback(async (): Promise<void> => {
+    setShareChatLinkCopied(false);
+    await handleCopyConversation();
+    setChatHeaderMenuOpen(false);
+  }, [handleCopyConversation]);
+
+  const handleShareChatLink = useCallback(async (): Promise<void> => {
+    if (!chatId) return;
+    setCopySuccess(false);
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setShareChatLinkCopied(true);
+      setChatHeaderMenuOpen(false);
+      window.setTimeout(() => setShareChatLinkCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy share link:', err);
+    }
+  }, [chatId]);
+
+  useEffect(() => {
+    if (!chatHeaderMenuOpen) return;
+    const onPointerDown = (e: PointerEvent): void => {
+      const el: HTMLDivElement | null = chatHeaderMenuRef.current;
+      if (el && !el.contains(e.target as Node)) {
+        setChatHeaderMenuOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setChatHeaderMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [chatHeaderMenuOpen]);
+
   // Check if the current user can rename this conversation
   const canRenameHeader = chatId && (
     conversationScope === 'private' || conversationCreatorId === userId
   );
+
+  const canToggleChatScope: boolean =
+    userId != null &&
+    conversationCreatorId != null &&
+    conversationCreatorId === userId &&
+    Boolean(chatId);
+
+  const togglePinChat = useAppStore((s) => s.togglePinChat);
+  const pinnedChatIds = useAppStore((s) => s.pinnedChatIds);
+  const deleteConversation = useAppStore((s) => s.deleteConversation);
+  const isCurrentChatUnread = useChatStore((s) => Boolean(chatId && s.unreadConversationIds.has(chatId)));
+  const isCurrentChatPinned: boolean = Boolean(chatId && pinnedChatIds.includes(chatId));
 
   const startEditingHeaderTitle = useCallback(() => {
     if (!canRenameHeader) return;
@@ -1498,6 +1553,29 @@ export function Chat({
   const cancelEditingHeaderTitle = useCallback(() => {
     setIsEditingHeaderTitle(false);
   }, []);
+
+  const handleMenuRenameChat = useCallback((): void => {
+    setChatHeaderMenuOpen(false);
+    startEditingHeaderTitle();
+  }, [startEditingHeaderTitle]);
+
+  const handleMenuTogglePin = useCallback((): void => {
+    if (!chatId) return;
+    setChatHeaderMenuOpen(false);
+    togglePinChat(chatId);
+  }, [chatId, togglePinChat]);
+
+  const handleMenuMarkAsRead = useCallback((): void => {
+    if (!chatId) return;
+    setChatHeaderMenuOpen(false);
+    clearUnreadConversation(chatId);
+  }, [chatId, clearUnreadConversation]);
+
+  const handleMenuDeleteChat = useCallback((): void => {
+    if (!chatId) return;
+    setChatHeaderMenuOpen(false);
+    void deleteConversation(chatId);
+  }, [chatId, deleteConversation]);
 
   type ParticipantRow = { id: string; name: string | null; email: string; avatarUrl?: string | null };
 
@@ -1670,62 +1748,33 @@ export function Chat({
               )}
             </div>
           )}
-          {/* Scope: compact chip; optimistic flip + spinner while saving */}
+          {/* Scope: read-only chip; owner changes visibility from ⋮ menu */}
           {chatId && (() => {
-            const canToggleScope: boolean =
-              userId != null
-              && conversationCreatorId != null
-              && conversationCreatorId === userId;
             const isShared: boolean = conversationScope === 'shared';
             const chipStatic: string =
               'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide';
             const chipShared: string = `${chipStatic} bg-primary-500/15 text-primary-400/90`;
             const chipPrivate: string = `${chipStatic} bg-surface-700 text-surface-400`;
 
-            if (canToggleScope) {
-              return (
-                <button
-                  type="button"
-                  disabled={scopeToggleSaving}
-                  onClick={() => {
-                    if (scopeToggleSaving) return;
-                    void (isShared ? handleMakePrivate() : handleMakeShared());
-                  }}
-                  className={`${isShared ? chipShared : chipPrivate} hover:opacity-90 disabled:opacity-70 disabled:cursor-wait transition-opacity shrink-0`}
-                  title={
-                    isShared
-                      ? 'Click to make private (only you)'
-                      : 'Click to share with team'
-                  }
-                  aria-busy={scopeToggleSaving}
-                >
-                  {scopeToggleSaving ? (
-                    <span
-                      className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin shrink-0 opacity-80"
-                      aria-hidden
-                    />
-                  ) : null}
-                  {isShared ? (
-                    'Shared'
-                  ) : (
-                    <>
-                      <ScopeLockIcon className="w-3 h-3 shrink-0 opacity-90" />
-                      Private
-                    </>
-                  )}
-                </button>
-              );
-            }
-
             return (
               <span
-                className={isShared ? chipShared : chipPrivate}
+                className={`${isShared ? chipShared : chipPrivate} shrink-0 ${scopeToggleSaving ? 'opacity-70' : ''}`}
                 title={
-                  isShared
-                    ? 'Shared with team'
-                    : 'Only the conversation creator can change visibility'
+                  canToggleChatScope
+                    ? isShared
+                      ? 'Shared with team — use ⋮ menu to make private'
+                      : 'Private — use ⋮ menu to share with team'
+                    : isShared
+                      ? 'Shared with team'
+                      : 'Only the conversation creator can change visibility'
                 }
               >
+                {scopeToggleSaving ? (
+                  <span
+                    className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin shrink-0 opacity-80 inline-block align-middle"
+                    aria-hidden
+                  />
+                ) : null}
                 {isShared ? (
                   'Shared'
                 ) : (
@@ -1750,23 +1799,6 @@ export function Chat({
               <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
               Changes
             </span>
-          )}
-          {messages.length > 0 && (
-            <button
-              onClick={() => void handleCopyConversation()}
-              className="p-1.5 rounded-md text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors"
-              title="Copy conversation"
-            >
-              {copySuccess ? (
-                <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-              ) : (
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-              )}
-            </button>
           )}
           {(() => {
             const contextPct = (conversationState?.contextTokens ?? 0) / 200_000;
@@ -1794,7 +1826,7 @@ export function Chat({
           })()}
         </div>
         <div className="flex items-center gap-3">
-          {/* Participant avatars for shared conversations */}
+          {/* Shared: participant avatars only (team-wide visibility; no invite) */}
           {conversationScope === 'shared' && conversationParticipants.length > 0 && (
             <div className="flex items-center gap-2">
               <div className="flex -space-x-2">
@@ -1817,11 +1849,39 @@ export function Chat({
                   </div>
                 )}
               </div>
-              {/* Invite button */}
+            </div>
+          )}
+          {/* Private: avatars + add people */}
+          {conversationScope === 'private' && (
+            <div className="flex items-center gap-2">
+              {conversationParticipants.length > 0 && (
+                <div className="flex -space-x-2">
+                  {conversationParticipants.slice(0, 4).map((p, idx) => (
+                    <Avatar
+                      key={p.id}
+                      user={p}
+                      size="sm"
+                      bordered
+                      className="border-2 border-surface-900"
+                      style={{ zIndex: 4 - idx }}
+                    />
+                  ))}
+                  {conversationParticipants.length > 4 && (
+                    <div
+                      className="w-6 h-6 rounded-full border-2 border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-xs font-medium text-surface-300"
+                      title={`${conversationParticipants.length - 4} more participants`}
+                    >
+                      +{conversationParticipants.length - 4}
+                    </div>
+                  )}
+                </div>
+              )}
               <button
+                type="button"
+                disabled={!userId}
                 onClick={() => setShowInviteModal(true)}
-                className="p-1.5 rounded-md text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors"
-                title="Invite teammate"
+                className="p-1.5 rounded-md text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                title={userId ? 'Add people to this chat' : 'Sign in to add people'}
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
@@ -1830,6 +1890,135 @@ export function Chat({
             </div>
           )}
           <ConnectionStatus state={connectionState} />
+          <div className="relative flex-shrink-0" ref={chatHeaderMenuRef}>
+            <button
+              type="button"
+              className="p-1.5 rounded-md text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors"
+              title={
+                copySuccess
+                  ? 'Conversation copied'
+                  : shareChatLinkCopied
+                    ? 'Link copied'
+                    : 'Chat options'
+              }
+              aria-haspopup="menu"
+              aria-expanded={chatHeaderMenuOpen}
+              onClick={() => setChatHeaderMenuOpen((o) => !o)}
+            >
+              {copySuccess || shareChatLinkCopied ? (
+                <svg className="w-5 h-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              ) : (
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
+                  <circle cx="12" cy="6" r="1.5" />
+                  <circle cx="12" cy="12" r="1.5" />
+                  <circle cx="12" cy="18" r="1.5" />
+                </svg>
+              )}
+            </button>
+            {chatHeaderMenuOpen && (
+              <div
+                className="absolute right-0 top-full mt-1 min-w-[13rem] rounded-lg border border-surface-700 bg-surface-900 py-1 shadow-xl z-[60]"
+                role="menu"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={messages.length === 0}
+                  className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                  onClick={() => void handleMenuCopyConversation()}
+                >
+                  Copy to clipboard
+                </button>
+                {chatId ? (
+                  <>
+                    <div className="my-1 border-t border-surface-800" role="separator" />
+                    {canRenameHeader ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800"
+                        onClick={handleMenuRenameChat}
+                      >
+                        Rename chat
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800"
+                      onClick={handleMenuTogglePin}
+                    >
+                      {isCurrentChatPinned ? 'Unpin chat' : 'Pin chat'}
+                    </button>
+                    {isCurrentChatUnread ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800"
+                        onClick={handleMenuMarkAsRead}
+                      >
+                        Mark as read
+                      </button>
+                    ) : null}
+                  </>
+                ) : null}
+                {canToggleChatScope ? (
+                  <>
+                    <div className="my-1 border-t border-surface-800" role="separator" />
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={scopeToggleSaving || conversationScope === 'shared'}
+                      className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                      onClick={() => {
+                        setChatHeaderMenuOpen(false);
+                        void handleMakeShared();
+                      }}
+                    >
+                      Make shared
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={scopeToggleSaving || conversationScope === 'private'}
+                      className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                      onClick={() => {
+                        setChatHeaderMenuOpen(false);
+                        void handleMakePrivate();
+                      }}
+                    >
+                      Make private
+                    </button>
+                  </>
+                ) : null}
+                <div className="my-1 border-t border-surface-800" role="separator" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!chatId}
+                  className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                  onClick={() => void handleShareChatLink()}
+                >
+                  Share chat
+                </button>
+                {chatId ? (
+                  <>
+                    <div className="my-1 border-t border-surface-800" role="separator" />
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center px-3 py-2 text-left text-sm text-red-400 hover:bg-red-950/30 hover:text-red-300"
+                      onClick={handleMenuDeleteChat}
+                    >
+                      Delete conversation
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -1938,7 +2127,6 @@ export function Chat({
                           status: block.status === 'complete' ? 'complete' : 'running',
                         })}
                         onRetry={handleRetry}
-                        conversationScope={conversationScope}
                         currentUserId={userId}
                       />
                     </div>
@@ -2022,7 +2210,7 @@ export function Chat({
         <div className="relative">
           {mentionPopover.open && mentionSuggestions.length > 0 && (
             <div
-              className="absolute left-0 bottom-full mb-1 w-56 max-h-44 overflow-y-auto rounded-lg border border-surface-700 bg-surface-900 shadow-xl z-50"
+              className="absolute left-0 bottom-full mb-1 min-w-[14rem] max-w-sm max-h-44 overflow-y-auto rounded-lg border border-surface-700 bg-surface-900 shadow-xl z-50"
               role="listbox"
             >
               {mentionSuggestions.slice(0, 8).map((item, idx) => (
@@ -2048,7 +2236,12 @@ export function Chat({
                       Basebase
                     </span>
                   ) : (
-                    <span className="truncate">{item.displayName}</span>
+                    <span className="min-w-0 text-left">
+                      <span className="font-medium">{item.displayName}</span>
+                      {item.email.trim().toLowerCase() !== item.displayName.trim().toLowerCase() ? (
+                        <span className="text-surface-500"> ({item.email})</span>
+                      ) : null}
+                    </span>
                   )}
                 </button>
               ))}
@@ -2323,15 +2516,25 @@ export function Chat({
       )}
 
       {/* Invite Participant Modal */}
-      {showInviteModal && chatId && (
+      {showInviteModal && chatId && userId && (
         <InviteParticipantModal
           conversationId={chatId}
           teamMembers={teamMembersData?.members ?? []}
           existingParticipantIds={new Set(conversationParticipants.map((p) => p.id))}
+          currentUserId={userId}
           onClose={() => setShowInviteModal(false)}
-          onParticipantAdded={(participant) => {
-            setConversationParticipants((prev) => [...prev, participant]);
-            setShowInviteModal(false);
+          onParticipantsAdded={(participants) => {
+            setConversationParticipants((prev) => {
+              const seen: Set<string> = new Set(prev.map((p) => p.id));
+              const merged: typeof prev = [...prev];
+              for (const p of participants) {
+                if (!seen.has(p.id)) {
+                  seen.add(p.id);
+                  merged.push(p);
+                }
+              }
+              return merged;
+            });
           }}
         />
       )}
@@ -2339,73 +2542,134 @@ export function Chat({
   );
 }
 
+type InvitedParticipant = {
+  id: string;
+  name: string | null;
+  email: string;
+  avatarUrl?: string | null;
+};
+
 /**
- * Modal for inviting participants to a shared conversation
+ * Modal for adding teammates to a private conversation (multi-select, search).
  */
 function InviteParticipantModal({
   conversationId,
   teamMembers,
   existingParticipantIds,
+  currentUserId,
   onClose,
-  onParticipantAdded,
+  onParticipantsAdded,
 }: {
   conversationId: string;
-  teamMembers: Array<{ id: string; name: string | null; email: string; avatarUrl: string | null }>;
-  existingParticipantIds: Set<string>;
+  teamMembers: readonly TeamMember[];
+  existingParticipantIds: ReadonlySet<string>;
+  currentUserId: string;
   onClose: () => void;
-  onParticipantAdded: (participant: { id: string; name: string | null; email: string; avatarUrl?: string | null }) => void;
+  onParticipantsAdded: (participants: InvitedParticipant[]) => void;
 }): JSX.Element {
-  const [email, setEmail] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  const emailSuggestions = useMemo(() => {
-    const query = email.trim().toLowerCase();
-    return teamMembers
-      .filter((member) => !existingParticipantIds.has(member.id))
-      .filter((member) => {
-        if (!query) return true;
-        const displayName = (member.name ?? '').toLowerCase();
-        return member.email.toLowerCase().includes(query) || displayName.includes(query);
-      })
-      .slice(0, 6);
-  }, [email, existingParticipantIds, teamMembers]);
+  const selectableMembers: readonly TeamMember[] = useMemo(() => {
+    const q: string = searchQuery.trim().toLowerCase();
+    const filtered: TeamMember[] = teamMembers.filter(
+      (member) => member.id !== currentUserId && !existingParticipantIds.has(member.id),
+    );
+    const matched: TeamMember[] = filtered.filter((member) => {
+      if (q.length === 0) return true;
+      const displayName: string = (member.name ?? '').toLowerCase();
+      return displayName.includes(q) || member.email.toLowerCase().includes(q);
+    });
+    return [...matched].sort((a, b) => {
+      const an: string = (a.name ?? a.email).toLowerCase();
+      const bn: string = (b.name ?? b.email).toLowerCase();
+      return an.localeCompare(bn);
+    });
+  }, [teamMembers, existingParticipantIds, currentUserId, searchQuery]);
 
-  const handleInvite = async (): Promise<void> => {
-    if (!email.trim()) return;
-    
+  const toggleSelected = useCallback((memberId: string): void => {
+    setSelectedIds((prev) => {
+      const next: Set<string> = new Set(prev);
+      if (next.has(memberId)) {
+        next.delete(memberId);
+      } else {
+        next.add(memberId);
+      }
+      return next;
+    });
+    setError(null);
+  }, []);
+
+  const handleAddSelected = async (): Promise<void> => {
+    if (selectedIds.size === 0) return;
+
     setIsLoading(true);
     setError(null);
-    
-    try {
-      const { data, error: inviteError } = await apiRequest<{ participant: { id: string; name: string | null; email: string; avatar_url?: string | null } }>(`/chat/conversations/${conversationId}/participants`, {
-        method: 'POST',
-        body: JSON.stringify({ email: email.trim() }),
-      });
 
-      if (inviteError || !data?.participant) {
-        throw new Error(inviteError || 'Failed to add participant');
+    const added: InvitedParticipant[] = [];
+    let firstFailure: string | null = null;
+
+    for (const userId of selectedIds) {
+      try {
+        const { data, error: inviteError } = await apiRequest<{
+          participant: { id: string; name: string | null; email: string; avatar_url?: string | null };
+        }>(`/chat/conversations/${conversationId}/participants`, {
+          method: 'POST',
+          body: JSON.stringify({ user_id: userId }),
+        });
+
+        if (inviteError || !data?.participant) {
+          firstFailure = firstFailure ?? inviteError ?? 'Failed to add participant';
+          continue;
+        }
+
+        added.push({
+          id: data.participant.id,
+          name: data.participant.name,
+          email: data.participant.email,
+          avatarUrl: data.participant.avatar_url,
+        });
+      } catch (err) {
+        firstFailure =
+          firstFailure ?? (err instanceof Error ? err.message : 'Failed to add participant');
       }
-
-      onParticipantAdded({
-        id: data.participant.id,
-        name: data.participant.name,
-        email: data.participant.email,
-        avatarUrl: data.participant.avatar_url,
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add participant');
-    } finally {
-      setIsLoading(false);
     }
+
+    setIsLoading(false);
+
+    if (added.length === 0) {
+      setError(firstFailure ?? 'Failed to add participants');
+      return;
+    }
+
+    onParticipantsAdded(added);
+
+    if (firstFailure !== null && added.length < selectedIds.size) {
+      setSelectedIds((prev) => {
+        const next: Set<string> = new Set(prev);
+        for (const p of added) {
+          next.delete(p.id);
+        }
+        return next;
+      });
+      setError(`Some people could not be added. ${firstFailure}`);
+      return;
+    }
+
+    onClose();
   };
+
+  const selectedCount: number = selectedIds.size;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-surface-900 rounded-xl border border-surface-700 shadow-xl w-full max-w-md mx-4">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-surface-700">
-          <h3 className="text-lg font-semibold text-surface-100">Invite Teammate</h3>
+      <div className="bg-surface-900 rounded-xl border border-surface-700 shadow-xl w-full max-w-md mx-4 max-h-[min(90vh,32rem)] flex flex-col">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-surface-700 flex-shrink-0">
+          <h3 className="text-lg font-semibold text-surface-100">Add people</h3>
           <button
+            type="button"
             onClick={onClose}
             className="p-1 rounded-md text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors"
           >
@@ -2414,60 +2678,74 @@ function InviteParticipantModal({
             </svg>
           </button>
         </div>
-        <div className="p-4">
-          <label className="block text-sm font-medium text-surface-300 mb-2">
-            Email address
+        <div className="p-4 flex flex-col min-h-0 flex-1">
+          <label htmlFor="invite-teammate-search" className="block text-sm font-medium text-surface-300 mb-2">
+            Search teammates
           </label>
           <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="teammate@company.com"
-            className="w-full px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-surface-100 placeholder-surface-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !isLoading) {
-                void handleInvite();
-              }
-            }}
+            id="invite-teammate-search"
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Filter by name or email…"
+            autoComplete="off"
+            className="w-full px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-surface-100 placeholder-surface-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent flex-shrink-0"
           />
-          {emailSuggestions.length > 0 && (
-            <div className="mt-2 max-h-44 overflow-y-auto rounded-lg border border-surface-700 bg-surface-850">
-              {emailSuggestions.map((member) => (
-                <button
-                  key={member.id}
-                  type="button"
-                  className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-surface-800"
-                  onClick={() => {
-                    setEmail(member.email);
-                    setError(null);
-                  }}
-                >
-                  <span className="truncate text-surface-200">{member.name?.trim() || member.email}</span>
-                  <span className="ml-3 truncate text-xs text-surface-400">{member.email}</span>
-                </button>
-              ))}
-            </div>
-          )}
-          {error && (
-            <p className="mt-2 text-sm text-red-400">{error}</p>
-          )}
-          <p className="mt-2 text-xs text-surface-500">
-            The user must be a member of your team.
+          <div className="mt-3 flex-1 min-h-0 overflow-y-auto rounded-lg border border-surface-700 bg-surface-850">
+            {selectableMembers.length === 0 ? (
+              <p className="px-3 py-4 text-sm text-surface-500 text-center">
+                No teammates match your search.
+              </p>
+            ) : (
+              <ul className="divide-y divide-surface-800" role="listbox" aria-multiselectable="true">
+                {selectableMembers.map((member) => {
+                  const checked: boolean = selectedIds.has(member.id);
+                  const label: string = member.name?.trim() || member.email;
+                  return (
+                    <li key={member.id}>
+                      <label className="flex cursor-pointer items-center gap-3 px-3 py-2.5 hover:bg-surface-800/80">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleSelected(member.id)}
+                          className="h-4 w-4 rounded border-surface-600 text-primary-600 focus:ring-primary-500 flex-shrink-0"
+                        />
+                        <Avatar user={member} size="sm" className="flex-shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-medium text-surface-200">{label}</div>
+                          <div className="truncate text-xs text-surface-500">{member.email}</div>
+                        </div>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+          {error && <p className="mt-2 text-sm text-red-400 flex-shrink-0">{error}</p>}
+          <p className="mt-2 text-xs text-surface-500 flex-shrink-0">
+            Only members of your team can be added.
           </p>
         </div>
-        <div className="flex justify-end gap-2 px-4 py-3 border-t border-surface-700">
+        <div className="flex justify-end gap-2 px-4 py-3 border-t border-surface-700 flex-shrink-0">
           <button
+            type="button"
             onClick={onClose}
             className="px-4 py-2 text-sm font-medium text-surface-300 hover:text-surface-100 hover:bg-surface-800 rounded-lg transition-colors"
           >
             Cancel
           </button>
           <button
-            onClick={() => void handleInvite()}
-            disabled={!email.trim() || isLoading}
+            type="button"
+            onClick={() => void handleAddSelected()}
+            disabled={selectedCount === 0 || isLoading}
             className="px-4 py-2 text-sm font-medium bg-primary-600 text-white rounded-lg hover:bg-primary-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {isLoading ? 'Adding...' : 'Add to Conversation'}
+            {isLoading
+              ? 'Adding…'
+              : selectedCount === 0
+                ? 'Add to conversation'
+                : `Add ${selectedCount} ${selectedCount === 1 ? 'person' : 'people'}`}
           </button>
         </div>
       </div>
@@ -2490,7 +2768,6 @@ function MessageWithBlocks({
   onToolCancel,
   onToolClick,
   onRetry,
-  conversationScope,
   currentUserId,
 }: {
   message: ChatMessage;
@@ -2504,7 +2781,6 @@ function MessageWithBlocks({
   onToolCancel: (operationId: string) => void;
   onToolClick: (block: ToolUseBlock) => void;
   onRetry?: () => void;
-  conversationScope: 'private' | 'shared';
   currentUserId?: string | null;
 }): JSX.Element {
   const blocks = message.contentBlocks ?? [];
@@ -2528,9 +2804,11 @@ function MessageWithBlocks({
       (b): b is AttachmentBlock => b.type === 'attachment',
     );
     
-    // In shared conversations, check if this is from the current user or another participant
-    const isOwnMessage = !message.userId || message.userId === currentUserId;
-    const showSenderInfo = conversationScope === 'shared' && !isOwnMessage;
+    // Own vs other human: for any scope, messages from another user must use message sender fields,
+    // not the viewer's profile (private multi-participant used to wrongly show the logged-in user's avatar).
+    const isOwnMessage: boolean =
+      Boolean(currentUserId) && (!message.userId || message.userId === currentUserId);
+    const showSenderInfo: boolean = !isOwnMessage && Boolean(message.userId);
     
     if (showSenderInfo) {
       const senderName = message.senderName ?? message.senderEmail ?? 'Unknown';

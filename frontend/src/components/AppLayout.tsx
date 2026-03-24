@@ -278,7 +278,6 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
   const setCurrentChatId = useAppStore((state) => state.setCurrentChatId);
   const startNewChat = useAppStore((state) => state.startNewChat);
   const fetchConversations = useAppStore((state) => state.fetchConversations);
-  const deleteConversation = useAppStore((state) => state.deleteConversation);
   const setUser = useAppStore((state) => state.setUser);
   const setActiveTasks = useAppStore((state) => state.setActiveTasks);
   const setConversationActiveTask = useAppStore((state) => state.setConversationActiveTask);
@@ -1600,10 +1599,6 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
     setCurrentView('chat');
   }, [setCurrentChatId, setCurrentView]);
 
-  const handleDeleteChat = useCallback((chatId: string): void => {
-    void deleteConversation(chatId);
-  }, [deleteConversation]);
-
   const handleConversationNotFound = useCallback((): void => {
     setCurrentChatId(null);
   }, [setCurrentChatId]);
@@ -1734,7 +1729,6 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
           pendingChangesCount={pendingChangesCount}
           recentChats={recentChats}
           onSelectChat={handleSelectChat}
-          onDeleteChat={handleDeleteChat}
           currentChatId={currentChatId}
           onNewChat={startNewChat}
           organization={organization}

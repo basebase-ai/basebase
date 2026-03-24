@@ -22,9 +22,10 @@ export const LOGO_PATH: string = BRAND.logoPath;
  */
 export const RELEASE_STAGE = {
   /** Current release stage: 'alpha' | 'beta' | 'ga' | null */
-  stage: 'alpha' as 'alpha' | 'beta' | 'ga' | null,
+  stage: "alpha" as "alpha" | "beta" | "ga" | null,
   /** Message shown to users about the current stage */
-  message: 'Private Alpha',
+  message: "Private Alpha",
   /** Description text for the stage */
-  description: "You're part of an exclusive group helping shape the product. The product is evolving quickly, and your feedback will directly influence what we build next.",
+  description:
+    "You're part of an exclusive group helping shape the product. Please provide your feedback as it will help us what to build next.",
 } as const;
