@@ -424,6 +424,30 @@ Send a message to a Slack channel, DM, or user.
 
         return channels
 
+    async def get_user_channels(self, user_id: str) -> list[dict[str, Any]]:
+        """Get channels a specific Slack user is a member of."""
+        channels: list[dict[str, Any]] = []
+        cursor: Optional[str] = None
+
+        while True:
+            params: dict[str, Any] = {
+                "user": user_id,
+                "types": "public_channel,private_channel",
+                "exclude_archived": "true",
+                "limit": 200,
+            }
+            if cursor:
+                params["cursor"] = cursor
+
+            data = await self._make_request("GET", "users.conversations", params=params)
+            channels.extend(data.get("channels", []))
+
+            cursor = data.get("response_metadata", {}).get("next_cursor")
+            if not cursor:
+                break
+
+        return channels
+
     async def get_channel_info(self, channel_id: str) -> dict[str, Any] | None:
         """Fetch channel metadata via ``conversations.info``. Returns the channel dict or None."""
         try:
@@ -637,6 +661,63 @@ Send a message to a Slack channel, DM, or user.
         """Slack doesn't have contacts in the traditional sense - return 0."""
         return 0
 
+    async def _get_mapped_user_channels(self) -> list[dict[str, Any]]:
+        """Get deduplicated channels for all mapped Slack users in the org.
+
+        Uses ``users.conversations`` per user instead of the global
+        ``conversations.list``, drastically reducing API calls for large
+        workspaces.
+        """
+        from sqlalchemy import select as sa_select
+        from models.external_identity_mapping import ExternalIdentityMapping
+        from models.database import get_session
+
+        async with get_session(organization_id=self.organization_id) as session:
+            result = await session.execute(
+                sa_select(ExternalIdentityMapping.external_userid)
+                .where(
+                    ExternalIdentityMapping.organization_id == uuid.UUID(self.organization_id),
+                    ExternalIdentityMapping.source == "slack",
+                    ExternalIdentityMapping.external_userid.is_not(None),
+                    ExternalIdentityMapping.user_id.is_not(None),
+                )
+                .distinct()
+            )
+            slack_user_ids: list[str] = [row[0] for row in result.all()]
+
+        logger.info(
+            "[Slack Sync] Incremental sync: fetching channels for %d mapped users org=%s",
+            len(slack_user_ids),
+            self.organization_id,
+        )
+
+        seen_channel_ids: set[str] = set()
+        channels: list[dict[str, Any]] = []
+
+        for slack_uid in slack_user_ids:
+            try:
+                user_channels: list[dict[str, Any]] = await self.get_user_channels(slack_uid)
+                for ch in user_channels:
+                    cid: str = ch.get("id", "")
+                    if cid and cid not in seen_channel_ids:
+                        seen_channel_ids.add(cid)
+                        channels.append(ch)
+            except Exception as exc:
+                logger.warning(
+                    "[Slack Sync] Failed to fetch channels for user=%s org=%s: %s",
+                    slack_uid,
+                    self.organization_id,
+                    exc,
+                )
+
+        logger.info(
+            "[Slack Sync] Incremental sync: %d unique channels from %d mapped users org=%s",
+            len(channels),
+            len(slack_user_ids),
+            self.organization_id,
+        )
+        return channels
+
     async def sync_activities(self) -> tuple[int, int]:
         """
         Sync Slack messages as activities.
@@ -672,37 +753,25 @@ Send a message to a Slack channel, DM, or user.
             status="syncing",
         )
         
-        # Get channels, then filter out archived and empty ones.
-        # For incremental syncs, also skip channels with no recent messages
-        # by peeking at the most recent message via conversations.history.
-        all_channels = await self.get_channels()
         oldest_ts: float = self.sync_since.replace(tzinfo=timezone.utc).timestamp() if self.sync_since else (datetime.now(timezone.utc).timestamp() - 7 * 24 * 60 * 60)
-        channels = []
-        for ch in all_channels:
-            if ch.get("is_archived"):
-                continue
-            if (ch.get("num_members") or 0) == 0:
-                continue
-            # On incremental syncs, peek at the latest message to skip
-            # channels with no activity since the last sync.  The channel
-            # metadata ``updated`` field only reflects topic/membership
-            # changes and misses new messages.
-            if self.sync_since:
-                try:
-                    peek = await self.get_channel_messages(
-                        ch["id"], oldest=oldest_ts, limit=1,
-                    )
-                    if not peek:
-                        continue
-                except Exception:
-                    pass  # on error, include the channel to be safe
-            channels.append(ch)
-        logger.info(
-            "[Slack Sync] Retrieved %d channels (%d active/recent) for org=%s",
-            len(all_channels),
-            len(channels),
-            self.organization_id,
-        )
+
+        if self.sync_since:
+            # Incremental sync: only fetch channels the org's mapped users
+            # are in, instead of listing every channel in the workspace.
+            channels = await self._get_mapped_user_channels()
+        else:
+            # First sync: scan all workspace channels.
+            all_channels: list[dict[str, Any]] = await self.get_channels()
+            channels = [
+                ch for ch in all_channels
+                if not ch.get("is_archived") and (ch.get("num_members") or 0) > 0
+            ]
+            logger.info(
+                "[Slack Sync] First sync: %d channels (%d non-archived with members) for org=%s",
+                len(all_channels),
+                len(channels),
+                self.organization_id,
+            )
 
         count = 0
         channels_with_messages = 0
@@ -1037,29 +1106,31 @@ Send a message to a Slack channel, DM, or user.
             )
 
         try:
-            logger.info(
-                "[Slack Sync] Refreshing Slack user mappings before activity sync for org=%s",
-                self.organization_id,
-            )
-            logger.info(
-                "[Slack Sync] Refreshing Slack directory user mappings for org=%s",
-                self.organization_id,
-            )
-            directory_count = await refresh_slack_user_mappings_from_directory(
-                organization_id=self.organization_id,
-                connector=self,
-            )
-            logger.info(
-                "[Slack Sync] Refreshed %d Slack directory user mappings for org=%s",
-                directory_count,
-                self.organization_id,
-            )
-            refreshed_count = await refresh_slack_user_mappings_for_org(self.organization_id)
-            logger.info(
-                "[Slack Sync] Refreshed %d Slack user mappings for org=%s",
-                refreshed_count,
-                self.organization_id,
-            )
+            if self.sync_since:
+                logger.info(
+                    "[Slack Sync] Incremental sync — skipping full directory mapping refresh for org=%s",
+                    self.organization_id,
+                )
+            else:
+                logger.info(
+                    "[Slack Sync] First sync — refreshing Slack directory user mappings for org=%s",
+                    self.organization_id,
+                )
+                directory_count = await refresh_slack_user_mappings_from_directory(
+                    organization_id=self.organization_id,
+                    connector=self,
+                )
+                logger.info(
+                    "[Slack Sync] Refreshed %d Slack directory user mappings for org=%s",
+                    directory_count,
+                    self.organization_id,
+                )
+                refreshed_count = await refresh_slack_user_mappings_for_org(self.organization_id)
+                logger.info(
+                    "[Slack Sync] Refreshed %d Slack user mappings for org=%s",
+                    refreshed_count,
+                    self.organization_id,
+                )
         except Exception as exc:
             logger.warning(
                 "[Slack Sync] Failed to refresh Slack user mappings for org=%s: %s",
