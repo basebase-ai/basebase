@@ -13,6 +13,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -40,8 +41,70 @@ class GoogleCalendarConnector(BaseConnector):
         entity_types=["activities"],
         capabilities=[Capability.SYNC, Capability.ACTION],
         nango_integration_id="google-calendar",
-        description="Google Calendar – event sync and Meet huddle management",
+        description="Google Calendar – event sync, scheduled meetings with Meet, and huddle management",
         actions=[
+            ConnectorAction(
+                name="schedule_meeting",
+                description=(
+                    "Create a calendar event at a specific time, invite attendees by email, "
+                    "and optionally add a Google Meet link. Sends calendar invites when send_updates is 'all'."
+                ),
+                parameters=[
+                    {"name": "title", "type": "string", "required": True, "description": "Event title / subject"},
+                    {
+                        "name": "start_datetime",
+                        "type": "string",
+                        "required": True,
+                        "description": "Start time as ISO 8601 (include offset, e.g. 2025-03-24T09:00:00-07:00, or use time_zone with a naive local time)",
+                    },
+                    {
+                        "name": "end_datetime",
+                        "type": "string",
+                        "required": False,
+                        "description": "End time as ISO 8601. Omit to use duration_minutes from start.",
+                    },
+                    {
+                        "name": "duration_minutes",
+                        "type": "integer",
+                        "required": False,
+                        "description": "Length in minutes when end_datetime is omitted (default: 60)",
+                    },
+                    {
+                        "name": "attendee_emails",
+                        "type": "array",
+                        "required": False,
+                        "description": "Guest email addresses to invite (RFC5322). Omit or [] for no guests besides the organizer.",
+                    },
+                    {"name": "description", "type": "string", "required": False, "description": "Event description / agenda (plain text)"},
+                    {
+                        "name": "time_zone",
+                        "type": "string",
+                        "required": False,
+                        "description": "IANA time zone (e.g. America/Los_Angeles) if start/end are naive local times",
+                    },
+                    {
+                        "name": "add_google_meet",
+                        "type": "boolean",
+                        "required": False,
+                        "description": "Add a Google Meet conference to the event (default: true)",
+                    },
+                    {
+                        "name": "send_updates",
+                        "type": "string",
+                        "required": False,
+                        "description": "Invitation emails: 'all' (default), 'externalOnly', or 'none'",
+                    },
+                    {
+                        "name": "include_gemini_notes_hint",
+                        "type": "boolean",
+                        "required": False,
+                        "description": (
+                            "Append instructions to the description for enabling “Take notes with Gemini” "
+                            "in Google Calendar (Video call options); the API cannot toggle this automatically."
+                        ),
+                    },
+                ],
+            ),
             ConnectorAction(
                 name="create_huddle",
                 description="Create an instant Google Meet huddle. Returns a Meet link and meeting code to share with participants.",
@@ -59,11 +122,20 @@ class GoogleCalendarConnector(BaseConnector):
             ),
         ],
         usage_guide=(
-            "Use create_huddle to start an instant Google Meet meeting — it returns "
-            "a meet_link and meeting_code. Share the link with participants directly. "
-            "Use end_huddle to wrap up. Recordings must be started manually in Meet; "
-            "they are auto-fetched via Meet API after the huddle ends."
+            "**schedule_meeting needs write scopes:** If Google returns 403 insufficient scopes on insert, the Nango "
+            "`google-calendar` integration must request `https://www.googleapis.com/auth/calendar.events` (not "
+            "`…calendar.events.readonly` or `…calendar.readonly`). Add that scope in Google Cloud OAuth consent + "
+            "enable Calendar API, then the user must **disconnect and reconnect** Google Calendar so the token is re-issued. "
+            "Use schedule_meeting to book a future calendar event with optional guests and a Google Meet link "
+            "(set add_google_meet true). Pass attendee_emails for invitations; use send_updates 'all' to email guests. "
+            "Times must be ISO 8601 with offset, or naive local times plus time_zone. For Gemini meeting notes, set "
+            "include_gemini_notes_hint true so the description explains how the organizer enables “Take notes with Gemini” "
+            "in Calendar (Google does not expose this in the API). Use create_huddle for an instant Meet; use end_huddle "
+            "to end a huddle. Recordings are started manually in Meet; huddle recordings are auto-fetched via Meet API after end."
         ),
+        oauth_scopes=[
+            "https://www.googleapis.com/auth/calendar.events",
+        ],
     )
 
     async def _get_headers(self) -> dict[str, str]:
@@ -688,6 +760,45 @@ class GoogleCalendarConnector(BaseConnector):
         # Simplified for MVP
         return {}
 
+    _GEMINI_NOTES_HINT = (
+        "\n\n---\nGemini notes: This cannot be toggled via API. The organizer should open this event in "
+        "Google Calendar → Video call options → enable “Take notes with Gemini” (requires eligible Workspace / Gemini)."
+    )
+
+    @staticmethod
+    def _parse_iso_datetime(value: str) -> datetime:
+        s = value.strip().replace("Z", "+00:00")
+        return datetime.fromisoformat(s)
+
+    @staticmethod
+    def _ensure_timezone(dt: datetime, time_zone: Optional[str]) -> datetime:
+        if dt.tzinfo is not None:
+            return dt
+        if not time_zone or not time_zone.strip():
+            raise ValueError(
+                "Datetime has no UTC offset; pass time_zone (IANA), e.g. America/Los_Angeles"
+            )
+        return dt.replace(tzinfo=ZoneInfo(time_zone.strip()))
+
+    async def _insert_calendar_event(
+        self,
+        calendar_id: str,
+        body: dict[str, Any],
+        *,
+        conference_data_version: int,
+        send_updates: str,
+    ) -> dict[str, Any]:
+        encoded_calendar_id = calendar_id.replace("@", "%40")
+        params: dict[str, Any] = {"sendUpdates": send_updates}
+        if conference_data_version:
+            params["conferenceDataVersion"] = conference_data_version
+        return await self._make_request(
+            "POST",
+            f"/calendars/{encoded_calendar_id}/events",
+            params=params,
+            json_body=body,
+        )
+
     async def create_event(
         self,
         summary: str,
@@ -696,23 +807,197 @@ class GoogleCalendarConnector(BaseConnector):
         description: Optional[str] = None,
         attendees: Optional[list[str]] = None,
         calendar_id: str = "primary",
+        add_google_meet: bool = True,
+        send_updates: str = "all",
+        time_zone: Optional[str] = None,
+        include_gemini_notes_hint: bool = False,
     ) -> dict[str, Any]:
-        """Create a new calendar event."""
-        # This would require POST capability
-        # Placeholder for future implementation
-        raise NotImplementedError("Event creation not implemented in MVP")
+        """Create a calendar event via Google Calendar API (programmatic use)."""
+        start_aware = self._ensure_timezone(start_time, time_zone)
+        end_aware = self._ensure_timezone(end_time, time_zone)
+        desc = description or ""
+        if include_gemini_notes_hint:
+            desc = (desc + self._GEMINI_NOTES_HINT).strip()
+        guest_emails: list[str] = []
+        if attendees:
+            guest_emails = [e.strip() for e in attendees if e and str(e).strip()]
+        body = self._build_event_insert_body(
+            title=summary,
+            start_aware=start_aware,
+            end_aware=end_aware,
+            description=desc or None,
+            attendee_emails=guest_emails,
+            add_google_meet=add_google_meet,
+        )
+        version = 1 if add_google_meet else 0
+        return await self._insert_calendar_event(
+            calendar_id,
+            body,
+            conference_data_version=version,
+            send_updates=send_updates,
+        )
+
+    @staticmethod
+    def _build_event_insert_body(
+        title: str,
+        start_aware: datetime,
+        end_aware: datetime,
+        description: Optional[str],
+        attendee_emails: list[str],
+        add_google_meet: bool,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "summary": title,
+            "start": {"dateTime": start_aware.isoformat()},
+            "end": {"dateTime": end_aware.isoformat()},
+        }
+        if description:
+            body["description"] = description
+        if attendee_emails:
+            body["attendees"] = [{"email": email} for email in attendee_emails]
+        if add_google_meet:
+            body["conferenceData"] = {
+                "createRequest": {
+                    "requestId": uuid.uuid4().hex,
+                    "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                }
+            }
+        return body
 
     # ------------------------------------------------------------------
     # ACTION capability – huddle management
     # ------------------------------------------------------------------
 
     async def execute_action(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
-        """Dispatch huddle actions."""
+        """Dispatch calendar and huddle actions."""
+        if action == "schedule_meeting":
+            return await self._action_schedule_meeting(params)
         if action == "create_huddle":
             return await self._action_create_huddle(params)
         if action == "end_huddle":
             return await self._action_end_huddle(params)
         raise ValueError(f"Unknown action: {action}")
+
+    async def _action_schedule_meeting(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Create a scheduled Google Calendar event with optional Meet and guests."""
+        title = (params.get("title") or "").strip()
+        if not title:
+            return {"status": "error", "error": "schedule_meeting requires a non-empty title"}
+
+        start_raw = params.get("start_datetime")
+        if not start_raw or not str(start_raw).strip():
+            return {"status": "error", "error": "schedule_meeting requires start_datetime (ISO 8601)"}
+        try:
+            start_dt = self._parse_iso_datetime(str(start_raw))
+        except ValueError as e:
+            return {"status": "error", "error": f"Invalid start_datetime: {e}"}
+
+        time_zone: Optional[str] = params.get("time_zone")
+        if isinstance(time_zone, str):
+            time_zone = time_zone.strip() or None
+        else:
+            time_zone = None
+
+        try:
+            start_aware = self._ensure_timezone(start_dt, time_zone)
+        except ValueError as e:
+            return {"status": "error", "error": str(e)}
+
+        end_raw = params.get("end_datetime")
+        end_aware: Optional[datetime] = None
+        if end_raw and str(end_raw).strip():
+            try:
+                end_dt = self._parse_iso_datetime(str(end_raw))
+                end_aware = self._ensure_timezone(end_dt, time_zone)
+            except ValueError as e:
+                return {"status": "error", "error": f"Invalid end_datetime: {e}"}
+
+        if end_aware is None:
+            try:
+                duration_minutes = int(params.get("duration_minutes", 60))
+            except (TypeError, ValueError):
+                return {"status": "error", "error": "duration_minutes must be an integer"}
+            if duration_minutes < 1 or duration_minutes > 24 * 60:
+                return {
+                    "status": "error",
+                    "error": "duration_minutes must be between 1 and 1440",
+                }
+            end_aware = start_aware + timedelta(minutes=duration_minutes)
+
+        if end_aware <= start_aware:
+            return {"status": "error", "error": "end must be after start"}
+
+        description: Optional[str] = None
+        if params.get("description"):
+            description = str(params["description"]).strip() or None
+        if params.get("include_gemini_notes_hint") is True:
+            base = description or ""
+            description = (base + self._GEMINI_NOTES_HINT).strip()
+
+        add_google_meet: bool = params.get("add_google_meet", True) is not False
+
+        raw_attendees = params.get("attendee_emails")
+        attendee_emails: list[str] = []
+        if isinstance(raw_attendees, list):
+            attendee_emails = [str(e).strip() for e in raw_attendees if str(e).strip()]
+        elif raw_attendees is not None and str(raw_attendees).strip():
+            attendee_emails = [str(raw_attendees).strip()]
+
+        send_updates_raw = params.get("send_updates", "all")
+        send_updates = str(send_updates_raw).strip().lower() if send_updates_raw else "all"
+        if send_updates not in ("all", "externalonly", "none"):
+            return {
+                "status": "error",
+                "error": "send_updates must be 'all', 'externalOnly', or 'none'",
+            }
+        if send_updates == "externalonly":
+            send_updates_api = "externalOnly"
+        elif send_updates == "none":
+            send_updates_api = "none"
+        else:
+            send_updates_api = "all"
+
+        body = self._build_event_insert_body(
+            title=title,
+            start_aware=start_aware,
+            end_aware=end_aware,
+            description=description,
+            attendee_emails=attendee_emails,
+            add_google_meet=add_google_meet,
+        )
+
+        try:
+            created = await self._insert_calendar_event(
+                "primary",
+                body,
+                conference_data_version=1 if add_google_meet else 0,
+                send_updates=send_updates_api,
+            )
+        except httpx.HTTPStatusError as exc:
+            err_text = exc.response.text
+            logger.error("Calendar events.insert failed: %s %s", exc.response.status_code, err_text)
+            return {
+                "status": "error",
+                "error": f"Google Calendar API error ({exc.response.status_code}): {err_text}",
+            }
+
+        meet_link = created.get("hangoutLink") or ""
+        conf = created.get("conferenceData") or {}
+        entry_points: list[dict[str, Any]] = conf.get("entryPoints") or []
+        for ep in entry_points:
+            if ep.get("entryPointType") == "video" and ep.get("uri"):
+                meet_link = str(ep["uri"])
+                break
+
+        return {
+            "status": "ok",
+            "event_id": created.get("id", ""),
+            "html_link": created.get("htmlLink", ""),
+            "meet_link": meet_link,
+            "title": title,
+            "start_datetime": start_aware.isoformat(),
+            "end_datetime": end_aware.isoformat(),
+        }
 
     async def _action_create_huddle(self, params: dict[str, Any]) -> dict[str, Any]:
         """Create an instant Google Meet huddle via Meet REST API v2."""
