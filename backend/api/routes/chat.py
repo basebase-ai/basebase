@@ -36,6 +36,7 @@ from models.chat_attachment import ChatAttachment
 from models.chat_message import ChatMessage
 from models.conversation import Conversation
 from models.database import get_session
+from models.org_member import OrgMember
 from models.user import User
 from services.file_handler import store_file, MAX_FILE_SIZE
 from services.slack_identity import get_slack_user_ids_for_revtops_user
@@ -724,8 +725,18 @@ async def add_participant(
         if not target_user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Verify user is in the same organization
-        if target_user.organization_id != auth.organization_id:
+        # Match team roster: org membership (multi-org users may have a different User.organization_id)
+        conv_org_id = conversation.organization_id
+        if conv_org_id is None:
+            raise HTTPException(status_code=400, detail="Conversation has no organization")
+        membership_row = await session.execute(
+            select(OrgMember.id).where(
+                OrgMember.user_id == target_user.id,
+                OrgMember.organization_id == conv_org_id,
+                OrgMember.status.in_(("active", "onboarding", "invited")),
+            )
+        )
+        if membership_row.scalar_one_or_none() is None:
             raise HTTPException(status_code=403, detail="User is not in your organization")
 
         # Check if already a participant
