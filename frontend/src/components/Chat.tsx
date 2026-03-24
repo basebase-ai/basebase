@@ -248,7 +248,7 @@ function SummaryCard({ summary }: { summary: ConversationSummaryData }): JSX.Ele
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="mx-auto max-w-4xl mb-3">
+    <div className="mb-3">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -1592,7 +1592,7 @@ export function Chat({
         </header>
 
         <div className="flex-1 overflow-hidden p-3 md:p-6">
-          <div className="max-w-4xl mx-auto space-y-6">
+          <div className="space-y-6">
             <div className="flex gap-3">
               <div className="w-7 h-7 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-0.5" />
               <div className="space-y-2 flex-1 max-w-[65%]">
@@ -1627,7 +1627,7 @@ export function Chat({
         </div>
 
         <div className="flex-shrink-0 border-t border-surface-800 p-3 md:p-4">
-          <div className="max-w-4xl mx-auto">
+          <div>
             <div className="h-11 rounded-xl bg-surface-800 animate-pulse" />
           </div>
         </div>
@@ -1900,7 +1900,7 @@ export function Chat({
                 <EmptyState onSuggestionClick={handleSuggestionClick} />
               )
             ) : (
-              <div className="max-w-4xl mx-auto">
+              <div>
                 {hasMoreMessages && (
                   <div className="flex justify-center py-2">
                     <button
@@ -2019,7 +2019,7 @@ export function Chat({
 
       {/* Composer */}
       <div className="px-3 md:px-5 pb-3 pt-1">
-        <div className="max-w-4xl mx-auto relative">
+        <div className="relative">
           {mentionPopover.open && mentionSuggestions.length > 0 && (
             <div
               className="absolute left-0 bottom-full mb-1 w-56 max-h-44 overflow-y-auto rounded-lg border border-surface-700 bg-surface-900 shadow-xl z-50"
