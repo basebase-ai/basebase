@@ -15,7 +15,6 @@ import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import type { View, ChatSummary, OrganizationInfo } from './AppLayout';
 import { useAppStore, useAuthStore, useChatStore, useIsGlobalAdmin, useActiveTasksByConversation, type UserOrganization } from '../store';
-import { updateConversation } from '../api/client';
 import { apiRequest } from '../lib/api';
 import { FaLifeRing } from 'react-icons/fa';
 import { Avatar, type AvatarUser } from './Avatar';
@@ -420,7 +419,6 @@ interface SidebarProps {
   pendingChangesCount: number;
   recentChats: ChatSummary[];
   onSelectChat: (id: string) => void;
-  onDeleteChat: (id: string) => void;
   currentChatId: string | null;
   onNewChat: () => void;
   organization: OrganizationInfo;
@@ -500,7 +498,6 @@ export function Sidebar({
   pendingChangesCount,
   recentChats,
   onSelectChat,
-  onDeleteChat,
   currentChatId,
   onNewChat,
   organization,
@@ -516,10 +513,8 @@ export function Sidebar({
   // Read user directly from store to ensure we always have the latest value
   const user = useAppStore((state) => state.user);
   const pinnedChatIds = useAppStore((state) => state.pinnedChatIds);
-  const togglePinChat = useAppStore((state) => state.togglePinChat);
   const isGlobalAdmin = useIsGlobalAdmin();
   const activeTasksByConversation = useActiveTasksByConversation();
-  const unreadConversationIds = useChatStore((state) => state.unreadConversationIds);
   const storedWidth = useAppStore((state) => state.sidebarWidth);
   const widthPx = collapsed ? 64 : storedWidth;
 
@@ -685,12 +680,7 @@ export function Sidebar({
         orderedChats={orderedChats}
         currentChatId={currentChatId}
         activeTasksByConversation={activeTasksByConversation}
-        unreadConversationIds={unreadConversationIds}
-        pinnedChatIds={pinnedChatIds}
-        currentUserId={user?.id ?? null}
         onSelectChat={onSelectChat}
-        onDeleteChat={onDeleteChat}
-        togglePinChat={togglePinChat}
         onViewAll={() => onViewChange('chats')}
       />
 
@@ -738,77 +728,30 @@ function formatRelativeTime(date: Date): string {
   return date.toLocaleDateString();
 }
 
-/** Recent chats: shared + private in one list (recency), pinned first; lock marks private. */
+/** Recent chats: shared + private in one list (recency), pinned first; lock marks private. Row actions live in the chat ⋮ menu. */
 function ChatAccordion({
   collapsed,
   orderedChats,
   currentChatId,
   activeTasksByConversation,
-  unreadConversationIds,
-  pinnedChatIds,
-  currentUserId,
   onSelectChat,
-  onDeleteChat,
-  togglePinChat,
   onViewAll,
 }: {
   collapsed: boolean;
   orderedChats: ChatSummary[];
   currentChatId: string | null;
   activeTasksByConversation: Record<string, string>;
-  unreadConversationIds: Set<string>;
-  pinnedChatIds: string[];
-  currentUserId: string | null;
   onSelectChat: (id: string) => void;
-  onDeleteChat: (id: string) => void;
-  togglePinChat: (id: string) => void;
   onViewAll: () => void;
 }): JSX.Element | null {
-  const [editingChatId, setEditingChatId] = useState<string | null>(null);
-  const [editingTitle, setEditingTitle] = useState('');
-  const editInputRef = useRef<HTMLInputElement>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const setConversationTitle = useAppStore((s) => s.setConversationTitle);
   const prefetchConversation = useAppStore((s) => s.prefetchConversation);
+  const pinnedChatIds = useAppStore((s) => s.pinnedChatIds);
+  const unreadConversationIds = useChatStore((s) => s.unreadConversationIds);
 
   useEffect(() => {
     return () => { if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); };
   }, []);
-
-  const canRename = useCallback((chat: ChatSummary): boolean => {
-    if (chat.scope === 'private') return true;
-    return chat.userId === currentUserId;
-  }, [currentUserId]);
-
-  const startEditing = useCallback((chat: ChatSummary) => {
-    if (!canRename(chat)) return;
-    setEditingChatId(chat.id);
-    setEditingTitle(chat.title);
-  }, [canRename]);
-
-  const saveTitle = useCallback(async (chatId: string) => {
-    const trimmed = editingTitle.trim();
-    setEditingChatId(null);
-    if (!trimmed || trimmed === orderedChats.find(c => c.id === chatId)?.title) return;
-    setConversationTitle(chatId, trimmed);
-    const { error } = await updateConversation(chatId, trimmed);
-    if (error) {
-      const original = orderedChats.find(c => c.id === chatId)?.title ?? 'New Chat';
-      setConversationTitle(chatId, original);
-    }
-  }, [editingTitle, orderedChats, setConversationTitle]);
-
-  const cancelEditing = useCallback(() => {
-    setEditingChatId(null);
-  }, []);
-
-  // Auto-focus and select-all when entering edit mode
-  useEffect(() => {
-    if (editingChatId && editInputRef.current) {
-      editInputRef.current.focus();
-      editInputRef.current.select();
-    }
-  }, [editingChatId]);
 
   const recentSidebarChats = useMemo(() => {
     const pinnedSet = new Set(pinnedChatIds);
@@ -824,22 +767,19 @@ function ChatAccordion({
 
   if (collapsed) return null;
 
-  const renderChatItem = (chat: ChatSummary) => {
+  const renderChatItem = (chat: ChatSummary): JSX.Element => {
     const hasActiveTask = chat.id in activeTasksByConversation;
     const isUnread = unreadConversationIds.has(chat.id);
-    const isPinned = pinnedChatIds.includes(chat.id);
-    const isEditing = editingChatId === chat.id;
-    const isRenamable = canRename(chat);
 
     return (
       <div
         key={chat.id}
-        className={`relative w-full text-left px-2 py-1 rounded-md transition-colors group cursor-pointer leading-tight ${
+        className={`relative w-full text-left px-2 py-1 rounded-md transition-colors cursor-pointer leading-tight ${
           currentChatId === chat.id
             ? 'bg-surface-800 text-surface-100'
             : 'text-surface-400 hover:text-surface-200 hover:bg-surface-800/50'
         }`}
-        onClick={() => { if (!isEditing) onSelectChat(chat.id); }}
+        onClick={() => onSelectChat(chat.id)}
         onMouseEnter={() => {
           if (currentChatId === chat.id) return;
           hoverTimerRef.current = setTimeout(() => prefetchConversation(chat.id), 100);
@@ -848,7 +788,7 @@ function ChatAccordion({
           if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
         }}
       >
-        <div className="flex items-center gap-1 pr-14">
+        <div className="flex items-center gap-1">
           {chat.scope === 'private' && (
             <span className="flex shrink-0 text-surface-500" title="Private">
               <ScopeLockIcon className="w-3 h-3" />
@@ -859,31 +799,15 @@ function ChatAccordion({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
           )}
-          {isEditing ? (
-            <input
-              ref={editInputRef}
-              type="text"
-              value={editingTitle}
-              onChange={(e) => setEditingTitle(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void saveTitle(chat.id);
-                if (e.key === 'Escape') cancelEditing();
-              }}
-              onBlur={() => void saveTitle(chat.id)}
-              onClick={(e) => e.stopPropagation()}
-              className="truncate text-sm flex-1 bg-transparent border-b border-primary-500 outline-none text-surface-100 py-0 px-0 leading-tight"
-              maxLength={100}
-            />
-          ) : (
-            <div
-              className="truncate text-sm flex-1 leading-tight"
-              onDoubleClick={(e) => { e.stopPropagation(); startEditing(chat); }}
-            >
-              {chat.title}
-            </div>
-          )}
+          <div className="truncate text-sm flex-1 leading-tight">
+            {chat.title}
+          </div>
           {isUnread && (
-            <span className="w-2 h-2 rounded-full bg-primary-500 flex-shrink-0" title="Unread" />
+            <span
+              className="w-3 h-3 rounded-full bg-primary-500 flex-shrink-0 ring-2 ring-primary-500/25"
+              title="Unread"
+              aria-label="Unread"
+            />
           )}
           {hasActiveTask && (
             <svg className="w-3 h-3 text-primary-400 flex-shrink-0 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -918,47 +842,6 @@ function ChatAccordion({
             {formatRelativeTime(chat.lastMessageAt)}
           </span>
         </div>
-        {/* Rename button */}
-        {isRenamable && !isEditing && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              startEditing(chat);
-            }}
-            className="absolute right-12 top-1/2 -translate-y-1/2 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-surface-700 text-surface-500 hover:text-surface-300 transition-all"
-            title="Rename conversation"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-            </svg>
-          </button>
-        )}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            togglePinChat(chat.id);
-          }}
-          className={`absolute right-7 top-1/2 -translate-y-1/2 p-0.5 rounded ${
-            isPinned ? 'opacity-100 text-primary-400' : 'opacity-0 text-surface-500'
-          } group-hover:opacity-100 hover:bg-surface-700 hover:text-surface-300 transition-all`}
-          title={isPinned ? "Unpin conversation" : "Pin conversation"}
-        >
-          <svg className={`w-3.5 h-3.5 ${isPinned ? 'text-primary-400' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
-          </svg>
-        </button>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDeleteChat(chat.id);
-          }}
-          className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-surface-700 text-surface-500 hover:text-surface-300 transition-all"
-          title="Delete conversation"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
       </div>
     );
   };

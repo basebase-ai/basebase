@@ -30,6 +30,7 @@ import { crossTab } from '../lib/crossTab';
 import { APP_NAME, LOGO_PATH } from '../lib/brand';
 import {
   useAppStore,
+  useChatStore,
   useConversationState,
   useActiveTasksByConversation,
   useConnectedIntegrations,
@@ -364,6 +365,9 @@ export function Chat({
   }>>([]);
   const [isWorkflowPolling, setIsWorkflowPolling] = useState<boolean>(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [chatHeaderMenuOpen, setChatHeaderMenuOpen] = useState<boolean>(false);
+  const [shareChatLinkCopied, setShareChatLinkCopied] = useState<boolean>(false);
+  const chatHeaderMenuRef = useRef<HTMLDivElement>(null);
   const [newConversationScope, setNewConversationScope] = useState<'private' | 'shared'>('shared');
   /** True while PATCH /scope is in flight (optimistic UI already applied). */
   const [scopeToggleSaving, setScopeToggleSaving] = useState(false);
@@ -401,6 +405,7 @@ export function Chat({
         type: 'user' as const,
         displayName: (m.name ?? m.email).trim() || m.email,
         userId: m.id,
+        email: m.email,
       }));
     return showAgentOption ? [agentOption, ...userOptions] : userOptions;
   }, [teamMembersData?.members, mentionPopover.query]);
@@ -1469,10 +1474,60 @@ export function Chat({
     }
   }, [messages]);
 
+  const handleMenuCopyConversation = useCallback(async (): Promise<void> => {
+    setShareChatLinkCopied(false);
+    await handleCopyConversation();
+    setChatHeaderMenuOpen(false);
+  }, [handleCopyConversation]);
+
+  const handleShareChatLink = useCallback(async (): Promise<void> => {
+    if (!chatId) return;
+    setCopySuccess(false);
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setShareChatLinkCopied(true);
+      setChatHeaderMenuOpen(false);
+      window.setTimeout(() => setShareChatLinkCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy share link:', err);
+    }
+  }, [chatId]);
+
+  useEffect(() => {
+    if (!chatHeaderMenuOpen) return;
+    const onPointerDown = (e: PointerEvent): void => {
+      const el: HTMLDivElement | null = chatHeaderMenuRef.current;
+      if (el && !el.contains(e.target as Node)) {
+        setChatHeaderMenuOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setChatHeaderMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [chatHeaderMenuOpen]);
+
   // Check if the current user can rename this conversation
   const canRenameHeader = chatId && (
     conversationScope === 'private' || conversationCreatorId === userId
   );
+
+  const canToggleChatScope: boolean =
+    userId != null &&
+    conversationCreatorId != null &&
+    conversationCreatorId === userId &&
+    Boolean(chatId);
+
+  const togglePinChat = useAppStore((s) => s.togglePinChat);
+  const pinnedChatIds = useAppStore((s) => s.pinnedChatIds);
+  const deleteConversation = useAppStore((s) => s.deleteConversation);
+  const isCurrentChatUnread = useChatStore((s) => Boolean(chatId && s.unreadConversationIds.has(chatId)));
+  const isCurrentChatPinned: boolean = Boolean(chatId && pinnedChatIds.includes(chatId));
 
   const startEditingHeaderTitle = useCallback(() => {
     if (!canRenameHeader) return;
@@ -1498,6 +1553,29 @@ export function Chat({
   const cancelEditingHeaderTitle = useCallback(() => {
     setIsEditingHeaderTitle(false);
   }, []);
+
+  const handleMenuRenameChat = useCallback((): void => {
+    setChatHeaderMenuOpen(false);
+    startEditingHeaderTitle();
+  }, [startEditingHeaderTitle]);
+
+  const handleMenuTogglePin = useCallback((): void => {
+    if (!chatId) return;
+    setChatHeaderMenuOpen(false);
+    togglePinChat(chatId);
+  }, [chatId, togglePinChat]);
+
+  const handleMenuMarkAsRead = useCallback((): void => {
+    if (!chatId) return;
+    setChatHeaderMenuOpen(false);
+    clearUnreadConversation(chatId);
+  }, [chatId, clearUnreadConversation]);
+
+  const handleMenuDeleteChat = useCallback((): void => {
+    if (!chatId) return;
+    setChatHeaderMenuOpen(false);
+    void deleteConversation(chatId);
+  }, [chatId, deleteConversation]);
 
   type ParticipantRow = { id: string; name: string | null; email: string; avatarUrl?: string | null };
 
@@ -1670,62 +1748,33 @@ export function Chat({
               )}
             </div>
           )}
-          {/* Scope: compact chip; optimistic flip + spinner while saving */}
+          {/* Scope: read-only chip; owner changes visibility from ⋮ menu */}
           {chatId && (() => {
-            const canToggleScope: boolean =
-              userId != null
-              && conversationCreatorId != null
-              && conversationCreatorId === userId;
             const isShared: boolean = conversationScope === 'shared';
             const chipStatic: string =
               'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide';
             const chipShared: string = `${chipStatic} bg-primary-500/15 text-primary-400/90`;
             const chipPrivate: string = `${chipStatic} bg-surface-700 text-surface-400`;
 
-            if (canToggleScope) {
-              return (
-                <button
-                  type="button"
-                  disabled={scopeToggleSaving}
-                  onClick={() => {
-                    if (scopeToggleSaving) return;
-                    void (isShared ? handleMakePrivate() : handleMakeShared());
-                  }}
-                  className={`${isShared ? chipShared : chipPrivate} hover:opacity-90 disabled:opacity-70 disabled:cursor-wait transition-opacity shrink-0`}
-                  title={
-                    isShared
-                      ? 'Click to make private (only you)'
-                      : 'Click to share with team'
-                  }
-                  aria-busy={scopeToggleSaving}
-                >
-                  {scopeToggleSaving ? (
-                    <span
-                      className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin shrink-0 opacity-80"
-                      aria-hidden
-                    />
-                  ) : null}
-                  {isShared ? (
-                    'Shared'
-                  ) : (
-                    <>
-                      <ScopeLockIcon className="w-3 h-3 shrink-0 opacity-90" />
-                      Private
-                    </>
-                  )}
-                </button>
-              );
-            }
-
             return (
               <span
-                className={isShared ? chipShared : chipPrivate}
+                className={`${isShared ? chipShared : chipPrivate} shrink-0 ${scopeToggleSaving ? 'opacity-70' : ''}`}
                 title={
-                  isShared
-                    ? 'Shared with team'
-                    : 'Only the conversation creator can change visibility'
+                  canToggleChatScope
+                    ? isShared
+                      ? 'Shared with team — use ⋮ menu to make private'
+                      : 'Private — use ⋮ menu to share with team'
+                    : isShared
+                      ? 'Shared with team'
+                      : 'Only the conversation creator can change visibility'
                 }
               >
+                {scopeToggleSaving ? (
+                  <span
+                    className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin shrink-0 opacity-80 inline-block align-middle"
+                    aria-hidden
+                  />
+                ) : null}
                 {isShared ? (
                   'Shared'
                 ) : (
@@ -1750,23 +1799,6 @@ export function Chat({
               <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
               Changes
             </span>
-          )}
-          {messages.length > 0 && (
-            <button
-              onClick={() => void handleCopyConversation()}
-              className="p-1.5 rounded-md text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors"
-              title="Copy conversation"
-            >
-              {copySuccess ? (
-                <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-              ) : (
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-              )}
-            </button>
           )}
           {(() => {
             const contextPct = (conversationState?.contextTokens ?? 0) / 200_000;
@@ -1858,6 +1890,135 @@ export function Chat({
             </div>
           )}
           <ConnectionStatus state={connectionState} />
+          <div className="relative flex-shrink-0" ref={chatHeaderMenuRef}>
+            <button
+              type="button"
+              className="p-1.5 rounded-md text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors"
+              title={
+                copySuccess
+                  ? 'Conversation copied'
+                  : shareChatLinkCopied
+                    ? 'Link copied'
+                    : 'Chat options'
+              }
+              aria-haspopup="menu"
+              aria-expanded={chatHeaderMenuOpen}
+              onClick={() => setChatHeaderMenuOpen((o) => !o)}
+            >
+              {copySuccess || shareChatLinkCopied ? (
+                <svg className="w-5 h-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              ) : (
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
+                  <circle cx="12" cy="6" r="1.5" />
+                  <circle cx="12" cy="12" r="1.5" />
+                  <circle cx="12" cy="18" r="1.5" />
+                </svg>
+              )}
+            </button>
+            {chatHeaderMenuOpen && (
+              <div
+                className="absolute right-0 top-full mt-1 min-w-[13rem] rounded-lg border border-surface-700 bg-surface-900 py-1 shadow-xl z-[60]"
+                role="menu"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={messages.length === 0}
+                  className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                  onClick={() => void handleMenuCopyConversation()}
+                >
+                  Copy to clipboard
+                </button>
+                {chatId ? (
+                  <>
+                    <div className="my-1 border-t border-surface-800" role="separator" />
+                    {canRenameHeader ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800"
+                        onClick={handleMenuRenameChat}
+                      >
+                        Rename chat
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800"
+                      onClick={handleMenuTogglePin}
+                    >
+                      {isCurrentChatPinned ? 'Unpin chat' : 'Pin chat'}
+                    </button>
+                    {isCurrentChatUnread ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800"
+                        onClick={handleMenuMarkAsRead}
+                      >
+                        Mark as read
+                      </button>
+                    ) : null}
+                  </>
+                ) : null}
+                {canToggleChatScope ? (
+                  <>
+                    <div className="my-1 border-t border-surface-800" role="separator" />
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={scopeToggleSaving || conversationScope === 'shared'}
+                      className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                      onClick={() => {
+                        setChatHeaderMenuOpen(false);
+                        void handleMakeShared();
+                      }}
+                    >
+                      Make shared
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={scopeToggleSaving || conversationScope === 'private'}
+                      className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                      onClick={() => {
+                        setChatHeaderMenuOpen(false);
+                        void handleMakePrivate();
+                      }}
+                    >
+                      Make private
+                    </button>
+                  </>
+                ) : null}
+                <div className="my-1 border-t border-surface-800" role="separator" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!chatId}
+                  className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                  onClick={() => void handleShareChatLink()}
+                >
+                  Share chat
+                </button>
+                {chatId ? (
+                  <>
+                    <div className="my-1 border-t border-surface-800" role="separator" />
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center px-3 py-2 text-left text-sm text-red-400 hover:bg-red-950/30 hover:text-red-300"
+                      onClick={handleMenuDeleteChat}
+                    >
+                      Delete conversation
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -2049,7 +2210,7 @@ export function Chat({
         <div className="relative">
           {mentionPopover.open && mentionSuggestions.length > 0 && (
             <div
-              className="absolute left-0 bottom-full mb-1 w-56 max-h-44 overflow-y-auto rounded-lg border border-surface-700 bg-surface-900 shadow-xl z-50"
+              className="absolute left-0 bottom-full mb-1 min-w-[14rem] max-w-sm max-h-44 overflow-y-auto rounded-lg border border-surface-700 bg-surface-900 shadow-xl z-50"
               role="listbox"
             >
               {mentionSuggestions.slice(0, 8).map((item, idx) => (
@@ -2075,7 +2236,12 @@ export function Chat({
                       Basebase
                     </span>
                   ) : (
-                    <span className="truncate">{item.displayName}</span>
+                    <span className="min-w-0 text-left">
+                      <span className="font-medium">{item.displayName}</span>
+                      {item.email.trim().toLowerCase() !== item.displayName.trim().toLowerCase() ? (
+                        <span className="text-surface-500"> ({item.email})</span>
+                      ) : null}
+                    </span>
                   )}
                 </button>
               ))}
