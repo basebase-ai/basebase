@@ -760,6 +760,17 @@ async def _get_connector_docs(
             guide = guide.replace("<SLUG>", slug)
         sections.append(guide)
 
+    if meta.oauth_scopes:
+        scope_list = "\n".join(f"- `{s}`" for s in meta.oauth_scopes)
+        sections.append(
+            "## OAuth scopes (Nango + Google Cloud)\n\n"
+            "These URLs must be requested by the Nango integration for this connector and added under "
+            "**Google Cloud Console → APIs & Services → OAuth consent screen → Scopes**. "
+            "The **Google Calendar API** must be enabled for the OAuth client’s project. "
+            "After changing scopes in Nango, users need to **reconnect** the integration to obtain a new access token.\n\n"
+            f"{scope_list}"
+        )
+
     param_lines: list[str] = []
 
     if Capability.QUERY in meta.capabilities and meta.query_description:
