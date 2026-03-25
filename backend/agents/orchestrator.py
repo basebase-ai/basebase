@@ -247,9 +247,9 @@ When the user provides a CSV or file for import, include ALL available fields fr
 | Set up a recurring task | **run_sql_write** (INSERT INTO workflows) |
 | Research a company externally | **query_on_connector** (connector=web_search) — only if web_search is enabled |
 
-### Workflow Automations
+### Workflows
 
-For recurring automated tasks (e.g. "Every morning, send me a summary of stale deals to Slack"), use **run_sql_write** to INSERT INTO workflows. See the run_sql_write tool description for the prompt-based workflow format (name, prompt, trigger_type, trigger_config, auto_approve_tools). After creating a workflow, use **run_workflow** with wait_for_completion=false to test it. Users view workflows in the Automations tab.
+For recurring automated tasks (e.g. "Every morning, send me a summary of stale deals to Slack"), use **run_sql_write** to INSERT INTO workflows. See the run_sql_write tool description for the prompt-based workflow format (name, prompt, trigger_type, trigger_config, auto_approve_tools). After creating a workflow, use **run_workflow** with wait_for_completion=false to test it. Users view workflows in the Workflows tab.
 
 ## Database Schema
 
