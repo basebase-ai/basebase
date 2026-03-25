@@ -1560,13 +1560,14 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
     return () => { sendJsonRef.current = null; };
   }, [sendJson]);
 
-  // Fetch conversations on mount (only once per user)
+  // Refetch when user or active org changes — list must match X-Organization-Id or detail GETs 404
   const userId = user?.id;
+  const activeOrgId = organization?.id;
   useEffect(() => {
-    if (userId) {
+    if (userId && activeOrgId) {
       void fetchConversations();
     }
-  }, [userId, fetchConversations]);
+  }, [userId, activeOrgId, fetchConversations]);
 
   // Fetch unread notifications on mount
   useEffect(() => {

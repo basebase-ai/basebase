@@ -2995,7 +2995,7 @@ function MessageWithBlocks({
         <img src={AGENT_AVATAR_PATH} alt={APP_NAME} className={`${CHAT_MSG_AVATAR} object-cover`} />
       )}
 
-      <div className="flex-1 min-w-0 overflow-hidden">
+      <div className="flex-1 min-w-0 overflow-hidden -mt-px">
         {!isGroupedWithPrevious && (
           <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0">
             <span className={CHAT_MSG_NAME}>{APP_NAME}</span>
