@@ -40,7 +40,11 @@ def test_celery_sync_returns_cancelled_when_connector_disconnects(monkeypatch) -
     async def _emit_event(event_type: str, organization_id: str, data: dict[str, Any]) -> None:
         emitted_events.append((event_type, organization_id, data))
 
+    async def _noop_clear_last_errors(*_args: Any, **_kwargs: Any) -> None:
+        """Avoid DB in CI: _sync_integration clears last_error before sync_all runs."""
+
     monkeypatch.setattr("workers.events.emit_event", _emit_event)
+    monkeypatch.setattr(sync_tasks, "_clear_last_errors_for_integration", _noop_clear_last_errors)
     monkeypatch.setattr(
         "connectors.registry.discover_connectors",
         lambda: {"hubspot": CancelledConnector},
