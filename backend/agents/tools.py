@@ -4755,7 +4755,11 @@ async def execute_send_email_from(
 
 
 async def _send_slack(
-    params: dict[str, Any], organization_id: str, user_id: str | None, skip_approval: bool = False
+    params: dict[str, Any],
+    organization_id: str,
+    user_id: str | None,
+    skip_approval: bool = False,
+    context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Post a message to a Slack channel.
@@ -4780,6 +4784,24 @@ async def _send_slack(
     
     if not message:
         return {"error": "Message text is required."}
+
+    if context and context.get("is_workflow"):
+        allowed_channels = context.get("allowed_slack_channels") or []
+        allowed_lookup = {str(item).strip().lower() for item in allowed_channels if str(item).strip()}
+        is_dm = channel.upper().startswith("D")
+        if not is_dm and channel.lower() not in allowed_lookup:
+            logger.warning(
+                "[Tools._send_slack] Blocked workflow Slack target workflow_id=%s channel=%s allowed_channels=%s",
+                context.get("workflow_id"),
+                channel,
+                list(allowed_lookup),
+            )
+            return {
+                "error": (
+                    "Workflow can only send Slack messages to explicitly allowed channels "
+                    "or direct messages."
+                )
+            }
     
     # Note: SlackConnector.post_message auto-converts markdown to mrkdwn
     

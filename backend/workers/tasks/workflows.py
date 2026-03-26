@@ -38,6 +38,59 @@ WORKFLOW_NESTING_GUARDRAIL = (
 )
 
 
+def _extract_allowed_slack_channels(workflow: Any) -> list[str]:
+    """Extract workflow-approved Slack channels from output_config."""
+    if not workflow:
+        return []
+
+    output_config = getattr(workflow, "output_config", None)
+    if not isinstance(output_config, dict):
+        return []
+
+    allowed: list[str] = []
+
+    def _collect(value: Any) -> None:
+        if isinstance(value, str) and value.strip():
+            allowed.append(value.strip())
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, str) and item.strip():
+                    allowed.append(item.strip())
+
+    _collect(output_config.get("allowed_slack_channels"))
+    _collect(output_config.get("allowed_channels"))
+    _collect(output_config.get("channels"))
+    _collect(output_config.get("channel"))
+
+    slack_config = output_config.get("slack")
+    if isinstance(slack_config, dict):
+        _collect(slack_config.get("allowed_channels"))
+        _collect(slack_config.get("channels"))
+        _collect(slack_config.get("channel"))
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for channel in allowed:
+        key = channel.lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(channel)
+    return unique
+
+
+def _is_allowed_workflow_slack_target(channel: str, allowed_channels: list[str]) -> bool:
+    """Allow only workflow-listed channels and DMs."""
+    normalized = (channel or "").strip()
+    if not normalized:
+        return False
+
+    if normalized.upper().startswith("D"):
+        return True
+
+    allowed_lookup = {item.lower() for item in allowed_channels}
+    return normalized.lower() in allowed_lookup
+
+
 # =============================================================================
 # Schema Validation and Parameter Formatting
 # =============================================================================
@@ -915,6 +968,7 @@ async def _execute_workflow_via_agent(
         "workflow_run_id": str(run.id),
         "runtime_context": runtime_context,
         "auto_approve_tools": effective_auto_approve_tools,
+        "allowed_slack_channels": _extract_allowed_slack_channels(workflow),
         "call_stack": call_stack,  # For nested workflow recursion detection
         "execution_guardrails": [WORKFLOW_NESTING_GUARDRAIL],
     }
@@ -1353,6 +1407,23 @@ async def _action_send_slack(
         return {
             "status": "failed",
             "error": "No message specified",
+        }
+
+    allowed_channels = _extract_allowed_slack_channels(workflow)
+    if workflow is not None and not _is_allowed_workflow_slack_target(channel, allowed_channels):
+        logger.warning(
+            "[workflow.send_slack] Blocked channel outside workflow allowlist org_id=%s workflow_id=%s channel=%s allowed_channels=%s",
+            org_id,
+            getattr(workflow, "id", None),
+            channel,
+            allowed_channels,
+        )
+        return {
+            "status": "failed",
+            "error": (
+                "Workflow can only send Slack messages to explicitly allowed channels "
+                "or direct messages."
+            ),
         }
     
     # Substitute context variables in message
