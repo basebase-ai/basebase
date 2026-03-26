@@ -21,7 +21,6 @@ from uuid import UUID, uuid4
 from anthropic import APIStatusError, AsyncAnthropic
 from sqlalchemy import select, update
 
-from agents.model_routing import is_short_phrase_for_cheap_model
 from agents.registry import format_tool_status
 from agents.tools import execute_tool, get_tools
 from config import settings
@@ -926,17 +925,11 @@ class ChatOrchestrator:
         ]
 
         selected_model: str = settings.ANTHROPIC_PRIMARY_MODEL
-        if (
-            settings.ANTHROPIC_USE_CHEAP_MODEL_FOR_SHORT_PHRASE
-            and is_short_phrase_for_cheap_model(user_content)
-        ):
-            selected_model = settings.ANTHROPIC_CHEAP_MODEL
 
         logger.info(
-            "[Orchestrator] conversation_id=%s selected_model=%s short_phrase_cheap_enabled=%s",
+            "[Orchestrator] conversation_id=%s selected_model=%s",
             self.conversation_id,
             selected_model,
-            settings.ANTHROPIC_USE_CHEAP_MODEL_FOR_SHORT_PHRASE,
         )
 
         # Keep track of content blocks for saving (preserves interleaving order)
