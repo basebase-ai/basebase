@@ -16,7 +16,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { apiRequest, API_BASE } from "../lib/api";
+import { apiRequest, API_BASE, getAuthenticatedRequestHeaders } from "../lib/api";
 import { formatDateOnly } from "../lib/dates";
 import { supabase } from "../lib/supabase";
 
@@ -96,10 +96,9 @@ export function ArtifactViewer({
       setBlobUrl(null);
       setAttachmentDisplay(null);
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const token = session?.access_token ?? null;
+        const authHeaders = await getAuthenticatedRequestHeaders();
         const response = await fetch(`${API_BASE}/chat/attachments/${attachmentId}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          headers: authHeaders,
         });
         if (!response.ok) {
           const errBody = await response.text();
