@@ -985,7 +985,7 @@ export function Chat({
     }, 500);
   }, []);
 
-  const sendChatMessage = useCallback((message: string, _source: 'input' | 'suggestion' | 'auto'): void => {
+  const sendChatMessage = useCallback((message: string): void => {
     if ((!message.trim() && pendingAttachments.length === 0) || !isConnected) {
       return;
     }
@@ -1099,7 +1099,7 @@ export function Chat({
           .map((b) => b.text)
           .join('');
         if (text.trim()) {
-          sendChatMessage(text, 'input');
+          sendChatMessage(text);
           return;
         }
       }
@@ -1126,7 +1126,7 @@ export function Chat({
 
       if (isConnected) {
         pendingAutoSendRef.current = pendingChatInput;
-        sendChatMessage(pendingChatInput, 'auto');
+        sendChatMessage(pendingChatInput);
         setPendingChatInput(null);
         setPendingChatAutoSend(false);
       } else {
@@ -1154,7 +1154,7 @@ export function Chat({
   ]);
 
   const handleSend = useCallback((): void => {
-    sendChatMessage(input, 'input');
+    sendChatMessage(input);
   }, [input, sendChatMessage]);
 
   const selectMention = useCallback(
@@ -1366,7 +1366,7 @@ export function Chat({
   const handleSuggestionClick = (text: string): void => {
     setInput(text);
     inputRef.current?.focus();
-    sendChatMessage(text, 'suggestion');
+    sendChatMessage(text);
   };
 
   // Copy conversation to clipboard
@@ -1971,7 +1971,7 @@ export function Chat({
                   const activeApp = conversationApps.find((a) => a.id === previewAppId) ?? conversationApps[conversationApps.length - 1];
                   if (activeApp) {
                     const fixPrompt = `The app "${activeApp.title}" has a compile/runtime error. Please fix it and create an updated version.\n\nError:\n\`\`\`\n${errorMsg}\n\`\`\``;
-                    sendChatMessage(fixPrompt, 'input');
+                    sendChatMessage(fixPrompt);
                   }
                 }}
                 height={previewHeight}
