@@ -16,9 +16,9 @@ import { useEffect, useRef, useState } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { apiRequest, API_BASE } from "../lib/api";
+import { apiRequest, API_BASE, getAuthenticatedRequestHeaders } from "../lib/api";
 import { formatDateOnly } from "../lib/dates";
-import { supabase } from "../lib/supabase";
+
 
 // New file-based artifact format
 interface FileArtifact {
@@ -96,10 +96,9 @@ export function ArtifactViewer({
       setBlobUrl(null);
       setAttachmentDisplay(null);
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const token = session?.access_token ?? null;
+        const authHeaders = await getAuthenticatedRequestHeaders();
         const response = await fetch(`${API_BASE}/chat/attachments/${attachmentId}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          headers: authHeaders,
         });
         if (!response.ok) {
           const errBody = await response.text();
@@ -177,15 +176,10 @@ export function ArtifactViewer({
     setShowDownloadMenu(false);
 
     try {
-      // Get auth token for download request
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      
+      const dlHeaders = await getAuthenticatedRequestHeaders();
       const response = await fetch(
         `${API_BASE}/artifacts/${artifact.id}/download?format=${format}`,
-        {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        }
+        { headers: dlHeaders },
       );
       if (!response.ok) {
         throw new Error("Failed to download artifact");
