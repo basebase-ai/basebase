@@ -609,7 +609,7 @@ const GLOBAL_ADMIN_NAV_ITEMS: ReadonlyArray<{
   },
   {
     id: 'sources',
-    label: 'Sources',
+    label: 'Sources & Health',
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
