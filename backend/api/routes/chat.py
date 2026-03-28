@@ -27,7 +27,7 @@ import redis.asyncio as aioredis
 
 
 from pydantic import BaseModel
-from sqlalchemy import and_, or_, select
+from sqlalchemy import String, and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth_middleware import AuthContext, get_current_auth
@@ -249,12 +249,14 @@ async def list_conversations(
     offset: int = 0,
     scope: Optional[str] = None,
     mine: bool = False,
+    search: Optional[str] = None,
 ) -> ConversationListResponse:
     """List conversations for the authenticated user, ordered by most recent.
 
     Args:
         scope: Optional filter - "shared" or "private". If not provided, returns all.
         mine: If true, only return conversations created by the current user.
+        search: Optional text search across title, summary, preview, and message content.
     """
     org_id = auth.organization_id_str
 
@@ -271,6 +273,29 @@ async def list_conversations(
 
         if mine and auth.user_id:
             query = query.where(Conversation.user_id == auth.user_id)
+
+        if search and search.strip():
+            search_term = f"%{search.strip()}%"
+            # Search conversation title, summary, preview, AND message content
+            message_match_subq = (
+                select(ChatMessage.conversation_id)
+                .where(
+                    or_(
+                        ChatMessage.content.ilike(search_term),
+                        ChatMessage.content_blocks.cast(String).ilike(search_term),
+                    )
+                )
+                .distinct()
+                .correlate(None)
+            )
+            query = query.where(
+                or_(
+                    Conversation.title.ilike(search_term),
+                    Conversation.summary.ilike(search_term),
+                    Conversation.last_message_preview.ilike(search_term),
+                    Conversation.id.in_(message_match_subq),
+                )
+            )
 
         result = await session.execute(
             query.order_by(Conversation.updated_at.desc())

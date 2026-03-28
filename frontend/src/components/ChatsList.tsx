@@ -4,7 +4,7 @@
  * Accessible via "View all" in the sidebar chat sections.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import type { ChatSummary } from '../store/types';
 import { useActiveTasksByConversation, useAppStore } from '../store';
 import { listConversations, type ConversationSummary } from '../api/client';
@@ -53,13 +53,23 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
   const togglePinChat = useAppStore((state) => state.togglePinChat);
   const currentUserId = useAppStore((state) => state.user?.id);
 
+  const [debouncedSearch, setDebouncedSearch] = useState<string>('');
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSearchChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setSearchQuery(val);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setDebouncedSearch(val), 300);
+  }, []);
+
   const loadPage = useCallback(async (reset: boolean = false): Promise<void> => {
     if (isLoadingMore) return;
     setIsLoadingMore(true);
     const offset = reset ? 0 : offsetRef.current;
     const apiScope = scopeFilter === 'all' ? undefined : scopeFilter;
     try {
-      const { data, error } = await listConversations(PAGE_SIZE, offset, apiScope);
+      const { data, error } = await listConversations(PAGE_SIZE, offset, apiScope, debouncedSearch);
       if (error || !data) {
         setHasMore(false);
         return;
@@ -81,13 +91,13 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
       setIsLoadingMore(false);
       setInitialLoaded(true);
     }
-  }, [isLoadingMore, scopeFilter]);
+  }, [isLoadingMore, scopeFilter, debouncedSearch]);
 
-  // Initial load + reload on filter change
+  // Initial load + reload on filter/search change
   useEffect(() => {
     void loadPage(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scopeFilter]);
+  }, [scopeFilter, debouncedSearch]);
 
   // Infinite scroll via IntersectionObserver
   useEffect(() => {
@@ -116,11 +126,10 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
     );
   }, [allChats, sidebarChats]);
 
-  // Client-side title search + scope filter for sidebar chats
+  // Client-side scope filter for sidebar-sourced chats (API results already filtered)
   const filteredChats = useMemo((): ChatSummary[] => {
     let result = mergedChats;
 
-    // Apply scope filter to sidebar-sourced chats (API chats already filtered server-side)
     if (scopeFilter === 'shared') {
       result = result.filter((c) => c.scope === 'shared');
     } else if (scopeFilter === 'private') {
@@ -129,16 +138,8 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
       result = result.filter((c) => c.userId === currentUserId);
     }
 
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(
-        (c) =>
-          c.title.toLowerCase().includes(q) ||
-          c.previewText.toLowerCase().includes(q),
-      );
-    }
     return result;
-  }, [mergedChats, searchQuery, scopeFilter, currentUserId]);
+  }, [mergedChats, scopeFilter, currentUserId]);
 
   // Pinned first
   const orderedChats = useMemo((): ChatSummary[] => {
@@ -202,7 +203,7 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
               type="text"
               placeholder="Search conversations..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={handleSearchChange}
               className="input-field pl-10 w-full"
               autoFocus
             />
