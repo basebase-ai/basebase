@@ -26,8 +26,9 @@ async def resolve_agent_responding(
     """
     Determine whether the agent should respond and update conversation state.
 
-    - Any {"type": "user", "user_id": "..."} is merged into participating_user_ids (invite-by-mention),
-      including when combined with @agent so mixed messages still add participants.
+    - {"type": "user", "user_id": "<uuid>"} with a valid UUID is merged into participating_user_ids
+      (invite-by-mention), including when combined with @agent. User mentions without ``user_id``
+      still disable the agent but do not add participants.
     - If mentions contains {"type": "agent"} -> set agent_responding=True, return True.
     - Else if any user mention -> set agent_responding=False, return False.
     - If no mentions -> return current conversation.agent_responding.
@@ -39,7 +40,7 @@ async def resolve_agent_responding(
     mentions = mentions or []
 
     has_agent_mention = any(m.get("type") == "agent" for m in mentions)
-    user_mentions = [m for m in mentions if m.get("type") == "user" and m.get("user_id")]
+    user_mentions = [m for m in mentions if m.get("type") == "user"]
 
     async with get_session(organization_id=organization_id) as session:
         row = await session.execute(
@@ -54,9 +55,19 @@ async def resolve_agent_responding(
         current_agent_responding: bool = conv_row[0]
         participating: list[UUID] = list(conv_row[1] or [])
 
-        mentioned_ids: list[UUID] = [
-            UUID(m["user_id"]) for m in user_mentions if m.get("user_id")
-        ]
+        mentioned_ids: list[UUID] = []
+        for m in user_mentions:
+            uid_raw: Any = m.get("user_id")
+            if not uid_raw or not isinstance(uid_raw, str):
+                continue
+            try:
+                mentioned_ids.append(UUID(uid_raw))
+            except (ValueError, TypeError):
+                logger.warning(
+                    "Skipping non-UUID user_id in mentions for conversation %s: %r",
+                    conversation_id,
+                    uid_raw,
+                )
         for uid in mentioned_ids:
             if uid not in participating:
                 participating.append(uid)
