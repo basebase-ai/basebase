@@ -249,12 +249,14 @@ async def list_conversations(
     offset: int = 0,
     scope: Optional[str] = None,
     mine: bool = False,
+    search: Optional[str] = None,
 ) -> ConversationListResponse:
     """List conversations for the authenticated user, ordered by most recent.
 
     Args:
         scope: Optional filter - "shared" or "private". If not provided, returns all.
         mine: If true, only return conversations created by the current user.
+        search: Optional text search across title, summary, preview, and message content.
     """
     org_id = auth.organization_id_str
 
@@ -271,6 +273,24 @@ async def list_conversations(
 
         if mine and auth.user_id:
             query = query.where(Conversation.user_id == auth.user_id)
+
+        if search and search.strip():
+            search_term = f"%{search.strip()}%"
+            # Search conversation title, summary, preview, AND message content
+            message_match_subq = (
+                select(ChatMessage.conversation_id)
+                .where(ChatMessage.content.ilike(search_term))
+                .distinct()
+                .correlate(None)
+            )
+            query = query.where(
+                or_(
+                    Conversation.title.ilike(search_term),
+                    Conversation.summary.ilike(search_term),
+                    Conversation.last_message_preview.ilike(search_term),
+                    Conversation.id.in_(message_match_subq),
+                )
+            )
 
         result = await session.execute(
             query.order_by(Conversation.updated_at.desc())
