@@ -670,6 +670,8 @@ class BaseConnector(ABC):
         from sqlalchemy.orm.attributes import flag_modified
 
         if not self._integration:
+            await self._load_integration()
+        if not self._integration:
             return
 
         async with get_session(organization_id=self.organization_id) as session:
