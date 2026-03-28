@@ -326,8 +326,8 @@ async def _process_event_callback_impl(payload: dict[str, Any]) -> None:
                 "[slack_events] Processing direct message type=%s from %s in %s thread=%s: %s (files=%d)",
                 channel_type, user_id, channel_id, thread_ts, text[:50], len(files),
             )
-            message: InboundMessage = _build_inbound_message(
-                event, team_id, MessageType.DIRECT,
+            message = _build_inbound_message(
+                event, team_id, MessageType.DIRECT, bot_user_ids=bot_user_ids,
             )
             await messenger.process_inbound(message)
             return
@@ -358,7 +358,11 @@ async def _process_event_callback_impl(payload: dict[str, Any]) -> None:
                 lock_key: str = SlackThreadLockManager.build_lock_key(team_id, channel_id, thread_ts)
                 async with _thread_lock_manager.thread_lock(lock_key):
                     message = _build_inbound_message(
-                        event, team_id, MessageType.MENTION, text_override=normalized_text,
+                        event,
+                        team_id,
+                        MessageType.MENTION,
+                        text_override=normalized_text,
+                        bot_user_ids=bot_user_ids,
                     )
                     await messenger.process_inbound(message)
                 return
@@ -377,7 +381,7 @@ async def _process_event_callback_impl(payload: dict[str, Any]) -> None:
             lock_key = SlackThreadLockManager.build_lock_key(team_id, channel_id, thread_ts)
             async with _thread_lock_manager.thread_lock(lock_key):
                 message = _build_inbound_message(
-                    event, team_id, MessageType.THREAD_REPLY,
+                    event, team_id, MessageType.THREAD_REPLY, bot_user_ids=bot_user_ids,
                 )
                 await messenger.process_inbound(message)
             return
@@ -405,9 +409,12 @@ async def _process_event_callback_impl(payload: dict[str, Any]) -> None:
         lock_key = SlackThreadLockManager.build_lock_key(team_id, channel_id, lock_thread_ts)
         async with _thread_lock_manager.thread_lock(lock_key):
             message = _build_inbound_message(
-                event, team_id, MessageType.MENTION,
+                event,
+                team_id,
+                MessageType.MENTION,
                 text_override=text,
                 thread_ts_override=lock_thread_ts,
+                bot_user_ids=bot_user_ids,
             )
             await messenger.process_inbound(message)
 
@@ -419,6 +426,7 @@ def _build_inbound_message(
     *,
     text_override: str | None = None,
     thread_ts_override: str | None = None,
+    bot_user_ids: set[str] | None = None,
 ) -> InboundMessage:
     """Build an :class:`InboundMessage` from a Slack event payload."""
     channel_id: str = event.get("channel", "")
@@ -428,6 +436,12 @@ def _build_inbound_message(
     message_ts: str = event.get("ts", "") or event_ts
     thread_ts: str | None = thread_ts_override or event.get("thread_ts")
     files: list[dict[str, Any]] = event.get("files", [])
+    raw_text: str = event.get("text", "") or ""
+    mentions: list[dict[str, Any]] = (
+        _extract_mentions_from_slack_text(raw_text, bot_user_ids)
+        if bot_user_ids is not None
+        else []
+    )
 
     return InboundMessage(
         external_user_id=user_id,
@@ -442,6 +456,7 @@ def _build_inbound_message(
             "event_ts": event_ts,
         },
         message_id=message_ts,
+        mentions=mentions,
     )
 
 
@@ -457,6 +472,32 @@ async def _persist_activity(
             await messenger.persist_channel_activity(message, org_id)
     except Exception as exc:
         logger.error("[slack_events] Failed to persist activity: %s", exc)
+
+
+# Slack encodes @-mentions as ``<@USERID>`` or ``<@USERID|display>`` in message text.
+_SLACK_USER_MENTION_RE = re.compile(r"<@([A-Z0-9]+)(?:\|[^>]+)?>")
+
+
+def _extract_mentions_from_slack_text(
+    text: str,
+    bot_user_ids: set[str],
+) -> list[dict[str, Any]]:
+    """
+    Parse Slack ``<@…>`` tokens and classify each as agent (this bot) or user.
+
+    When ``bot_user_ids`` is empty we cannot distinguish the bot from humans, so
+    we return no structured mentions (plain messages still rely on conversation state).
+    """
+    if not text.strip() or not bot_user_ids:
+        return []
+    mentions: list[dict[str, Any]] = []
+    for match in _SLACK_USER_MENTION_RE.finditer(text):
+        slack_uid: str = match.group(1)
+        if slack_uid in bot_user_ids:
+            mentions.append({"type": "agent"})
+        else:
+            mentions.append({"type": "user", "external_user_id": slack_uid})
+    return mentions
 
 
 def _extract_bot_user_ids(payload: dict[str, Any]) -> set[str]:

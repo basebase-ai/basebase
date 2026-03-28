@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select, text
+from sqlalchemy import and_, case, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from config import settings
@@ -445,6 +445,94 @@ class WorkspaceMessenger(BaseMessenger):
             )
             return result.first() is not None
 
+    async def _mentions_payload_for_resolve_agent(
+        self,
+        message: InboundMessage,
+        organization_id: str,
+    ) -> list[dict[str, Any]]:
+        """Normalize ``message.mentions`` for :func:`resolve_agent_responding`."""
+        if not message.mentions:
+            return []
+        if self.meta.slug == "slack":
+            return await self._slack_mentions_to_resolve_payload(message, organization_id)
+        resolved: list[dict[str, Any]] = []
+        for raw in message.mentions:
+            if raw.get("type") == "agent":
+                resolved.append({"type": "agent"})
+            elif raw.get("type") == "user":
+                uid_any: Any = raw.get("user_id")
+                if uid_any is not None and str(uid_any).strip():
+                    resolved.append({"type": "user", "user_id": str(uid_any)})
+                else:
+                    resolved.append({"type": "user"})
+        return resolved
+
+    async def _slack_mentions_to_resolve_payload(
+        self,
+        message: InboundMessage,
+        organization_id: str,
+    ) -> list[dict[str, Any]]:
+        """Map Slack ``external_user_id`` mentions to internal ``user_id`` when possible."""
+        ctx: dict[str, Any] = message.messenger_context
+        workspace_id: str | None = ctx.get("workspace_id")
+        org_uuid: UUID = UUID(organization_id)
+
+        external_ids_ordered: list[str] = []
+        for raw in message.mentions:
+            if raw.get("type") != "user":
+                continue
+            ext: Any = raw.get("external_user_id")
+            if isinstance(ext, str) and ext.strip():
+                if ext not in external_ids_ordered:
+                    external_ids_ordered.append(ext)
+
+        id_by_external: dict[str, UUID] = {}
+        if external_ids_ordered and workspace_id is not None and workspace_id != "":
+            async with get_admin_session() as session:
+                stmt = (
+                    select(
+                        MessengerUserMapping.external_user_id,
+                        MessengerUserMapping.user_id,
+                        MessengerUserMapping.workspace_id,
+                    )
+                    .where(MessengerUserMapping.platform == "slack")
+                    .where(MessengerUserMapping.organization_id == org_uuid)
+                    .where(MessengerUserMapping.external_user_id.in_(external_ids_ordered))
+                    .where(
+                        or_(
+                            MessengerUserMapping.workspace_id == workspace_id,
+                            MessengerUserMapping.workspace_id.is_(None),
+                        )
+                    )
+                    .order_by(
+                        case(
+                            (MessengerUserMapping.workspace_id == workspace_id, 0),
+                            else_=1,
+                        ),
+                        MessengerUserMapping.external_user_id,
+                    )
+                )
+                rows: list[Any] = list((await session.execute(stmt)).all())
+                for row in rows:
+                    ext_uid: str = str(row[0])
+                    user_uuid: UUID = row[1]
+                    if ext_uid not in id_by_external:
+                        id_by_external[ext_uid] = user_uuid
+
+        out: list[dict[str, Any]] = []
+        for raw in message.mentions:
+            if raw.get("type") == "agent":
+                out.append({"type": "agent"})
+                continue
+            if raw.get("type") != "user":
+                continue
+            ext_any: Any = raw.get("external_user_id")
+            if isinstance(ext_any, str) and ext_any in id_by_external:
+                out.append({"type": "user", "user_id": str(id_by_external[ext_any])})
+            else:
+                out.append({"type": "user"})
+        return out
+
     async def find_or_create_conversation(
         self,
         organization_id: str,
@@ -801,11 +889,39 @@ class WorkspaceMessenger(BaseMessenger):
             organization_id, user, message,
         )
 
+        ctx: dict[str, Any] = message.messenger_context
+        slack_user_email: str | None = ctx.get("user_email")
+
+        from services.chat_messages import resolve_agent_responding, save_user_message
+
+        should_invoke_agent: bool = True
+        if self.meta.slug == "slack" or message.mentions:
+            mentions_for_resolve: list[dict[str, Any]] = await self._mentions_payload_for_resolve_agent(
+                message,
+                organization_id,
+            )
+            should_invoke_agent = await resolve_agent_responding(
+                conversation_id=str(conversation.id),
+                organization_id=organization_id,
+                mentions=mentions_for_resolve,
+            )
+
         attachment_ids: list[str] = await self.download_attachments(message)
         message_text: str = message.text or ("(see attached files)" if attachment_ids else "")
 
-        ctx: dict[str, Any] = message.messenger_context
-        slack_user_email: str | None = ctx.get("user_email")
+        if not should_invoke_agent:
+            await save_user_message(
+                conversation_id=str(conversation.id),
+                user_id=str(user.id),
+                organization_id=organization_id,
+                message_text=message_text,
+                attachment_ids=attachment_ids or None,
+                sender_name=user.name,
+                sender_email=slack_user_email or user.email,
+            )
+            await self.remove_typing_indicator(message)
+            return {"status": "human_only", "conversation_id": str(conversation.id)}
+
         workflow_context: dict[str, Any] | None = _build_workflow_context_for_message(
             platform_slug=self.meta.slug,
             ctx=ctx,

@@ -78,6 +78,8 @@ class InboundMessage:
     raw_attachments: list[dict[str, Any]] = field(default_factory=list)
     messenger_context: dict[str, Any] = field(default_factory=dict)
     message_id: str = ""
+    # Structured at-mentions from the platform (e.g. Slack <@U…>).
+    mentions: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
