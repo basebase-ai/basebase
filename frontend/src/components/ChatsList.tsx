@@ -4,7 +4,7 @@
  * Accessible via "View all" in the sidebar chat sections.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChatSummary } from '../store/types';
 import { useActiveTasksByConversation, useAppStore } from '../store';
 import { listConversations, type ConversationSummary } from '../api/client';
@@ -12,7 +12,7 @@ import { Avatar } from './Avatar';
 
 interface ChatsListProps {
   chats: ChatSummary[];
-  onSelectChat: (id: string) => void;
+  onSelectChat: (id: string, searchTerm?: string) => void;
   onNewChat: () => void;
 }
 
@@ -32,7 +32,26 @@ function apiConvToChatSummary(conv: ConversationSummary): ChatSummary {
       email: p.email,
       avatarUrl: p.avatar_url,
     })),
+    matchSnippet: conv.match_snippet,
   };
+}
+
+/** Highlight search term in text by wrapping matches in <mark>. */
+function HighlightText({ text, term }: { text: string; term: string }): JSX.Element {
+  if (!term.trim()) return <>{text}</>;
+  const regex = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+  const parts = text.split(regex);
+  return (
+    <>
+      {parts.map((part, i) =>
+        regex.test(part) ? (
+          <mark key={i} className="bg-yellow-500/40 text-yellow-100 rounded-sm px-0.5">{part}</mark>
+        ) : (
+          <span key={i}>{part}</span>
+        ),
+      )}
+    </>
+  );
 }
 
 type ScopeFilter = 'all' | 'shared' | 'private' | 'mine';
@@ -42,11 +61,9 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
   const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('all');
   const [allChats, setAllChats] = useState<ChatSummary[]>([]);
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
-  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [hasMore, setHasMore] = useState<boolean>(true);
   const [initialLoaded, setInitialLoaded] = useState<boolean>(false);
   const offsetRef = useRef<number>(0);
-  const latestRequestIdRef = useRef<number>(0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -55,31 +72,32 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
   const togglePinChat = useAppStore((state) => state.togglePinChat);
   const currentUserId = useAppStore((state) => state.user?.id);
 
-  const [debouncedSearch, setDebouncedSearch] = useState<string>('');
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [committedSearch, setCommittedSearch] = useState<string>('');
+  const searchVersionRef = useRef<number>(0);
 
-  const handleSearchChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setSearchQuery(val);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => setDebouncedSearch(val), 300);
+  const handleSearchSubmit = useCallback(() => {
+    setCommittedSearch(searchQuery.trim());
+  }, [searchQuery]);
+
+  const handleSearchClear = useCallback(() => {
+    setSearchQuery('');
+    setCommittedSearch('');
   }, []);
 
   const loadPage = useCallback(async (reset: boolean = false): Promise<void> => {
-    if ((reset && isRefreshing) || (!reset && isLoadingMore)) return;
+    if (isLoadingMore && !reset) return;
+    setIsLoadingMore(true);
     if (reset) {
-      setIsRefreshing(true);
-    } else {
-      setIsLoadingMore(true);
+      setAllChats([]); // Clear immediately so stale results don't linger
+      offsetRef.current = 0;
     }
-
-    const requestId = latestRequestIdRef.current + 1;
-    latestRequestIdRef.current = requestId;
+    const version = ++searchVersionRef.current;
     const offset = reset ? 0 : offsetRef.current;
     const apiScope = scopeFilter === 'all' ? undefined : scopeFilter;
     try {
-      const { data, error } = await listConversations(PAGE_SIZE, offset, apiScope, debouncedSearch);
-      if (requestId !== latestRequestIdRef.current) return;
+      const { data, error } = await listConversations(PAGE_SIZE, offset, apiScope, committedSearch);
+      // Discard response if a newer search has started
+      if (version !== searchVersionRef.current) return;
       if (error || !data) {
         setHasMore(false);
         return;
@@ -98,19 +116,16 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
       }
       setHasMore(mapped.length >= PAGE_SIZE);
     } finally {
-      if (requestId === latestRequestIdRef.current) {
-        setIsLoadingMore(false);
-        setIsRefreshing(false);
-        setInitialLoaded(true);
-      }
+      setIsLoadingMore(false);
+      setInitialLoaded(true);
     }
-  }, [isLoadingMore, isRefreshing, scopeFilter, debouncedSearch]);
+  }, [isLoadingMore, scopeFilter, committedSearch]);
 
   // Initial load + reload on filter/search change
   useEffect(() => {
     void loadPage(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scopeFilter, debouncedSearch]);
+  }, [scopeFilter, committedSearch]);
 
   // Infinite scroll via IntersectionObserver
   useEffect(() => {
@@ -131,9 +146,7 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
 
   // Merge sidebar chats with loaded chats (skip sidebar merge when searching
   // since sidebar chats aren't filtered by the search query)
-  const isSearching: boolean = debouncedSearch.trim().length > 0;
-  const isDebouncingSearch = searchQuery.trim() !== debouncedSearch.trim();
-  const isSearchBusy = isDebouncingSearch || isRefreshing;
+  const isSearching: boolean = committedSearch.trim().length > 0;
   const mergedChats = useMemo((): ChatSummary[] => {
     if (isSearching) {
       return allChats.sort(
@@ -225,17 +238,27 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
             </svg>
             <input
               type="text"
-              placeholder="Search conversations..."
+              placeholder="Search conversations... (press Enter)"
               value={searchQuery}
-              onChange={handleSearchChange}
-              className="input-field pl-10 w-full"
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSearchSubmit();
+                if (e.key === 'Escape') handleSearchClear();
+              }}
+              className="input-field pl-10 pr-8 w-full"
               autoFocus
             />
-            {isSearchBusy && (
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2 text-surface-400">
-                <div className="w-4 h-4 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
-                <span className="text-xs">Searching…</span>
-              </div>
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={handleSearchClear}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-surface-500 hover:text-surface-200"
+                title="Clear search"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             )}
           </div>
         </div>
@@ -244,7 +267,7 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
       {/* Scrollable list */}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-6 md:px-8 py-4">
-          {!initialLoaded ? (
+          {(!initialLoaded || (isLoadingMore && allChats.length === 0)) ? (
             <div className="space-y-3">
               {Array.from({ length: 8 }, (_, i) => (
                 <div key={i} className="p-4 rounded-xl bg-surface-900 border border-surface-800 animate-pulse">
@@ -290,6 +313,7 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
                 <ChatRow
                   key={chat.id}
                   chat={chat}
+                  searchTerm={committedSearch}
                   hasActiveTask={chat.id in activeTasksByConversation}
                   isPinned={pinnedChatIds.includes(chat.id)}
                   onSelect={onSelectChat}
@@ -319,24 +343,27 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
 
 function ChatRow({
   chat,
+  searchTerm,
   hasActiveTask,
   isPinned,
   onSelect,
   onTogglePin,
 }: {
   chat: ChatSummary;
+  searchTerm: string;
   hasActiveTask: boolean;
   isPinned: boolean;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, searchTerm?: string) => void;
   onTogglePin: (id: string) => void;
 }): JSX.Element {
+  const isSearching = searchTerm.trim().length > 0;
   return (
     <button
-      onClick={() => onSelect(chat.id)}
+      onClick={() => onSelect(chat.id, isSearching ? searchTerm : undefined)}
       className="relative w-full text-left p-4 rounded-xl bg-surface-900 hover:bg-surface-800 border border-surface-800 hover:border-surface-700 transition-colors group"
     >
-      <div className="flex items-start gap-4">
-        <div className="flex-shrink-0 flex flex-col items-start gap-1.5 mt-0.5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-shrink-0 mt-0.5">
           {chat.scope === 'private' ? (
             <svg className="w-5 h-5 text-surface-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
@@ -346,25 +373,18 @@ function ChatRow({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
             </svg>
           )}
-          {chat.participants && chat.participants.length > 0 && (
-            <div className="flex -space-x-1.5">
-              {chat.participants.slice(0, 3).map((p, idx) => (
-                <Avatar key={p.id} user={p} size="xs" bordered style={{ zIndex: 3 - idx }} />
-              ))}
-              {chat.participants.length > 3 && (
-                <div className="w-5 h-5 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[10px] font-medium text-surface-300">
-                  +{chat.participants.length - 3}
-                </div>
-              )}
-            </div>
-          )}
         </div>
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <h3 className="font-medium text-surface-100 truncate group-hover:text-white transition-colors">
-              {chat.title}
+              {isSearching ? <HighlightText text={chat.title} term={searchTerm} /> : chat.title}
             </h3>
+            {isPinned && (
+              <svg className="w-4 h-4 text-primary-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+              </svg>
+            )}
             {chat.type === 'workflow' && (
               <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-xs bg-amber-500/20 text-amber-400">Workflow</span>
             )}
@@ -377,32 +397,52 @@ function ChatRow({
                 Active
               </span>
             )}
-            <div className={`ml-auto inline-flex items-center gap-2 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+            <span className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide ${
               chat.scope === 'shared'
-                ? 'bg-primary-500/20 text-primary-300'
-                : 'bg-surface-700 text-surface-300'
+                ? 'bg-primary-500/20 text-primary-400'
+                : 'bg-surface-700 text-surface-400'
             }`}>
-              <span className="uppercase tracking-wide">{chat.scope}</span>
-              <span className="text-surface-400 whitespace-nowrap">{formatDate(chat.lastMessageAt)}</span>
-            </div>
+              {chat.scope}
+            </span>
           </div>
           <div className="flex items-center gap-2 mt-1">
-            <p className="text-sm text-surface-400 truncate flex-1 min-w-0">{chat.previewText}</p>
-            <button
-              onClick={(e) => { e.stopPropagation(); onTogglePin(chat.id); }}
-              className={`p-1.5 rounded ${
-                isPinned
-                  ? 'opacity-100 text-primary-400'
-                  : 'opacity-100 md:opacity-0 text-surface-500'
-              } md:group-hover:opacity-100 hover:bg-surface-700 hover:text-surface-200 transition-all`}
-              title={isPinned ? 'Unpin conversation' : 'Pin conversation'}
-              aria-label={isPinned ? 'Unpin conversation' : 'Pin conversation'}
-            >
-              <svg className={`w-4 h-4 ${isPinned ? 'text-primary-400' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
-              </svg>
-            </button>
+            {chat.participants && chat.participants.length > 0 && (
+              <div className="flex -space-x-1.5">
+                {chat.participants.slice(0, 3).map((p, idx) => (
+                  <Avatar key={p.id} user={p} size="xs" bordered style={{ zIndex: 3 - idx }} />
+                ))}
+                {chat.participants.length > 3 && (
+                  <div className="w-5 h-5 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[10px] font-medium text-surface-300">
+                    +{chat.participants.length - 3}
+                  </div>
+                )}
+              </div>
+            )}
+            <p className="text-sm text-surface-400 truncate">
+              {isSearching && chat.matchSnippet ? (
+                <HighlightText text={chat.matchSnippet} term={searchTerm} />
+              ) : isSearching ? (
+                <HighlightText text={chat.previewText} term={searchTerm} />
+              ) : (
+                chat.previewText
+              )}
+            </p>
           </div>
+        </div>
+
+        <div className="flex flex-col items-end gap-2 flex-shrink-0">
+          <div className="text-xs text-surface-500 whitespace-nowrap">{formatDate(chat.lastMessageAt)}</div>
+          <button
+            onClick={(e) => { e.stopPropagation(); onTogglePin(chat.id); }}
+            className={`p-1.5 rounded ${
+              isPinned ? 'opacity-100 text-primary-400' : 'opacity-0 text-surface-500'
+            } group-hover:opacity-100 hover:bg-surface-700 hover:text-surface-200 transition-all`}
+            title={isPinned ? 'Unpin conversation' : 'Pin conversation'}
+          >
+            <svg className={`w-4 h-4 ${isPinned ? 'text-primary-400' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+            </svg>
+          </button>
         </div>
       </div>
     </button>
