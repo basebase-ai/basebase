@@ -1459,6 +1459,22 @@ export function Chat({
   const chatSearchTerm = useChatStore((s) => s.chatSearchTerm);
   const isCurrentChatPinned: boolean = Boolean(chatId && pinnedChatIds.includes(chatId));
 
+  // When opened from search, auto-load ALL older messages so every match is visible
+  const autoLoadingSearchRef = useRef<boolean>(false);
+  useEffect(() => {
+    if (!chatSearchTerm || !chatId || isLoading || autoLoadingSearchRef.current) return;
+    if (!hasMoreMessages) return;
+    autoLoadingSearchRef.current = true;
+    const loadAll = async (): Promise<void> => {
+      let moreAvailable = true;
+      while (moreAvailable) {
+        moreAvailable = await fetchOlderMessages(chatId);
+      }
+      autoLoadingSearchRef.current = false;
+    };
+    void loadAll();
+  }, [chatSearchTerm, chatId, isLoading, hasMoreMessages, fetchOlderMessages]);
+
   const startEditingHeaderTitle = useCallback(() => {
     if (!canRenameHeader) return;
     setHeaderTitleDraft(chatTitle);
@@ -1745,7 +1761,7 @@ export function Chat({
           <button
             type="button"
             onClick={() => {
-              useChatStore.setState({ chatSearchTerm: null });
+              // Keep chatSearchTerm so ChatsList restores the search
               useAppStore.getState().setCurrentView('chats');
             }}
             className="flex items-center gap-1 text-xs text-surface-400 hover:text-surface-200 font-medium"
