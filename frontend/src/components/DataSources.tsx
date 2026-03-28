@@ -39,7 +39,6 @@ const ApolloIcon: IconType = ({ className, ...props }) => (
 import { API_BASE, apiRequest } from '../lib/api';
 import { useAppStore, useIntegrations, useIntegrationsLoading, type Integration, type SyncStats } from '../store';
 import { useWebSocket } from '../hooks/useWebSocket';
-import { useIsMobile } from '../hooks';
 
 // Icon map for integration providers
 const ICON_MAP: Record<string, IconType> = {
@@ -333,8 +332,6 @@ export function DataSources(): JSX.Element {
   const { user, organization, organizations } = useAppStore();
   const fetchUserOrganizations = useAppStore((state) => state.fetchUserOrganizations);
   
-  // Check if on mobile device
-  const isMobile = useIsMobile();
 
   // Zustand: Get integrations state
   const rawIntegrations = useIntegrations();
@@ -1540,18 +1537,14 @@ export function DataSources(): JSX.Element {
       }
       // team-only and available: show Connect
       return {
-        text: isMobile
-          ? 'Use desktop to connect'
-          : codeSandboxConnectBlocked
-            ? 'Admins only'
-            : (isConnecting ? 'Connecting...' : 'Connect'),
-        className: isMobile
+        text: codeSandboxConnectBlocked
+          ? 'Admins only'
+          : (isConnecting ? 'Connecting...' : 'Connect'),
+        className: codeSandboxConnectBlocked
           ? 'px-4 py-2 text-sm font-medium text-surface-500 border border-surface-700 rounded-lg cursor-not-allowed'
-          : codeSandboxConnectBlocked
-            ? 'px-4 py-2 text-sm font-medium text-surface-500 border border-surface-700 rounded-lg cursor-not-allowed'
           : 'px-4 py-2 text-sm font-medium text-primary-400 border border-primary-500/30 hover:bg-primary-500/10 disabled:opacity-50 rounded-lg transition-colors',
-        action: () => { if (!isMobile) void handleConnect(integration.provider); },
-        disabled: isMobile || isConnecting || codeSandboxConnectBlocked,
+        action: () => { void handleConnect(integration.provider); },
+        disabled: isConnecting || codeSandboxConnectBlocked,
       };
     };
     const buttonConfig = getButtonConfig();
@@ -1762,7 +1755,7 @@ export function DataSources(): JSX.Element {
     return (
       <div key={integration.id} className={cardClass}>
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
-          {/* Icon and name row on mobile */}
+          {/* Icon and name */}
           <div className="flex items-center gap-3 sm:gap-4">
             <div className={`${isImageIcon(integration.icon) ? '' : getColorClass(integration.color) + ' p-2.5 sm:p-3 text-white'} rounded-xl ${iconOpacity} flex-shrink-0 w-[52px] h-[52px] sm:w-14 sm:h-14 flex items-center justify-center overflow-hidden`}>
               {renderIcon(integration.icon)}
@@ -1779,19 +1772,19 @@ export function DataSources(): JSX.Element {
                 )}
                 {renderSharingBadge()}
               </div>
-              <p className="text-sm text-surface-400 mt-0.5 hidden sm:block">{integration.description}</p>
+              <p className="text-sm text-surface-400 mt-0.5">{integration.description}</p>
               {state === 'connected' && integration.connectedBy && !integration.isOwner && (
-                <p className="text-xs text-surface-500 mt-1 hidden sm:block">
+                <p className="text-xs text-surface-500 mt-1">
                   Connected by {integration.connectedBy}
                 </p>
               )}
               {(state === 'connected' || state === 'org-connected') && integration.lastSyncAt && !isSyncing && (
-                <p className="text-xs text-surface-500 mt-1 hidden sm:block">
+                <p className="text-xs text-surface-500 mt-1">
                   Last synced: {new Date(integration.lastSyncAt).toLocaleString()}
                 </p>
               )}
               {(state === 'connected' || state === 'org-connected') && (isStartingSync || syncProgress[integration.provider] !== undefined || integration.syncStats) && (
-                <p className="text-xs text-surface-400 mt-1 hidden sm:block">
+                <p className="text-xs text-surface-400 mt-1">
                   {isStartingSync ? (
                     <span className="text-primary-400">Starting sync…</span>
                   ) : syncProgress[integration.provider] !== undefined ? (
@@ -1840,7 +1833,7 @@ export function DataSources(): JSX.Element {
             </div>
           </div>
 
-          {/* Actions - full width on mobile, right-aligned on desktop */}
+          {/* Actions */}
           <div className="flex items-center gap-2 sm:flex-shrink-0 sm:ml-auto">
             {/* Settings button for owners */}
             {state === 'connected' && integration.isOwner && (
@@ -1872,7 +1865,7 @@ export function DataSources(): JSX.Element {
                       disabled={buttonConfig.disabled}
                       className={`${baseBtn} px-3 sm:px-4 py-2 flex-1 sm:flex-initial rounded-l-lg border-0`}
                     >
-                      {(isConnecting || isSyncing) && !isMobile && (
+                      {(isConnecting || isSyncing) && (
                         <svg className="w-4 h-4 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -1949,7 +1942,7 @@ export function DataSources(): JSX.Element {
                   disabled={buttonConfig.disabled}
                   className={`${buttonConfig.className} flex items-center justify-center gap-2 flex-1 sm:flex-initial`}
                 >
-                  {(isConnecting || isSyncing) && !isMobile && (
+                  {(isConnecting || isSyncing) && (
                     <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -2008,16 +2001,15 @@ export function DataSources(): JSX.Element {
 
   return (
     <div className="flex-1 overflow-y-auto overflow-x-hidden">
-      {/* Header - hidden on mobile since AppLayout has mobile header */}
-      <header className="hidden md:block sticky top-0 z-20 bg-surface-950 border-b border-surface-800 px-4 md:px-8 py-4 md:py-6">
+      <header className="sticky top-0 z-20 bg-surface-950 border-b border-surface-800 px-4 md:px-8 py-3 md:py-6">
         <div className="flex items-center justify-between gap-4">
-          <div>
+          <div className="hidden md:block">
             <h1 className="text-xl md:text-2xl font-bold text-surface-50">Connectors</h1>
             <p className="text-surface-400 mt-1 text-sm md:text-base">
               Connect your sales tools to unlock AI-powered insights
             </p>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-2 flex-shrink-0 md:ml-0 ml-auto">
             {canSyncAllConnectors && (
               <button
                 type="button"
@@ -2406,52 +2398,6 @@ export function DataSources(): JSX.Element {
       )}
 
       <div className="max-w-4xl mx-auto px-4 md:px-8 py-4 md:py-8 space-y-6 md:space-y-10">
-        {/* Mobile: Connect Source (+ Sync all for org admins; header is hidden) */}
-        {isMobile && (
-          <div className={`grid gap-2 ${canSyncAllConnectors ? 'grid-cols-2' : 'grid-cols-1'}`}>
-            {canSyncAllConnectors && (
-              <button
-                type="button"
-                onClick={() => void handleSyncAll()}
-                disabled={syncingAll}
-                className="px-4 py-3 text-sm font-semibold text-surface-100 bg-surface-800 hover:bg-surface-700 border border-surface-600 rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {syncingAll ? (
-                  <span className="w-4 h-4 border-2 border-surface-400 border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <HiLightningBolt className="w-4 h-4 text-amber-400" />
-                )}
-                {syncingAll ? 'Syncing…' : 'Sync all'}
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => { setShowConnectModal(true); setConnectSearch(''); }}
-              className="w-full px-5 py-3 text-sm font-semibold text-white bg-primary-600 hover:bg-primary-500 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-lg shadow-primary-600/20"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-              Connect Source
-            </button>
-          </div>
-        )}
-
-        {/* Mobile notice banner */}
-        {isMobile && (
-          <div className="bg-surface-800/50 border border-surface-700 rounded-xl p-4 flex items-start gap-3">
-            <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-primary-500/20 flex items-center justify-center">
-              <HiDeviceMobile className="w-5 h-5 text-primary-400" />
-            </div>
-            <div>
-              <h3 className="font-medium text-surface-100">Using mobile?</h3>
-              <p className="text-sm text-surface-400 mt-1">
-                You can connect new connectors from mobile now. If any OAuth popup is blocked or interrupted,
-                retry from a desktop or laptop for the most reliable setup flow.
-              </p>
-            </div>
-          </div>
-        )}
         {/* My connectors */}
         <section>
           <h2 className="text-lg font-semibold text-surface-100 mb-4 flex items-center gap-2">
@@ -2484,13 +2430,7 @@ export function DataSources(): JSX.Element {
                     <button
                       key={provider}
                       type="button"
-                      onClick={() => {
-                        if (!isMobile) void handleConnect(provider);
-                        else {
-                          setConnectSearch(config.name);
-                          setShowConnectModal(true);
-                        }
-                      }}
+                      onClick={() => { void handleConnect(provider); }}
                       disabled={isConnecting}
                       className="card p-4 text-left hover:border-surface-600 hover:bg-surface-800/50 transition-colors disabled:opacity-50 flex items-start gap-3 group"
                     >
