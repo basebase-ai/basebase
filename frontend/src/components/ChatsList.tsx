@@ -335,8 +335,8 @@ function ChatRow({
       onClick={() => onSelect(chat.id)}
       className="relative w-full text-left p-4 rounded-xl bg-surface-900 hover:bg-surface-800 border border-surface-800 hover:border-surface-700 transition-colors group"
     >
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-shrink-0 mt-0.5">
+      <div className="flex items-start gap-4">
+        <div className="flex-shrink-0 flex flex-col items-start gap-1.5 mt-0.5">
           {chat.scope === 'private' ? (
             <svg className="w-5 h-5 text-surface-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
@@ -345,6 +345,18 @@ function ChatRow({
             <svg className="w-5 h-5 text-surface-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
             </svg>
+          )}
+          {chat.participants && chat.participants.length > 0 && (
+            <div className="flex -space-x-1.5">
+              {chat.participants.slice(0, 3).map((p, idx) => (
+                <Avatar key={p.id} user={p} size="xs" bordered style={{ zIndex: 3 - idx }} />
+              ))}
+              {chat.participants.length > 3 && (
+                <div className="w-5 h-5 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[10px] font-medium text-surface-300">
+                  +{chat.participants.length - 3}
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -375,18 +387,6 @@ function ChatRow({
             </div>
           </div>
           <div className="flex items-center gap-2 mt-1">
-            {chat.participants && chat.participants.length > 0 && (
-              <div className="flex -space-x-1.5">
-                {chat.participants.slice(0, 3).map((p, idx) => (
-                  <Avatar key={p.id} user={p} size="xs" bordered style={{ zIndex: 3 - idx }} />
-                ))}
-                {chat.participants.length > 3 && (
-                  <div className="w-5 h-5 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[10px] font-medium text-surface-300">
-                    +{chat.participants.length - 3}
-                  </div>
-                )}
-              </div>
-            )}
             <p className="text-sm text-surface-400 truncate flex-1 min-w-0">{chat.previewText}</p>
             <button
               onClick={(e) => { e.stopPropagation(); onTogglePin(chat.id); }}
