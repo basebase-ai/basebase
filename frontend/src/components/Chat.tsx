@@ -1684,7 +1684,7 @@ export function Chat({
       requestAnimationFrame(applyHighlights);
     });
     return () => cancelAnimationFrame(rafId);
-  }, [chatSearchTerm, messages, isLoading]);
+  }, [chatSearchTerm, messages, isLoading, isLoadingOlder]);
 
   if (isLoading) {
     return (

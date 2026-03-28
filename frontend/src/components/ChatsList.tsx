@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChatSummary } from '../store/types';
-import { useActiveTasksByConversation, useAppStore } from '../store';
+import { useActiveTasksByConversation, useAppStore, useChatStore } from '../store';
 import { listConversations, type ConversationSummary } from '../api/client';
 import { Avatar } from './Avatar';
 
@@ -58,7 +58,9 @@ function HighlightText({ text, term }: { text: string; term: string }): JSX.Elem
 type ScopeFilter = 'all' | 'shared' | 'private' | 'mine';
 
 export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: ChatsListProps): JSX.Element {
-  const [searchQuery, setSearchQuery] = useState<string>('');
+  // Restore search from store (for "Back to search" navigation)
+  const storedSearchTerm = useChatStore((s) => s.chatSearchTerm);
+  const [searchQuery, setSearchQuery] = useState<string>(storedSearchTerm ?? '');
   const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('all');
   const [allChats, setAllChats] = useState<ChatSummary[]>([]);
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
@@ -73,7 +75,7 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
   const togglePinChat = useAppStore((state) => state.togglePinChat);
   const currentUserId = useAppStore((state) => state.user?.id);
 
-  const [committedSearch, setCommittedSearch] = useState<string>('');
+  const [committedSearch, setCommittedSearch] = useState<string>(storedSearchTerm ?? '');
   const searchVersionRef = useRef<number>(0);
 
   const handleSearchSubmit = useCallback(() => {
@@ -83,6 +85,7 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
   const handleSearchClear = useCallback(() => {
     setSearchQuery('');
     setCommittedSearch('');
+    useChatStore.setState({ chatSearchTerm: null });
   }, []);
 
   const loadPage = useCallback(async (reset: boolean = false): Promise<void> => {
