@@ -9,6 +9,7 @@ import type { ChatSummary } from '../store/types';
 import { useActiveTasksByConversation, useAppStore } from '../store';
 import { listConversations, type ConversationSummary } from '../api/client';
 import { Avatar } from './Avatar';
+import { useIsMobile } from '../hooks';
 
 interface ChatsListProps {
   chats: ChatSummary[];
@@ -309,6 +310,11 @@ function ChatRow({
   onSelect: (id: string) => void;
   onTogglePin: (id: string) => void;
 }): JSX.Element {
+  const isMobile = useIsMobile();
+  const maxVisibleParticipantAvatars = 3;
+  const visibleParticipants = chat.participants?.slice(0, maxVisibleParticipantAvatars) ?? [];
+  const hiddenParticipantCount = (chat.participants?.length ?? 0) - visibleParticipants.length;
+
   return (
     <button
       onClick={() => onSelect(chat.id)}
@@ -358,15 +364,15 @@ function ChatRow({
             </span>
             <div className="text-xs text-surface-500 whitespace-nowrap ml-auto">{formatDate(chat.lastMessageAt)}</div>
           </div>
-          <div className="flex items-center gap-2 mt-1">
-            {chat.participants && chat.participants.length > 0 && (
-              <div className="flex -space-x-1.5">
-                {chat.participants.slice(0, 3).map((p, idx) => (
+          <div className={`flex items-center gap-2 mt-1 ${isMobile ? 'pr-1' : ''}`}>
+            {visibleParticipants.length > 0 && (
+              <div className="flex -space-x-1.5 pl-0.5">
+                {visibleParticipants.map((p, idx) => (
                   <Avatar key={p.id} user={p} size="xs" bordered style={{ zIndex: 3 - idx }} />
                 ))}
-                {chat.participants.length > 3 && (
+                {!isMobile && hiddenParticipantCount > 0 && (
                   <div className="w-5 h-5 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[10px] font-medium text-surface-300">
-                    +{chat.participants.length - 3}
+                    +{hiddenParticipantCount}
                   </div>
                 )}
               </div>
@@ -379,7 +385,11 @@ function ChatRow({
           <button
             onClick={(e) => { e.stopPropagation(); onTogglePin(chat.id); }}
             className={`p-1.5 rounded ${
-              isPinned ? 'opacity-100 text-primary-400' : 'opacity-0 text-surface-500'
+              isPinned
+                ? 'opacity-100 text-primary-400'
+                : isMobile
+                  ? 'opacity-100 text-surface-500'
+                  : 'opacity-0 text-surface-500'
             } group-hover:opacity-100 hover:bg-surface-700 hover:text-surface-200 transition-all`}
             title={isPinned ? 'Unpin conversation' : 'Pin conversation'}
           >
