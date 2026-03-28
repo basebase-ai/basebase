@@ -356,6 +356,7 @@ function ChatRow({
             }`}>
               {chat.scope}
             </span>
+            <div className="text-xs text-surface-500 whitespace-nowrap ml-auto">{formatDate(chat.lastMessageAt)}</div>
           </div>
           <div className="flex items-center gap-2 mt-1">
             {chat.participants && chat.participants.length > 0 && (
@@ -375,7 +376,6 @@ function ChatRow({
         </div>
 
         <div className="flex flex-col items-end gap-2 flex-shrink-0">
-          <div className="text-xs text-surface-500 whitespace-nowrap">{formatDate(chat.lastMessageAt)}</div>
           <button
             onClick={(e) => { e.stopPropagation(); onTogglePin(chat.id); }}
             className={`p-1.5 rounded ${
