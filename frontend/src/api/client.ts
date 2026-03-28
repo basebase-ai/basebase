@@ -132,6 +132,7 @@ export async function listConversations(
   limit = 50,
   offset = 0,
   scope?: 'shared' | 'private' | 'mine',
+  search?: string,
 ): Promise<ApiResponse<ConversationListResponse>> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (scope === 'shared' || scope === 'private') {
@@ -139,6 +140,9 @@ export async function listConversations(
   }
   if (scope === 'mine') {
     params.set('mine', 'true');
+  }
+  if (search?.trim()) {
+    params.set('search', search.trim());
   }
   return apiRequest<ConversationListResponse>(
     `/chat/conversations?${params.toString()}`,
