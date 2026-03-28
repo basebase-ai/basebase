@@ -1459,17 +1459,20 @@ export function Chat({
   const chatSearchTerm = useChatStore((s) => s.chatSearchTerm);
   const isCurrentChatPinned: boolean = Boolean(chatId && pinnedChatIds.includes(chatId));
 
-  // When opened from search, auto-load ALL older messages so every match is visible
+  // When opened from search, auto-load ALL older messages so every match is visible.
+  // searchFullyLoaded gates the highlight effect so it doesn't run mid-load.
+  const [searchFullyLoaded, setSearchFullyLoaded] = useState<boolean>(false);
   const autoLoadedForChatRef = useRef<string | null>(null);
   useEffect(() => {
     if (!chatSearchTerm || !chatId || isLoading) return;
-    // Only auto-load once per chat
     if (autoLoadedForChatRef.current === chatId) return;
     if (!hasMoreMessages) {
       autoLoadedForChatRef.current = chatId;
+      setSearchFullyLoaded(true);
       return;
     }
     autoLoadedForChatRef.current = chatId;
+    setSearchFullyLoaded(false);
     const loadAll = async (): Promise<void> => {
       let moreAvailable = true;
       let safety = 0;
@@ -1477,6 +1480,7 @@ export function Chat({
         safety++;
         moreAvailable = await fetchOlderMessages(chatId);
       }
+      setSearchFullyLoaded(true);
     };
     void loadAll();
   }, [chatSearchTerm, chatId, isLoading, hasMoreMessages, fetchOlderMessages]);
@@ -1636,11 +1640,14 @@ export function Chat({
   }, []);
 
   // Highlight search term in message content via DOM TreeWalker.
+  // Wait until all messages are loaded (searchFullyLoaded) before highlighting.
   useEffect(() => {
     const container = messagesContainerRef.current;
-    if (!container || !chatSearchTerm?.trim()) {
-      setSearchMatchTotal(0);
-      setSearchMatchIndex(0);
+    if (!container || !chatSearchTerm?.trim() || !searchFullyLoaded) {
+      if (!chatSearchTerm?.trim()) {
+        setSearchMatchTotal(0);
+        setSearchMatchIndex(0);
+      }
       return;
     }
 
@@ -1706,7 +1713,7 @@ export function Chat({
       requestAnimationFrame(applyHighlights);
     });
     return () => cancelAnimationFrame(rafId);
-  }, [chatSearchTerm, messages, isLoading, isLoadingOlder]);
+  }, [chatSearchTerm, messages, isLoading, searchFullyLoaded]);
 
   if (isLoading) {
     return (

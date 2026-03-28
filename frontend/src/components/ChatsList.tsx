@@ -90,11 +90,11 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
 
   const loadPage = useCallback(async (reset: boolean = false): Promise<void> => {
     if (isLoadingMore && !reset) return;
-    setIsLoadingMore(true);
     if (reset) {
-      setAllChats([]); // Clear immediately so stale results don't linger
       offsetRef.current = 0;
+      setAllChats([]); // Clear immediately so stale results don't linger
     }
+    setIsLoadingMore(true);
     const version = ++searchVersionRef.current;
     const offset = reset ? 0 : offsetRef.current;
     const apiScope = scopeFilter === 'all' ? undefined : scopeFilter;
@@ -271,7 +271,7 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
       {/* Scrollable list */}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-6 md:px-8 py-4">
-          {(!initialLoaded || (isLoadingMore && allChats.length === 0)) ? (
+          {(!initialLoaded || (isLoadingMore && orderedChats.length === 0)) ? (
             <div className="space-y-3">
               {Array.from({ length: 8 }, (_, i) => (
                 <div key={i} className="p-4 rounded-xl bg-surface-900 border border-surface-800 animate-pulse">
