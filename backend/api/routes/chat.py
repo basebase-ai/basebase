@@ -27,7 +27,7 @@ import redis.asyncio as aioredis
 
 
 from pydantic import BaseModel
-from sqlalchemy import and_, or_, select
+from sqlalchemy import String, and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth_middleware import AuthContext, get_current_auth
@@ -279,7 +279,12 @@ async def list_conversations(
             # Search conversation title, summary, preview, AND message content
             message_match_subq = (
                 select(ChatMessage.conversation_id)
-                .where(ChatMessage.content.ilike(search_term))
+                .where(
+                    or_(
+                        ChatMessage.content.ilike(search_term),
+                        ChatMessage.content_blocks.cast(String).ilike(search_term),
+                    )
+                )
                 .distinct()
                 .correlate(None)
             )
