@@ -1460,17 +1460,23 @@ export function Chat({
   const isCurrentChatPinned: boolean = Boolean(chatId && pinnedChatIds.includes(chatId));
 
   // When opened from search, auto-load ALL older messages so every match is visible
-  const autoLoadingSearchRef = useRef<boolean>(false);
+  const autoLoadedForChatRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!chatSearchTerm || !chatId || isLoading || autoLoadingSearchRef.current) return;
-    if (!hasMoreMessages) return;
-    autoLoadingSearchRef.current = true;
+    if (!chatSearchTerm || !chatId || isLoading) return;
+    // Only auto-load once per chat
+    if (autoLoadedForChatRef.current === chatId) return;
+    if (!hasMoreMessages) {
+      autoLoadedForChatRef.current = chatId;
+      return;
+    }
+    autoLoadedForChatRef.current = chatId;
     const loadAll = async (): Promise<void> => {
       let moreAvailable = true;
-      while (moreAvailable) {
+      let safety = 0;
+      while (moreAvailable && safety < 50) {
+        safety++;
         moreAvailable = await fetchOlderMessages(chatId);
       }
-      autoLoadingSearchRef.current = false;
     };
     void loadAll();
   }, [chatSearchTerm, chatId, isLoading, hasMoreMessages, fetchOlderMessages]);
