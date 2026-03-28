@@ -27,7 +27,7 @@ import redis.asyncio as aioredis
 
 
 from pydantic import BaseModel
-from sqlalchemy import String, and_, or_, select
+from sqlalchemy import and_, column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth_middleware import AuthContext, get_current_auth
@@ -278,18 +278,19 @@ async def list_conversations(
 
         if search and search.strip():
             search_term = f"%{search.strip()}%"
-            # Search conversation title, summary, preview, AND message content
-            message_match_subq = (
-                select(ChatMessage.conversation_id)
-                .where(
-                    or_(
-                        ChatMessage.content.ilike(search_term),
-                        ChatMessage.content_blocks.cast(String).ilike(search_term),
-                    )
-                )
-                .distinct()
-                .correlate(None)
-            )
+            # Search conversation title, summary, preview, AND message text content.
+            # For content_blocks, only search inside text blocks (type='text') to
+            # avoid matching tool call metadata, JSON keys, SQL queries, etc.
+            from sqlalchemy import text as sa_text
+            message_match_subq = sa_text(
+                "SELECT DISTINCT conversation_id FROM chat_messages "
+                "WHERE content ILIKE :st "
+                "UNION "
+                "SELECT DISTINCT conversation_id FROM chat_messages, "
+                "jsonb_array_elements(content_blocks) AS block "
+                "WHERE block->>'type' = 'text' "
+                "AND block->>'text' ILIKE :st"
+            ).bindparams(st=search_term).columns(column("conversation_id"))
             query = query.where(
                 or_(
                     Conversation.title.ilike(search_term),
@@ -333,17 +334,15 @@ async def list_conversations(
                 # Apply same search filter to Slack fallback
                 if search and search.strip():
                     slack_search = f"%{search.strip()}%"
-                    slack_msg_subq = (
-                        select(ChatMessage.conversation_id)
-                        .where(
-                            or_(
-                                ChatMessage.content.ilike(slack_search),
-                                ChatMessage.content_blocks.cast(String).ilike(slack_search),
-                            )
-                        )
-                        .distinct()
-                        .correlate(None)
-                    )
+                    slack_msg_subq = sa_text(
+                        "SELECT DISTINCT conversation_id FROM chat_messages "
+                        "WHERE content ILIKE :st "
+                        "UNION "
+                        "SELECT DISTINCT conversation_id FROM chat_messages, "
+                        "jsonb_array_elements(content_blocks) AS block "
+                        "WHERE block->>'type' = 'text' "
+                        "AND block->>'text' ILIKE :st"
+                    ).bindparams(st=slack_search).columns(column("conversation_id"))
                     slack_query = slack_query.where(
                         or_(
                             Conversation.title.ilike(slack_search),
@@ -387,12 +386,6 @@ async def list_conversations(
             snippet_result = await session.execute(
                 select(ChatMessage.conversation_id, ChatMessage.content, ChatMessage.content_blocks)
                 .where(ChatMessage.conversation_id.in_(conv_ids))
-                .where(
-                    or_(
-                        ChatMessage.content.ilike(f"%{search.strip()}%"),
-                        ChatMessage.content_blocks.cast(String).ilike(f"%{search.strip()}%"),
-                    )
-                )
                 .order_by(ChatMessage.created_at.desc())
             )
             for row in snippet_result:
