@@ -10,6 +10,7 @@ from typing import Any, Optional
 import httpx
 
 from config import settings
+from services.automated_agent_footer import AUTOMATED_AGENT_FOOTER, ensure_automated_agent_footer
 
 
 def _resend_request_succeeded(status_code: int) -> bool:
@@ -45,6 +46,12 @@ async def send_email(
 
     # Ensure to is a list
     to_list = [to] if isinstance(to, str) else to
+
+    # Apply footer at the final send boundary so user-authored content cannot
+    # remove or mutate the disclosure in earlier prompt/editing steps.
+    body_with_footer: str = ensure_automated_agent_footer(body)
+    if body_with_footer != body:
+        print(f"[Email] Applied automated-agent footer before send to {to_list}")
     
     # Generate simple HTML if not provided
     if not html:
@@ -53,17 +60,19 @@ async def send_email(
         <html>
         <head><meta charset="utf-8"></head>
         <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-            {body.replace(chr(10), '<br>')}
+            {body_with_footer.replace(chr(10), '<br>')}
         </body>
         </html>
         """
+    elif body_with_footer != body:
+        html = f"{html}<br><br>— {AUTOMATED_AGENT_FOOTER}"
 
     payload: dict[str, Any] = {
         "from": from_address or settings.EMAIL_FROM or "Basebase <hello@basebase.com>",
         "to": to_list,
         "subject": subject,
         "html": html,
-        "text": body,
+        "text": body_with_footer,
     }
     
     if reply_to:
