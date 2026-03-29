@@ -400,13 +400,16 @@ function ChatRow({
                 Active
               </span>
             )}
-            <span className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide ${
+            <div className={`ml-auto min-w-[9rem] flex-shrink-0 flex items-center gap-2 px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wide ${
               chat.scope === 'shared'
                 ? 'bg-primary-500/20 text-primary-400'
                 : 'bg-surface-700 text-surface-400'
             }`}>
-              {chat.scope}
-            </span>
+              <span>{chat.scope}</span>
+              <span className="ml-auto normal-case tracking-normal text-xs text-surface-300 whitespace-nowrap">
+                {formatDate(chat.lastMessageAt)}
+              </span>
+            </div>
             {isSearching && (chat.matchCount ?? 0) > 0 && (
               <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-300 text-black">
                 {chat.matchCount} {chat.matchCount === 1 ? 'match' : 'matches'}
@@ -437,9 +440,7 @@ function ChatRow({
             </p>
           </div>
         </div>
-
         <div className="flex flex-col items-end gap-2 flex-shrink-0">
-          <div className="text-xs text-surface-500 whitespace-nowrap">{formatDate(chat.lastMessageAt)}</div>
           <button
             onClick={(e) => { e.stopPropagation(); onTogglePin(chat.id); }}
             className={`p-1.5 rounded ${
