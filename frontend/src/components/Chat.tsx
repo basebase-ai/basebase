@@ -1642,6 +1642,14 @@ export function Chat({
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (!container || !chatSearchTerm?.trim()) {
+      // Remove all highlights when search is cleared
+      container?.querySelectorAll('mark[data-search-highlight]').forEach((el) => {
+        const parent = el.parentNode;
+        if (parent) {
+          parent.replaceChild(document.createTextNode(el.textContent ?? ''), el);
+          parent.normalize();
+        }
+      });
       setSearchMatchIndex(0);
       return;
     }
