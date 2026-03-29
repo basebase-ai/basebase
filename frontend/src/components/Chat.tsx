@@ -1460,29 +1460,30 @@ export function Chat({
   const chatSearchMatchCount = useChatStore((s) => s.chatSearchMatchCount);
   const isCurrentChatPinned: boolean = Boolean(chatId && pinnedChatIds.includes(chatId));
 
-  // When opened from search, auto-load ALL older messages so all matches are navigable
+  // When opened from search, auto-load ALL older messages so all matches are navigable.
+  // Uses messages.length as a dep so it re-checks after initial load completes.
   const autoLoadedForChatRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!chatSearchTerm || !chatId || isLoading) return;
+    if (!chatSearchTerm || !chatId) return;
     if (autoLoadedForChatRef.current === chatId) return;
-    // Check hasMore from the store directly (not the potentially stale prop)
+    // Wait until we have at least some messages loaded
     const convState = useAppStore.getState().conversations[chatId];
-    if (!convState?.hasMore) {
+    if (!convState || convState.messages.length === 0) return;
+    if (!convState.hasMore) {
       autoLoadedForChatRef.current = chatId;
       return;
     }
     autoLoadedForChatRef.current = chatId;
     const loadAll = async (): Promise<void> => {
-      const fetchOlder = useAppStore.getState().fetchOlderMessages;
       let more = true;
       let safety = 0;
       while (more && safety < 50) {
         safety++;
-        more = await fetchOlder(chatId);
+        more = await useAppStore.getState().fetchOlderMessages(chatId);
       }
     };
     void loadAll();
-  }, [chatSearchTerm, chatId, isLoading]);
+  }, [chatSearchTerm, chatId, messages.length]);
 
   const startEditingHeaderTitle = useCallback(() => {
     if (!canRenameHeader) return;
