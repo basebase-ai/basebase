@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 import httpx
 
 from config import settings
+from services.automated_agent_footer import ensure_automated_agent_footer
 
 # #region agent log
 _DEBUG_LOG_PATH: str = "/Users/teg/Documents/basebase/basebase/.cursor/debug-f1ce5e.log"
@@ -100,9 +101,14 @@ async def send_sms(
         pass
     # #endregion
 
+    # Apply footer at the final send boundary so user text cannot remove it.
+    body_with_footer: str = ensure_automated_agent_footer(body)
+    if body_with_footer != body:
+        print(f"[SMS] Applied automated-agent footer before send to {to}")
+
     # Truncate body if too long
-    if len(body) > 1600:
-        body = body[:1597] + "..."
+    if len(body_with_footer) > 1600:
+        body_with_footer = body_with_footer[:1597] + "..."
     
     # Build auth header
     credentials = base64.b64encode(f"{account_sid}:{auth_token}".encode()).decode()
@@ -118,7 +124,7 @@ async def send_sms(
             params: list[tuple[str, str]] = [
                 ("To", to_value),
                 ("From", from_value),
-                ("Body", body),
+                ("Body", body_with_footer),
             ]
             # Twilio accepts up to 10 repeated MediaUrl params for MMS
             if media_urls:
