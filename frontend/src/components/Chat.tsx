@@ -1465,18 +1465,24 @@ export function Chat({
   useEffect(() => {
     if (!chatSearchTerm || !chatId || isLoading) return;
     if (autoLoadedForChatRef.current === chatId) return;
+    // Check hasMore from the store directly (not the potentially stale prop)
+    const convState = useAppStore.getState().conversations[chatId];
+    if (!convState?.hasMore) {
+      autoLoadedForChatRef.current = chatId;
+      return;
+    }
     autoLoadedForChatRef.current = chatId;
-    if (!hasMoreMessages) return;
     const loadAll = async (): Promise<void> => {
+      const fetchOlder = useAppStore.getState().fetchOlderMessages;
       let more = true;
       let safety = 0;
       while (more && safety < 50) {
         safety++;
-        more = await fetchOlderMessages(chatId);
+        more = await fetchOlder(chatId);
       }
     };
     void loadAll();
-  }, [chatSearchTerm, chatId, isLoading, hasMoreMessages, fetchOlderMessages]);
+  }, [chatSearchTerm, chatId, isLoading]);
 
   const startEditingHeaderTitle = useCallback(() => {
     if (!canRenameHeader) return;
