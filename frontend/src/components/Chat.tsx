@@ -1797,7 +1797,7 @@ export function Chat({
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
       {/* Search navigation bar (browser-style Find) */}
       {chatSearchTerm && (
-        <div className="hidden md:flex h-10 bg-surface-900 border-b border-surface-700 items-center px-4 md:px-6 gap-3 flex-shrink-0">
+        <div className="flex h-10 bg-surface-900 border-b border-surface-700 items-center px-3 md:px-6 gap-2 md:gap-3 flex-shrink-0 overflow-x-auto">
           <button
             type="button"
             onClick={() => {
