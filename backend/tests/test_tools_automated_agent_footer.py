@@ -2,11 +2,12 @@ import asyncio
 from typing import Any
 
 from agents import tools
+from services.automated_agent_footer import AUTOMATED_AGENT_FOOTER
 
 
 def test_ensure_automated_agent_footer_appends_once() -> None:
     signed = tools._ensure_automated_agent_footer("Hello there")
-    assert "Done by an automated agent" in signed
+    assert AUTOMATED_AGENT_FOOTER in signed
     assert signed.startswith("Hello there")
 
     signed_again = tools._ensure_automated_agent_footer(signed)
@@ -15,7 +16,7 @@ def test_ensure_automated_agent_footer_appends_once() -> None:
 
 def test_ensure_automated_agent_footer_handles_empty() -> None:
     signed = tools._ensure_automated_agent_footer("")
-    assert signed.startswith("— Done by an automated agent")
+    assert signed == f"— {AUTOMATED_AGENT_FOOTER}"
 
 
 def test_execute_linear_create_adds_footer() -> None:
@@ -30,7 +31,7 @@ def test_execute_linear_create_adds_footer() -> None:
     result = asyncio.run(tools._execute_linear_create(FakeLinearConnector(), record))
 
     assert result["identifier"] == "ENG-1"
-    assert "Done by an automated agent" in captured["description"]
+    assert AUTOMATED_AGENT_FOOTER in captured["description"]
 
 
 def test_handle_github_write_create_issue_adds_footer(monkeypatch) -> None:
@@ -63,4 +64,4 @@ def test_handle_github_write_create_issue_adds_footer(monkeypatch) -> None:
 
     assert result["status"] == "completed"
     assert captured["operation"] == "create_issue"
-    assert "Done by an automated agent" in captured["data"]["body"]
+    assert AUTOMATED_AGENT_FOOTER in captured["data"]["body"]
