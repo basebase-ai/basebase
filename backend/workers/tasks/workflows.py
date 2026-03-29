@@ -20,6 +20,7 @@ if str(_backend_dir) not in sys.path:
 
 import json
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -36,6 +37,23 @@ WORKFLOW_NESTING_GUARDRAIL = (
     "the total created across this execution tree at 5 or fewer. Prefer "
     "completing the task in this workflow directly."
 )
+
+_AUTOMATED_AGENT_FOOTER: str = "Done by an automated agent via Basebase."
+_AUTOMATED_AGENT_FOOTER_MARKER: re.Pattern[str] = re.compile(
+    r"done\s+by\s+an\s+automated\s+agent",
+    flags=re.IGNORECASE,
+)
+
+
+def _ensure_automated_agent_footer(content: str | None) -> str:
+    """Ensure workflow outbound messages include an automation signature footer."""
+    base_text: str = (content or "").rstrip()
+    if _AUTOMATED_AGENT_FOOTER_MARKER.search(base_text):
+        return base_text
+    footer_line: str = f"— {_AUTOMATED_AGENT_FOOTER}"
+    if not base_text:
+        return footer_line
+    return f"{base_text}\n\n{footer_line}"
 
 
 def _extract_allowed_slack_channels(workflow: Any) -> list[str]:
@@ -1442,7 +1460,7 @@ async def _action_send_email(
         prev_output = context.get("step_0_output", {}).get("output", "")
         body = body.replace("{previous_output}", prev_output)
     
-    success = await send_email(to, subject, body)
+    success = await send_email(to, subject, _ensure_automated_agent_footer(body))
     
     return {
         "status": "completed" if success else "failed",
@@ -1692,7 +1710,12 @@ async def _action_send_system_email(
             subject = subject.replace(f"{{{key}}}", output_str)
             body = body.replace(f"{{{key}}}", output_str)
     
-    success = await send_email(to, subject, body, reply_to=reply_to)
+    success = await send_email(
+        to,
+        subject,
+        _ensure_automated_agent_footer(body),
+        reply_to=reply_to,
+    )
     
     return {
         "status": "completed" if success else "failed",
@@ -1805,7 +1828,7 @@ async def _action_send_email_from(
         result = await connector.send_email(
             to=to,
             subject=subject,
-            body=body,
+            body=_ensure_automated_agent_footer(body),
             cc=cc if cc else None,
             bcc=bcc if bcc else None,
         )
