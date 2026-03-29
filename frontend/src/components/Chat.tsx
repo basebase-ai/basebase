@@ -1648,20 +1648,30 @@ export function Chat({
     const container = messagesContainerRef.current;
     if (!container) return;
 
-    // Map flat index to message
     const wrappedIdx = ((idx % searchMatchTotal) + searchMatchTotal) % searchMatchTotal;
     setSearchMatchIndex(wrappedIdx);
 
-    let cumulative = 0;
-    for (const { msgId } of searchMatchMessages) {
-      const msgEl = container.querySelector(`[data-message-id="${msgId}"]`);
-      if (msgEl) {
-        const msgCount = searchMatchMessages.find((m) => m.msgId === msgId)?.count ?? 0;
-        if (cumulative + msgCount > wrappedIdx) {
-          msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Restyle all DOM marks: yellow for inactive, orange for active
+    const marks = container.querySelectorAll('mark[data-search-highlight]');
+    marks.forEach((m, i) => {
+      (m as HTMLElement).className = i === wrappedIdx
+        ? 'bg-orange-400 text-gray-900 rounded-sm ring-2 ring-orange-500'
+        : 'bg-yellow-300 text-gray-900 rounded-sm';
+    });
+
+    // Scroll to the active mark if it exists in DOM
+    if (marks[wrappedIdx]) {
+      marks[wrappedIdx]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } else {
+      // Fallback: scroll to the message containing the match
+      let cumulative = 0;
+      for (const { msgId, count } of searchMatchMessages) {
+        if (cumulative + count > wrappedIdx) {
+          const msgEl = container.querySelector(`[data-message-id="${msgId}"]`);
+          msgEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
           break;
         }
-        cumulative += msgCount;
+        cumulative += count;
       }
     }
   }, [searchMatchMessages, searchMatchTotal]);
@@ -1707,16 +1717,23 @@ export function Chat({
           range.setEnd(match.node, match.index + term.length);
           const mark = document.createElement('mark');
           mark.setAttribute('data-search-highlight', '');
-          mark.className = 'bg-yellow-500/30 text-yellow-200 rounded-sm';
+          mark.className = 'bg-yellow-300 text-gray-900 rounded-sm';
           range.surroundContents(mark);
         } catch { /* skip cross-boundary ranges */ }
       }
 
-      // Scroll to first matching message
-      const firstMsgId = searchMatchMessages[0]?.msgId;
-      if (firstMsgId) {
-        const el = container.querySelector(`[data-message-id="${firstMsgId}"]`);
-        el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Style first mark as active (orange), scroll to it
+      const allMarks = container.querySelectorAll('mark[data-search-highlight]');
+      if (allMarks.length > 0 && allMarks[0]) {
+        (allMarks[0] as HTMLElement).className = 'bg-orange-400 text-gray-900 rounded-sm ring-2 ring-orange-500';
+        allMarks[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else {
+        // Fallback: scroll to first matching message
+        const firstMsgId = searchMatchMessages[0]?.msgId;
+        if (firstMsgId) {
+          const el = container.querySelector(`[data-message-id="${firstMsgId}"]`);
+          el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
       }
       setSearchMatchIndex(0);
     };
@@ -1803,6 +1820,17 @@ export function Chat({
           {searchMatchTotal > 0 ? (
             <span className="text-xs text-surface-400 tabular-nums">
               {searchMatchIndex + 1} of {searchMatchTotal}
+              {hasMoreMessages && (
+                <span className="text-surface-500">+</span>
+              )}
+            </span>
+          ) : hasMoreMessages ? (
+            <span className="text-xs text-surface-500 flex items-center gap-1.5">
+              <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              Loading messages...
             </span>
           ) : (
             <span className="text-xs text-surface-500">No matches</span>

@@ -46,7 +46,7 @@ function HighlightText({ text, term }: { text: string; term: string }): JSX.Elem
     <>
       {parts.map((part, i) =>
         regex.test(part) ? (
-          <mark key={i} className="bg-yellow-500/40 text-yellow-100 rounded-sm px-0.5">{part}</mark>
+          <mark key={i} className="bg-yellow-300 text-gray-900 rounded-sm px-0.5">{part}</mark>
         ) : (
           <span key={i}>{part}</span>
         ),
