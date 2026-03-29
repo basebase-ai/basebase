@@ -6,7 +6,7 @@ import re
 
 AUTOMATED_AGENT_FOOTER: str = "Done by an automated agent via Basebase."
 _AUTOMATED_AGENT_FOOTER_MARKER: re.Pattern[str] = re.compile(
-    r"done\s+by\s+an\s+automated\s+agent",
+    re.escape(AUTOMATED_AGENT_FOOTER),
     flags=re.IGNORECASE,
 )
 

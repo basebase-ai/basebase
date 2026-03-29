@@ -13,3 +13,9 @@ def test_ensure_automated_agent_footer_adds_footer_once() -> None:
 def test_ensure_automated_agent_footer_handles_empty_text() -> None:
     signed = ensure_automated_agent_footer("")
     assert signed.startswith("— Done by an automated agent")
+
+
+def test_ensure_automated_agent_footer_does_not_accept_partial_phrase() -> None:
+    signed = ensure_automated_agent_footer("Done by an automated agent")
+    assert signed.count("Done by an automated agent") == 2
+    assert "via Basebase." in signed
