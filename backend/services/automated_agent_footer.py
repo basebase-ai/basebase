@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import re
 
-AUTOMATED_AGENT_FOOTER: str = "Done by an automated agent via Basebase."
+AUTOMATED_AGENT_FOOTER: str = "[Sent via Basebase!]"
 _AUTOMATED_AGENT_FOOTER_MARKER: re.Pattern[str] = re.compile(
-    r"done\s+by\s+an\s+automated\s+agent",
+    r"(?:done\s+by\s+an\s+automated\s+agent|sent\s+via\s+basebase)",
     flags=re.IGNORECASE,
 )
 
