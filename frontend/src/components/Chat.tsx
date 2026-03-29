@@ -1460,6 +1460,24 @@ export function Chat({
   const chatSearchMatchCount = useChatStore((s) => s.chatSearchMatchCount);
   const isCurrentChatPinned: boolean = Boolean(chatId && pinnedChatIds.includes(chatId));
 
+  // When opened from search, auto-load ALL older messages so all matches are navigable
+  const autoLoadedForChatRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!chatSearchTerm || !chatId || isLoading) return;
+    if (autoLoadedForChatRef.current === chatId) return;
+    autoLoadedForChatRef.current = chatId;
+    if (!hasMoreMessages) return;
+    const loadAll = async (): Promise<void> => {
+      let more = true;
+      let safety = 0;
+      while (more && safety < 50) {
+        safety++;
+        more = await fetchOlderMessages(chatId);
+      }
+    };
+    void loadAll();
+  }, [chatSearchTerm, chatId, isLoading, hasMoreMessages, fetchOlderMessages]);
+
   const startEditingHeaderTitle = useCallback(() => {
     if (!canRenameHeader) return;
     setHeaderTitleDraft(chatTitle);
