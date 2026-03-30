@@ -29,6 +29,32 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+def _norm_credit_ref_id(value: Any) -> Optional[str]:
+    """Canonical UUID string for conversation reference_id (stable dict keys across DB drivers)."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        return str(UUID(s))
+    except (ValueError, TypeError):
+        return s
+
+
+def _norm_user_id_str(value: Any) -> Optional[str]:
+    """Canonical UUID string for credit transaction user_id."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        return str(UUID(s))
+    except (ValueError, TypeError):
+        return s
+
 # Credit transactions returned for charts / history (deductions + grants such as renewals).
 CREDIT_HISTORY_LOOKBACK_DAYS = 365
 
@@ -135,11 +161,19 @@ class UserUsageItem(BaseModel):
     total_credits_used: int
 
 
+class ConversationUserSlice(BaseModel):
+    """Credits consumed in this conversation attributed to one user."""
+
+    user_id: str
+    total_credits_used: int
+
+
 class ConversationUsageItem(BaseModel):
     conversation_id: str
     title: Optional[str] = None
     total_credits_used: int
     last_used_at: Optional[str] = None
+    by_user: list[ConversationUserSlice] = []
 
 
 class CreditDetailsResponse(BaseModel):
@@ -580,9 +614,10 @@ async def get_credit_details(
         
         usage_by_user: list[UserUsageItem] = []
         for user_id, email, name, total_used in usage_rows:
+            uid_key = _norm_user_id_str(user_id) if user_id else None
             usage_by_user.append(
                 UserUsageItem(
-                    user_id=str(user_id) if user_id else "unknown",
+                    user_id=uid_key if uid_key else "unknown",
                     user_email=email or "Unknown user",
                     user_name=name,
                     total_credits_used=int(total_used) if total_used else 0,
@@ -609,6 +644,41 @@ async def get_credit_details(
             conv_usage_query.group_by(CreditTransaction.reference_id)
         )
         conv_usage_rows = conv_usage_result.all()
+
+        # Per-(conversation, user) slices so the UI can filter chats by teammate
+        conv_user_query = (
+            select(
+                CreditTransaction.reference_id,
+                CreditTransaction.user_id,
+                func.sum(func.abs(CreditTransaction.amount)).label("total_used"),
+            )
+            .where(CreditTransaction.organization_id == org_id)
+            .where(CreditTransaction.reference_type == "conversation")
+            .where(CreditTransaction.amount < 0)
+            .where(CreditTransaction.reference_id.isnot(None))
+            .where(CreditTransaction.user_id.isnot(None))
+        )
+        if period_start:
+            conv_user_query = conv_user_query.where(
+                CreditTransaction.created_at >= period_start
+            )
+        conv_user_result = await session.execute(
+            conv_user_query.group_by(
+                CreditTransaction.reference_id, CreditTransaction.user_id
+            )
+        )
+        conv_id_to_slices: dict[str, list[ConversationUserSlice]] = {}
+        for ref_id, uid, total_used in conv_user_result.all():
+            ref_key = _norm_credit_ref_id(ref_id)
+            uid_key = _norm_user_id_str(uid)
+            if not ref_key or not uid_key:
+                continue
+            conv_id_to_slices.setdefault(ref_key, []).append(
+                ConversationUserSlice(
+                    user_id=uid_key,
+                    total_credits_used=int(total_used) if total_used else 0,
+                )
+            )
 
         # Resolve conversation titles from the org-scoped database
         usage_by_conversation: list[ConversationUsageItem] = []
@@ -641,15 +711,18 @@ async def get_credit_details(
             for ref_id, total_used, last_used_at in conv_usage_rows:
                 if not ref_id:
                     continue
-                title = id_to_title.get(ref_id)
+                ref_key = _norm_credit_ref_id(ref_id) or str(ref_id).strip()
+                title = id_to_title.get(ref_key) or id_to_title.get(str(ref_id))
+                slices = conv_id_to_slices.get(ref_key, [])
                 usage_by_conversation.append(
                     ConversationUsageItem(
-                        conversation_id=ref_id,
+                        conversation_id=ref_key,
                         title=title,
                         total_credits_used=int(total_used) if total_used else 0,
                         last_used_at=last_used_at.isoformat().replace("+00:00", "Z")
                         if last_used_at
                         else None,
+                        by_user=slices,
                     )
                 )
 
