@@ -8,8 +8,10 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from api.auth_middleware import AuthContext, get_current_auth
+from api.routes.auth import _can_administer_org
 from models.action_ledger import ActionLedgerEntry
-from models.database import get_session
+from models.database import get_admin_session, get_session
+from models.user import User
 
 router = APIRouter(prefix="/action-ledger", tags=["action-ledger"])
 logger = logging.getLogger(__name__)
@@ -35,7 +37,25 @@ async def list_action_ledger(
     if not auth.organization_id or str(auth.organization_id) != org_id:
         raise HTTPException(status_code=403, detail="Organization mismatch")
 
-    filters = [ActionLedgerEntry.organization_id == UUID(org_id)]
+    try:
+        org_uuid = UUID(org_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid organization id") from None
+
+    can_view_org_wide = False
+    async with get_admin_session() as admin_session:
+        requester: User | None = await admin_session.get(User, auth.user_id)
+        can_view_org_wide = await _can_administer_org(admin_session, requester, org_uuid)
+    logger.info(
+        "action_ledger list request org=%s user=%s org_wide=%s",
+        org_id,
+        auth.user_id,
+        can_view_org_wide,
+    )
+
+    filters = [ActionLedgerEntry.organization_id == org_uuid]
+    if not can_view_org_wide:
+        filters.append(ActionLedgerEntry.user_id == auth.user_id)
     if conversation_id:
         filters.append(ActionLedgerEntry.conversation_id == UUID(conversation_id))
     if connector:

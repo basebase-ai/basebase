@@ -151,6 +151,10 @@ if _ENABLE_BEAT:
             "task": "workers.tasks.monitoring.monitoring_heartbeat_watchdog",
             "schedule": timedelta(minutes=5),
         },
+        "prune-action-ledger": {
+            "task": "workers.tasks.monitoring.prune_action_ledger",
+            "schedule": crontab(hour=2, minute=17),
+        },
     }
 else:
     celery_app.conf.beat_schedule = {}

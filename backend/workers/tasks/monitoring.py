@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from sqlalchemy import text
 
 from config import get_redis_connection_kwargs, settings
+from models.database import get_admin_session
 from services.incident_throttling import clear_incident_failure, evaluate_incident_creation
 from services.pagerduty import create_pagerduty_incident
 from workers.celery_app import celery_app
@@ -17,6 +20,10 @@ logger = logging.getLogger(__name__)
 
 _HEARTBEAT_KEY = "monitoring:dependency_checks:last_completed_at"
 _HEARTBEAT_STALE_AFTER_SECONDS = 30 * 60
+_ACTION_LEDGER_MAX_BYTES = 10 * 1024 * 1024 * 1024
+_ACTION_LEDGER_TARGET_BYTES = 9 * 1024 * 1024 * 1024
+_ACTION_LEDGER_RETENTION_DAYS = 100
+_ACTION_LEDGER_DELETE_BATCH_SIZE = 1000
 
 
 @dataclass(frozen=True)
@@ -302,5 +309,115 @@ def monitoring_heartbeat_watchdog(self: Any) -> dict[str, Any]:
             _HEARTBEAT_STALE_AFTER_SECONDS,
         )
         return {"status": "ok", "age_seconds": age_seconds}
+
+    return run_async(_run())
+
+
+async def _action_ledger_total_bytes() -> int:
+    """Return total bytes occupied by action_ledger table (+indexes)."""
+    async with get_admin_session() as session:
+        result = await session.execute(
+            text("SELECT pg_total_relation_size('action_ledger')")
+        )
+        size_bytes = int(result.scalar_one() or 0)
+    return size_bytes
+
+
+async def _delete_action_ledger_batch(*, cutoff: datetime | None) -> int:
+    """Delete oldest action_ledger rows in bounded batches."""
+    clause = "WHERE created_at < :cutoff" if cutoff is not None else ""
+    params: dict[str, Any] = {"batch_size": _ACTION_LEDGER_DELETE_BATCH_SIZE}
+    if cutoff is not None:
+        params["cutoff"] = cutoff
+
+    async with get_admin_session() as session:
+        result = await session.execute(
+            text(
+                f"""
+                WITH doomed AS (
+                    SELECT id
+                    FROM action_ledger
+                    {clause}
+                    ORDER BY created_at ASC
+                    LIMIT :batch_size
+                    FOR UPDATE SKIP LOCKED
+                )
+                DELETE FROM action_ledger a
+                USING doomed d
+                WHERE a.id = d.id
+                RETURNING a.id
+                """
+            ),
+            params,
+        )
+        deleted = len(result.fetchall())
+        await session.commit()
+    return deleted
+
+
+@celery_app.task(bind=True, name="workers.tasks.monitoring.prune_action_ledger")
+def prune_action_ledger(self: Any) -> dict[str, Any]:
+    """Apply time and size retention limits to action_ledger."""
+    from workers.run_async import run_async
+
+    logger.info("Task %s: Starting action_ledger pruning run", self.request.id)
+
+    async def _run() -> dict[str, Any]:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=_ACTION_LEDGER_RETENTION_DAYS)
+        deleted_for_age = 0
+        deleted_for_size = 0
+
+        # 1) Always enforce retention window first.
+        while True:
+            deleted = await _delete_action_ledger_batch(cutoff=cutoff)
+            if deleted == 0:
+                break
+            deleted_for_age += deleted
+            logger.info(
+                "action_ledger retention batch deleted=%s cutoff=%s",
+                deleted,
+                cutoff.isoformat(),
+            )
+
+        # 2) Enforce max size by trimming oldest rows.
+        current_size = await _action_ledger_total_bytes()
+        logger.info(
+            "action_ledger size check bytes=%s max_bytes=%s target_bytes=%s",
+            current_size,
+            _ACTION_LEDGER_MAX_BYTES,
+            _ACTION_LEDGER_TARGET_BYTES,
+        )
+        while current_size > _ACTION_LEDGER_MAX_BYTES:
+            deleted = await _delete_action_ledger_batch(cutoff=None)
+            if deleted == 0:
+                logger.warning(
+                    "action_ledger exceeded max size but no rows were deleted; stopping prune loop"
+                )
+                break
+            deleted_for_size += deleted
+            current_size = await _action_ledger_total_bytes()
+            logger.info(
+                "action_ledger size-prune batch deleted=%s remaining_bytes=%s",
+                deleted,
+                current_size,
+            )
+            if current_size <= _ACTION_LEDGER_TARGET_BYTES:
+                break
+
+        final_size = await _action_ledger_total_bytes()
+        logger.info(
+            "action_ledger prune complete deleted_for_age=%s deleted_for_size=%s final_bytes=%s",
+            deleted_for_age,
+            deleted_for_size,
+            final_size,
+        )
+        return {
+            "status": "ok",
+            "deleted_for_age": deleted_for_age,
+            "deleted_for_size": deleted_for_size,
+            "final_size_bytes": final_size,
+            "retention_days": _ACTION_LEDGER_RETENTION_DAYS,
+            "max_size_bytes": _ACTION_LEDGER_MAX_BYTES,
+        }
 
     return run_async(_run())

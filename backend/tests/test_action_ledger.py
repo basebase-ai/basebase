@@ -349,6 +349,87 @@ class TestActionLedgerAPI:
         matching = [p for p in paths if "action-ledger" in p]
         assert len(matching) > 0, "action-ledger route not found in OpenAPI schema"
 
+    def test_non_admin_route_scopes_results_to_requesting_user(self) -> None:
+        from api.auth_middleware import AuthContext
+        from api.routes import action_ledger as route
+
+        org_id = "00000000-0000-0000-0000-000000000001"
+        user_id = uuid.UUID("00000000-0000-0000-0000-0000000000aa")
+        captured_sql: list[str] = []
+
+        class _ExecResult:
+            def __init__(self, *, count: int = 0, rows: list[ActionLedgerEntry] | None = None):
+                self._count = count
+                self._rows = rows or []
+
+            def scalar_one(self) -> int:
+                return self._count
+
+            def scalars(self):
+                class _Scalars:
+                    def __init__(self, rows: list[ActionLedgerEntry]):
+                        self._rows = rows
+
+                    def all(self) -> list[ActionLedgerEntry]:
+                        return self._rows
+
+                return _Scalars(self._rows)
+
+        class _UserScopedSession:
+            async def execute(self, stmt):
+                captured_sql.append(str(stmt))
+                if "count(" in str(stmt):
+                    return _ExecResult(count=1)
+                row = ActionLedgerEntry(
+                    id=uuid.uuid4(),
+                    organization_id=uuid.UUID(org_id),
+                    user_id=user_id,
+                    connector="hubspot",
+                    dispatch_type="write",
+                    operation="update_deal",
+                    intent={"x": 1},
+                    reversible=False,
+                    created_at=datetime(2026, 3, 30, 0, 0, 0),
+                )
+                return _ExecResult(rows=[row])
+
+        @asynccontextmanager
+        async def _fake_admin_session():
+            admin = MagicMock()
+            admin.get = AsyncMock(return_value=MagicMock())
+            yield admin
+
+        @asynccontextmanager
+        async def _fake_user_session(_org_id: str):
+            yield _UserScopedSession()
+
+        auth = AuthContext(
+            user_id=user_id,
+            organization_id=uuid.UUID(org_id),
+            email="user@example.com",
+            role="member",
+            is_global_admin=False,
+        )
+
+        with patch.object(route, "get_admin_session", _fake_admin_session), \
+             patch.object(route, "get_session", _fake_user_session), \
+             patch.object(route, "_can_administer_org", new=AsyncMock(return_value=False)):
+            response = asyncio.run(
+                route.list_action_ledger(
+                    org_id=org_id,
+                    auth=auth,
+                    conversation_id=None,
+                    connector=None,
+                    entity_type=None,
+                    entity_id=None,
+                    limit=50,
+                    offset=0,
+                )
+            )
+
+        assert response.total == 1
+        assert any("action_ledger.user_id" in sql for sql in captured_sql)
+
 
 # ---------------------------------------------------------------------------
 # Connector: capture_before_state default
