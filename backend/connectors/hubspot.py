@@ -81,7 +81,7 @@ class HubSpotConnector(BaseConnector):
         capabilities=[Capability.SYNC, Capability.QUERY, Capability.WRITE, Capability.ACTION],
         oauth_scopes=[
             "content",
-            "email",
+            "sales-email-read",
             "crm.objects.contacts.read",
         ],
         actions=[
@@ -122,7 +122,7 @@ class HubSpotConnector(BaseConnector):
                 name="list_email_events",
                 description=(
                     "Query marketing email analytics events (sends, opens, clicks, etc.). "
-                    "Requires the `email` scope. See HubSpot Email Analytics API query parameters."
+                    "Requires the `sales-email-read` scope. See HubSpot Email Analytics API query parameters."
                 ),
                 parameters=[
                     {
@@ -332,7 +332,7 @@ class HubSpotConnector(BaseConnector):
 
 ## OAuth scopes
 
-These scopes must be enabled on your **HubSpot private app** and requested by the **Nango** `hubspot` integration: `content` (Marketing Emails API), `email` (Email Events API), `crm.objects.contacts.read` (contact read / enrichment). After adding scopes, users must **reconnect** HubSpot to obtain a new access token.
+These scopes must be enabled on your **HubSpot private app** and requested by the **Nango** `hubspot` integration: `content` (Marketing Emails API), `sales-email-read` (Email Events API), `crm.objects.contacts.read` (contact read / enrichment). After adding scopes, users must **reconnect** HubSpot to obtain a new access token.
 
 ## Live reads (`run_on_connector`)
 
