@@ -40,7 +40,7 @@ const ArtifactFullView = lazy(() => import('./ArtifactFullView').then(m => ({ de
 const DocumentsGallery = lazy(() => import('./documents/DocumentsGallery').then(m => ({ default: m.DocumentsGallery })));
 import { APP_NAME, LOGO_PATH, RELEASE_STAGE } from '../lib/brand';
 import { ProfilePanel } from './ProfilePanel';
-import { useAppStore, useChatStore, useUIStore, useMasquerade, useIntegrations, useIsSwitchingOrg, useIsGlobalAdmin, type ActiveTask, type AdminPanelTab, type ToolCallData, type ChatMessage, type ContentBlock, type View } from '../store';
+import { useAppStore, useChatStore, useUIStore, useMasquerade, useIntegrations, useIsSwitchingOrg, useIsGlobalAdmin, useIsOrgAdmin, type ActiveTask, type AdminPanelTab, type ToolCallData, type ChatMessage, type ContentBlock, type View } from '../store';
 import { useTeamMembers, useWebSocket } from '../hooks';
 import { apiRequest } from '../lib/api';
 
@@ -1635,12 +1635,16 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
   }, [setCurrentChatId]);
 
   const isGlobalAdmin: boolean = useIsGlobalAdmin();
+  const isOrgAdmin: boolean = useIsOrgAdmin();
 
   useEffect(() => {
     if (currentView === 'admin' && !isGlobalAdmin) {
       setCurrentView('home');
     }
-  }, [currentView, isGlobalAdmin, setCurrentView]);
+    if (currentView === 'activity-log' && !isOrgAdmin) {
+      setCurrentView('home');
+    }
+  }, [currentView, isGlobalAdmin, isOrgAdmin, setCurrentView]);
 
   // Guard against missing user/org (shouldn't happen, but be safe)
   if (!user || !organization || isSwitchingOrg) {
@@ -1869,7 +1873,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
         {currentView === 'pending-changes' && (
           <PendingChangesPage />
         )}
-        {currentView === 'activity-log' && (
+        {currentView === 'activity-log' && isOrgAdmin && (
           <ActivityLog />
         )}
       </main>
