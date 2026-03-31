@@ -43,6 +43,7 @@ from models.messenger_user_mapping import MessengerUserMapping
 from models.org_member import OrgMember
 from models.organization import Organization
 from models.user import User
+from services.anthropic_health import user_message_for_agent_stream_failure
 
 logger = logging.getLogger(__name__)
 
@@ -741,7 +742,7 @@ class WorkspaceMessenger(BaseMessenger):
                         await _flush(reason="buffer_size" if size_flush else "interval")
         except Exception as exc:
             logger.error("[%s] Error during streaming: %s", self.meta.slug, exc, exc_info=True)
-            current_text += "\nSorry, something went wrong processing your message. Please try again."
+            current_text += user_message_for_agent_stream_failure(exc)
 
         await _flush(reason="stream_end", force=True)
         return total_length
