@@ -23,7 +23,7 @@ interface AppDetail {
   conversation_id: string | null;
   created_at: string | null;
   user_id: string;
-  widget_config?: any;
+  widget_config?: Record<string, unknown> | null;
 }
 
 interface EmbedTokenData {
@@ -66,8 +66,8 @@ export function AppFullView({ appId }: AppFullViewProps): JSX.Element {
   // Sync preview mode / detail level from widget_config when app loads
   useEffect(() => {
     if (app?.widget_config) {
-      if (app.widget_config.preferred_mode) setPreviewMode(app.widget_config.preferred_mode);
-      if (app.widget_config.detail_level) setDetailLevel(app.widget_config.detail_level);
+      if (app.widget_config.preferred_mode) setPreviewMode(app.widget_config.preferred_mode as string);
+      if (app.widget_config.detail_level) setDetailLevel(app.widget_config.detail_level as string);
     }
   }, [app?.widget_config]);
 
