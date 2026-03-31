@@ -559,14 +559,32 @@ async def _get_connector_instance(
 
     # Find an integration the user can access
     async with get_session(organization_id=organization_id) as session:
-        # If provided, first try the preferred integration owner (used for owner-bound records)
+        # If provided, first try the preferred integration owner (used for owner-bound records).
+        # For user-scoped connectors, non-owners must still satisfy capability sharing flags.
         if preferred_integration_user_id:
+            preferred_filters: list[Any] = [
+                Integration.organization_id == UUID(organization_id),
+                Integration.connector == slug,
+                Integration.user_id == UUID(preferred_integration_user_id),
+                Integration.is_active == True,  # noqa: E712
+            ]
+
+            requester_matches_preferred = bool(user_id) and preferred_integration_user_id == user_id
+            if (
+                not requester_matches_preferred
+                and meta.scope == ConnectorScope.USER
+                and required_capability in ("query", "write", "action")
+            ):
+                preferred_share_flag_map: dict[str, Any] = {
+                    "query": Integration.share_query_access,
+                    "write": Integration.share_write_access,
+                    "action": Integration.share_write_access,
+                }
+                preferred_filters.append(preferred_share_flag_map[required_capability] == True)  # noqa: E712
+
             result = await session.execute(
                 select(Integration).where(
-                    Integration.organization_id == UUID(organization_id),
-                    Integration.connector == slug,
-                    Integration.user_id == UUID(preferred_integration_user_id),
-                    Integration.is_active == True,  # noqa: E712
+                    *preferred_filters,
                 )
             )
             integration: Integration | None = result.scalar_one_or_none()
