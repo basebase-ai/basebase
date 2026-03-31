@@ -131,7 +131,7 @@ export function WidgetCard({ appId, appTitle, widgetConfig, onClick }: WidgetCar
   return (
     <button
       onClick={() => onClick?.(appId)}
-      className="flex flex-col bg-surface-900 border border-surface-800 rounded-xl p-3 h-[140px] w-full hover:border-surface-600 hover:bg-surface-800/50 transition-colors text-left cursor-pointer"
+      className="flex flex-col bg-surface-900 border border-surface-800 rounded-xl p-3 aspect-video w-full hover:border-surface-600 hover:bg-surface-800/50 transition-colors text-left cursor-pointer"
     >
       <div className="text-[10px] font-medium text-surface-500 uppercase tracking-wider mb-1 truncate">
         {title || appTitle}
