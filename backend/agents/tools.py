@@ -5514,6 +5514,8 @@ async def _read_cloud_file(
     Looks up the file's source, then dispatches to the appropriate connector.
     """
     external_id: str = params.get("external_id", "").strip()
+    source_hint: str = params.get("source", "").strip()
+    integration_user_id_hint: str = params.get("integration_user_id", "").strip()
 
     if not external_id:
         return {"error": "external_id is required."}
@@ -5523,25 +5525,52 @@ async def _read_cloud_file(
 
     try:
         from uuid import UUID as _UUID
-        from sqlalchemy import select, and_
+        from sqlalchemy import and_, case, select
         from models.shared_file import SharedFile
         from models.database import get_session
 
         org_uuid: _UUID = _UUID(organization_id)
+        requester_uuid: _UUID = _UUID(user_id)
 
         async with get_session(organization_id=organization_id, user_id=user_id) as session:
+            where_filters: list[Any] = [
+                SharedFile.organization_id == org_uuid,
+                SharedFile.external_id == external_id,
+            ]
+            if source_hint:
+                where_filters.append(SharedFile.source == source_hint)
+            if integration_user_id_hint:
+                where_filters.append(SharedFile.user_id == _UUID(integration_user_id_hint))
+
             result = await session.execute(
-                select(SharedFile).where(
-                    and_(
-                        SharedFile.organization_id == org_uuid,
-                        SharedFile.external_id == external_id,
-                    )
+                select(SharedFile)
+                .where(and_(*where_filters))
+                .order_by(
+                    case((SharedFile.user_id == requester_uuid, 0), else_=1),
+                    SharedFile.synced_at.desc().nullslast(),
+                    SharedFile.source.asc(),
+                    SharedFile.user_id.asc(),
+                    SharedFile.id.asc(),
                 )
             )
-            file_record: SharedFile | None = result.scalars().first()
+            matching_records: list[SharedFile] = list(result.scalars().all())
+
+        file_record: SharedFile | None = matching_records[0] if matching_records else None
 
         if not file_record:
             return {"error": f"File not found in synced metadata: {external_id}"}
+
+        if not source_hint and not integration_user_id_hint and len(matching_records) > 1:
+            ownership_variants: set[tuple[str, str]] = {
+                (record.source, str(record.user_id)) for record in matching_records
+            }
+            if len(ownership_variants) > 1:
+                return {
+                    "error": (
+                        f"Multiple synced files match external_id '{external_id}'. "
+                        "Please provide 'source' and/or 'integration_user_id' to disambiguate."
+                    )
+                }
 
         source: str = file_record.source
 
