@@ -44,9 +44,18 @@ function MiniAppView({ appId, onClick }: { appId: string; onClick?: (id: string)
   return (
     <button
       onClick={() => onClick?.(appId)}
-      className="w-full h-[140px] overflow-hidden relative rounded-xl border border-surface-800 cursor-pointer"
+      className="w-full aspect-video overflow-hidden relative rounded-xl border border-surface-800 cursor-pointer bg-surface-900"
     >
-      <div style={{ width: 960, height: 933, transform: 'scale(0.146)', transformOrigin: 'top left' }}>
+      <div style={{ width: 1280, height: 720, transform: 'scale(var(--preview-scale, 0.2))', transformOrigin: 'top left' }} ref={(el) => {
+        if (el) {
+          const parent = el.parentElement;
+          if (parent) {
+            const scale = parent.clientWidth / 1280;
+            el.style.setProperty('--preview-scale', String(scale));
+            el.style.transform = `scale(${scale})`;
+          }
+        }
+      }}>
         <Suspense fallback={<div className="w-full h-full bg-surface-900" />}>
           <LazySandpackAppRenderer appId={appId} />
         </Suspense>
@@ -125,7 +134,7 @@ export function AppPreview({ appId, appTitle, widgetConfig, onClick }: AppPrevie
   return (
     <button
       onClick={() => onClick?.(appId)}
-      className="flex flex-col bg-surface-900 border border-surface-800 rounded-xl overflow-hidden h-[140px] w-full hover:border-surface-600 hover:bg-surface-800/50 transition-colors text-left cursor-pointer"
+      className="flex flex-col bg-surface-900 border border-surface-800 rounded-xl overflow-hidden aspect-video w-full hover:border-surface-600 hover:bg-surface-800/50 transition-colors text-left cursor-pointer"
     >
       {effectiveMode === 'screenshot' && screenshotUrl ? (
         <ScreenshotView src={screenshotUrl} title={appTitle} />
