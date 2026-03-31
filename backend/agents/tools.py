@@ -5425,14 +5425,12 @@ async def _search_cloud_files(
         from models.database import get_session
 
         org_uuid: _UUID = _UUID(organization_id)
-        user_uuid: _UUID = _UUID(user_id)
 
         # Normalise wildcard-only queries (e.g. "*") to match all files
         cleaned_query: str = name_query.replace("*", "").strip()
 
         filters: list[Any] = [
             SharedFile.organization_id == org_uuid,
-            SharedFile.user_id == user_uuid,
             SharedFile.mime_type != "application/vnd.google-apps.folder",
         ]
 
@@ -5443,7 +5441,7 @@ async def _search_cloud_files(
         if source_filter:
             filters.append(SharedFile.source == source_filter)
 
-        async with get_session(organization_id=organization_id) as session:
+        async with get_session(organization_id=organization_id, user_id=user_id) as session:
             query = (
                 select(SharedFile)
                 .where(and_(*filters))
@@ -5499,14 +5497,12 @@ async def _read_cloud_file(
         from models.database import get_session
 
         org_uuid: _UUID = _UUID(organization_id)
-        user_uuid: _UUID = _UUID(user_id)
 
-        async with get_session(organization_id=organization_id) as session:
+        async with get_session(organization_id=organization_id, user_id=user_id) as session:
             result = await session.execute(
                 select(SharedFile).where(
                     and_(
                         SharedFile.organization_id == org_uuid,
-                        SharedFile.user_id == user_uuid,
                         SharedFile.external_id == external_id,
                     )
                 )
@@ -5519,8 +5515,14 @@ async def _read_cloud_file(
         source: str = file_record.source
 
         if source == "google_drive":
-            from connectors.google_drive import GoogleDriveConnector
-            connector: GoogleDriveConnector = GoogleDriveConnector(organization_id, user_id)
+            connector, err = await _get_connector_instance(
+                slug="google_drive",
+                organization_id=organization_id,
+                user_id=user_id,
+                required_capability="query",
+            )
+            if not connector:
+                return {"error": err or "No Google Drive connector is available."}
             return await connector.get_file_content(external_id)
         else:
             return {"error": f"Reading files from '{source}' is not yet supported."}
