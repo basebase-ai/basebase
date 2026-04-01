@@ -19,7 +19,7 @@ from typing import Any, AsyncGenerator, Sequence
 from uuid import UUID, uuid4
 
 from anthropic import APIStatusError, AsyncAnthropic
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 
 from agents.registry import format_tool_status
 from agents.tools import execute_tool, get_tools
@@ -850,6 +850,128 @@ class ChatOrchestrator:
             logger.warning("Failed to load workflow notes", exc_info=True)
             return []
 
+    @staticmethod
+    def _extract_text_preview(message: ChatMessage) -> str:
+        """Extract a compact text preview from a chat message."""
+        if message.content and message.content.strip():
+            return message.content.strip()[:280]
+
+        blocks = message.content_blocks or []
+        text_parts: list[str] = []
+        for block in blocks:
+            if block.get("type") == "text":
+                text = str(block.get("text") or "").strip()
+                if text:
+                    text_parts.append(text)
+        if text_parts:
+            return " ".join(text_parts)[:280]
+        return ""
+
+    async def _load_cross_conversation_history(self, limit: int = 8) -> list[dict[str, Any]]:
+        """Load recent history from other conversations the current user can access.
+
+        Access model:
+        - Conversations created by the current user
+        - Conversations where the current user is a participant
+        - Shared conversations in the current org
+        - Slack conversations authored by the same source user (fallback when user_id is missing)
+        """
+        if not self.organization_id:
+            return []
+
+        org_uuid = UUID(self.organization_id)
+        user_uuid = self._resolve_current_user_uuid()
+        current_conv_uuid: UUID | None = None
+        if self.conversation_id:
+            try:
+                current_conv_uuid = UUID(self.conversation_id)
+            except ValueError:
+                logger.warning(
+                    "Invalid conversation_id while loading cross conversation history: %s",
+                    self.conversation_id,
+                )
+
+        access_filters = [
+            and_(
+                Conversation.scope == "shared",
+                Conversation.organization_id == org_uuid,
+            )
+        ]
+        if user_uuid:
+            access_filters.append(Conversation.user_id == user_uuid)
+            access_filters.append(Conversation.participating_user_ids.any(user_uuid))
+        if self.source_user_id:
+            access_filters.append(
+                and_(
+                    Conversation.source == "slack",
+                    Conversation.source_user_id == self.source_user_id,
+                    Conversation.organization_id == org_uuid,
+                )
+            )
+
+        if not access_filters:
+            return []
+
+        try:
+            async with get_session(organization_id=self.organization_id) as session:
+                conv_query = (
+                    select(Conversation)
+                    .where(Conversation.organization_id == org_uuid)
+                    .where(or_(*access_filters))
+                    .order_by(Conversation.updated_at.desc())
+                    .limit(limit + 1)
+                )
+                if current_conv_uuid:
+                    conv_query = conv_query.where(Conversation.id != current_conv_uuid)
+
+                conv_result = await session.execute(conv_query)
+                conversations: list[Conversation] = list(conv_result.scalars().all())
+                if not conversations:
+                    return []
+
+                conversation_ids = [c.id for c in conversations[:limit]]
+                msg_result = await session.execute(
+                    select(ChatMessage)
+                    .where(ChatMessage.conversation_id.in_(conversation_ids))
+                    .where(ChatMessage.role.in_(["user", "assistant"]))
+                    .order_by(ChatMessage.created_at.desc())
+                )
+                messages: list[ChatMessage] = list(msg_result.scalars().all())
+
+                latest_message_by_conversation: dict[UUID, ChatMessage] = {}
+                for msg in messages:
+                    if not msg.conversation_id or msg.conversation_id in latest_message_by_conversation:
+                        continue
+                    preview = self._extract_text_preview(msg)
+                    if not preview:
+                        continue
+                    latest_message_by_conversation[msg.conversation_id] = msg
+
+                context_rows: list[dict[str, Any]] = []
+                for conv in conversations[:limit]:
+                    msg = latest_message_by_conversation.get(conv.id)
+                    if not msg:
+                        continue
+                    context_rows.append({
+                        "conversation_id": str(conv.id),
+                        "title": conv.title or "Untitled conversation",
+                        "scope": conv.scope,
+                        "updated_at": conv.updated_at.isoformat() if conv.updated_at else None,
+                        "last_message_role": msg.role,
+                        "last_message_preview": self._extract_text_preview(msg),
+                    })
+
+                logger.info(
+                    "[Orchestrator] Loaded cross-conversation history rows=%s org=%s user=%s",
+                    len(context_rows),
+                    self.organization_id,
+                    self.user_id,
+                )
+                return context_rows
+        except Exception:
+            logger.warning("Failed to load cross-conversation history", exc_info=True)
+            return []
+
     async def process_message(
         self,
         user_message: str,
@@ -1126,6 +1248,22 @@ class ChatOrchestrator:
         if execution_guardrails:
             system_prompt += "\n\n## Workflow Execution Guardrails\n"
             system_prompt += "\n".join(f"- {guardrail}" for guardrail in execution_guardrails)
+
+        if self.organization_id:
+            cross_history = await self._load_cross_conversation_history(limit=8)
+            if cross_history:
+                system_prompt += "\n\n## Cross-Conversation History Context\n"
+                system_prompt += (
+                    "Recent messages from other conversations accessible to the current user "
+                    "(their own conversations plus conversations shared with them). "
+                    "Use this context for continuity when relevant, but prioritize this conversation.\n"
+                )
+                for row in cross_history:
+                    system_prompt += (
+                        f"- [{row['conversation_id']}] {row['title']} "
+                        f"(scope={row['scope']}, updated_at={row['updated_at']}) "
+                        f"last_{row['last_message_role']}: {row['last_message_preview']}\n"
+                    )
 
 
         # Stream responses with tool handling loop
