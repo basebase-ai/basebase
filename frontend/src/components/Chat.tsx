@@ -290,27 +290,40 @@ interface SuggestedInvitesBannerProps {
   onAdd: (userIds: string[]) => void;
   onDismiss: () => void;
   bannerRef?: React.RefObject<HTMLDivElement>;
+  addButtonRef?: React.RefObject<HTMLButtonElement>;
 }
 
-function SuggestedInvitesBanner({ invites, onAdd, onDismiss, bannerRef }: SuggestedInvitesBannerProps): JSX.Element {
+function SuggestedInvitesBanner({ invites, onAdd, onDismiss, bannerRef, addButtonRef }: SuggestedInvitesBannerProps): JSX.Element {
   const names = invites.map(u => u.name || u.email).join(', ');
   const isMultiple = invites.length > 1;
+
+  const handleKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      onAdd(invites.map(u => u.id));
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      onDismiss();
+    }
+  };
 
   return (
     <div
       ref={bannerRef}
-      className="mb-4 rounded-lg border border-primary-500/30 bg-primary-500/10 px-4 py-3 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300"
+      className="mb-4 rounded-lg border border-primary-500/30 bg-primary-500/10 px-4 py-3 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300 group"
     >
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center flex-shrink-0">
+          <div className="w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center flex-shrink-0 group-hover:bg-primary-500/30 transition-colors">
             <svg className="w-4 h-4 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
             </svg>
           </div>
           <div className="min-w-0">
             <p className="text-sm font-medium text-surface-100">
-              {isMultiple ? `${names} are not in this chat.` : `${names} is not in this chat.`}
+              <span className="group-hover:text-primary-400 transition-colors">
+                {isMultiple ? `${names} are not in this chat.` : `${names} is not in this chat.`}
+              </span>
             </p>
             <p className="text-xs text-surface-400 truncate">
               {isMultiple ? 'Would you like to add them so they can see this conversation?' : 'Would you like to add them so they can see this conversation?'}
@@ -328,9 +341,11 @@ function SuggestedInvitesBanner({ invites, onAdd, onDismiss, bannerRef }: Sugges
           </button>
           <button
             type="button"
+            ref={addButtonRef}
             onMouseDown={(e) => { e.preventDefault(); onAdd(invites.map(u => u.id)); }}
             onClick={() => onAdd(invites.map(u => u.id))}
-            className="px-3 py-1.5 text-xs font-medium bg-primary-600 hover:bg-primary-500 text-white rounded-md shadow-sm transition-colors"
+            onKeyDown={handleKeyDown}
+            className="px-3 py-1.5 text-xs font-medium bg-primary-600 hover:bg-primary-500 text-white rounded-md shadow-sm transition-colors focus:ring-2 focus:ring-primary-500 focus:outline-none"
           >
             {isMultiple ? 'Add them' : 'Add them'}
           </button>
@@ -521,6 +536,7 @@ export function Chat({
   const prevAppCountRef = useRef(0); // Track app count for auto-switching preview
   const dragContainerRef = useRef<HTMLDivElement>(null); // Container for drag-resize
   const suggestedInvitesBannerRef = useRef<HTMLDivElement>(null);
+  const suggestedInvitesAddButtonRef = useRef<HTMLButtonElement>(null);
   const lastTypingSentRef = useRef<number>(0);
 
   // Keep ref in sync with state
@@ -1302,6 +1318,11 @@ export function Chat({
         setMentionPopover({ open: false, query: '', selectedIndex: 0 });
         return;
       }
+    }
+    if (e.key === 'Tab' && suggestedInvites.length > 0) {
+      e.preventDefault();
+      suggestedInvitesAddButtonRef.current?.focus();
+      return;
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -2300,6 +2321,7 @@ export function Chat({
                 onAdd={handleSuggestedInvitesAdd}
                 onDismiss={handleSuggestedInvitesDismiss}
                 bannerRef={suggestedInvitesBannerRef}
+                addButtonRef={suggestedInvitesAddButtonRef}
               />
             )}
             {!userId && (
