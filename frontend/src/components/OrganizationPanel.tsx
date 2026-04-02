@@ -169,7 +169,9 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
     isLoading: isLoadingMembers 
   } = useTeamMembers(organization.id, currentUser.id);
 
-  const members: TeamMember[] = teamData?.members ?? [];
+  const members: TeamMember[] = (teamData?.members ?? []).filter(
+    (m) => !m.email.toLowerCase().endsWith('.basebase.local'),
+  );
   const sortedMembers: TeamMember[] = [...members].sort((a, b) => {
     const aInvited: boolean = a.status === 'invited';
     const bInvited: boolean = b.status === 'invited';

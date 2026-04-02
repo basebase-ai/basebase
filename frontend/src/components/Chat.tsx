@@ -475,6 +475,10 @@ export function Chat({
     const agentOption = { type: 'agent' as const, displayName: 'Basebase', userId: null };
     const userOptions = members
       .filter((m) => {
+        // Hide internal guest/system accounts (e.g. guest+uuid@guest.basebase.local)
+        if (m.email.toLowerCase().endsWith('.basebase.local')) {
+          return false;
+        }
         if (!q) return true;
         const name = (m.name ?? '').toLowerCase();
         const email = m.email.toLowerCase();
@@ -2820,7 +2824,10 @@ function InviteParticipantModal({
   const selectableMembers: readonly TeamMember[] = useMemo(() => {
     const q: string = searchQuery.trim().toLowerCase();
     const filtered: TeamMember[] = teamMembers.filter(
-      (member) => member.id !== currentUserId && !existingParticipantIds.has(member.id),
+      (member) =>
+        member.id !== currentUserId &&
+        !existingParticipantIds.has(member.id) &&
+        !member.email.toLowerCase().endsWith('.basebase.local'),
     );
     const matched: TeamMember[] = filtered.filter((member) => {
       if (q.length === 0) return true;
