@@ -316,6 +316,7 @@ function SuggestedInvitesBanner({ invites, onAdd, onDismiss }: SuggestedInvitesB
         <div className="flex items-center gap-2 flex-shrink-0">
           <button
             type="button"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={onDismiss}
             className="px-3 py-1.5 text-xs font-medium text-surface-400 hover:text-surface-200 transition-colors"
           >
@@ -323,6 +324,7 @@ function SuggestedInvitesBanner({ invites, onAdd, onDismiss }: SuggestedInvitesB
           </button>
           <button
             type="button"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAdd(invites.map(u => u.id))}
             className="px-3 py-1.5 text-xs font-medium bg-primary-600 hover:bg-primary-500 text-white rounded-md shadow-sm transition-colors"
           >

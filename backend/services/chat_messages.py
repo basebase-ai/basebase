@@ -43,17 +43,10 @@ async def resolve_agent_responding(
     has_agent_mention = any(m.get("type") == "agent" for m in mentions)
     user_mentions = [m for m in mentions if m.get("type") == "user"]
 
-    # Fallback: check plain text for @basebase or other user mentions if structured mentions are incomplete
-    text_mentions: list[str] = []
-    if message_text:
-        # Match @followed_by_alphanumeric_dots_dashes (avoids trailing punctuation like commas)
-        text_mentions = re.findall(r"@([\w\.-]+)", message_text)
-        
-        if not has_agent_mention:
-            for tm in text_mentions:
-                if tm.lower() == "basebase":
-                    has_agent_mention = True
-                    break
+    # Fallback: check plain text for @basebase if no structured agent mention
+    if not has_agent_mention and message_text:
+        if "@basebase" in message_text.lower():
+            has_agent_mention = True
 
     async with get_session(organization_id=organization_id) as session:
         row = await session.execute(
@@ -78,33 +71,42 @@ async def resolve_agent_responding(
                 except (ValueError, TypeError):
                     continue
 
-        # 2. Collect IDs from plain-text mentions
+        # 2. Collect IDs from plain-text mentions (@Name With Spaces or @email)
         has_plain_text_user_mention = False
-        if text_mentions and organization_id:
-            # Look for members whose name or email matches the @mention string
-            # We filter out "basebase" which is the agent
-            filtered_tms = [tm for tm in text_mentions if tm.lower() != "basebase"]
+        if organization_id and message_text and "@" in message_text:
+            # Fetch all members of this org to match against (aggressive but accurate for small/medium orgs)
+            stmt = (
+                select(User.id, User.name, User.email)
+                .join(OrgMember, User.id == OrgMember.user_id)
+                .where(OrgMember.organization_id == UUID(organization_id))
+            )
+            members_res = await session.execute(stmt)
+            all_members = members_res.all()
             
-            if filtered_tms:
-                # Perform bulk query to resolve all mentions at once
-                # We search for exact email, exact name, or name as email prefix
-                stmt = (
-                    select(User.id)
-                    .join(OrgMember, User.id == OrgMember.user_id)
-                    .where(
-                        OrgMember.organization_id == UUID(organization_id),
-                        or_(
-                            User.email.in_(filtered_tms),
-                            User.name.in_(filtered_tms),
-                            *[User.email.ilike(f"{tm}@%") for tm in filtered_tms]
-                        )
-                    )
-                )
-                res = await session.execute(stmt)
-                resolved_uids = [r[0] for r in res.all()]
-                for uid in resolved_uids:
-                    if uid not in mentioned_ids:
-                        mentioned_ids.append(uid)
+            # Prepare search text
+            text_lower = message_text.lower()
+            
+            for m_id, m_name, m_email in all_members:
+                # SKIP guest accounts
+                email_lower = m_email.lower()
+                name_lower = (m_name or "").lower()
+                if "guest" in email_lower or ".basebase.local" in email_lower or "guest user" in name_lower:
+                    continue
+                
+                # Check for @Name mention (case insensitive)
+                if m_name:
+                    mention_name = f"@{m_name.lower()}"
+                    if mention_name in text_lower:
+                        if m_id not in mentioned_ids:
+                            mentioned_ids.append(m_id)
+                            has_plain_text_user_mention = True
+                        continue # Matched by name
+                
+                # Check for @email mention
+                mention_email = f"@{email_lower}"
+                if mention_email in text_lower:
+                    if m_id not in mentioned_ids:
+                        mentioned_ids.append(m_id)
                         has_plain_text_user_mention = True
 
         # Identify who is mentioned but NOT yet participating
