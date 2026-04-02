@@ -33,6 +33,11 @@ from services.anthropic_health import report_anthropic_call_failure, report_anth
 
 logger = logging.getLogger(__name__)
 
+
+def _json_dumps(payload: Any) -> str:
+    """JSON serialize stream payloads, coercing unsupported values (e.g. UUID) to strings."""
+    return json.dumps(payload, default=str)
+
 # Hard timeout for a single tool run so the UI always gets a result (no infinite "Running")
 _TOOL_EXECUTION_TIMEOUT_SECONDS: float = 600.0  # 10 minutes
 
@@ -1016,7 +1021,7 @@ class ChatOrchestrator:
 
             # Notify frontend of persisted attachment IDs so it can update optimistic message
             if attachment_meta:
-                yield json.dumps({"type": "attachment_meta", "attachments": attachment_meta})
+                yield _json_dumps({"type": "attachment_meta", "attachments": attachment_meta})
 
         # Fire-and-forget user message save — it's for persistence, not the Claude call.
         if save_user_message:
@@ -1355,7 +1360,7 @@ class ChatOrchestrator:
                             if event.type == "content_block_start":
                                 if event.content_block.type == "thinking":
                                     is_thinking_block = True
-                                    yield json.dumps({"type": "thinking_start"})
+                                    yield _json_dumps({"type": "thinking_start"})
                                 elif event.content_block.type == "text":
                                     pass
                                 elif event.content_block.type == "tool_use":
@@ -1365,7 +1370,7 @@ class ChatOrchestrator:
                                         "input": {},
                                     }
                                     current_tool_input_json = ""
-                                    yield json.dumps({
+                                    yield _json_dumps({
                                         "type": "tool_call_start",
                                         "tool_name": event.content_block.name,
                                         "tool_id": event.content_block.id,
@@ -1373,7 +1378,7 @@ class ChatOrchestrator:
                             
                             elif event.type == "content_block_delta":
                                 if event.delta.type == "thinking_delta":
-                                    yield json.dumps({
+                                    yield _json_dumps({
                                         "type": "thinking_delta",
                                         "text": event.delta.thinking,
                                     })
@@ -1387,7 +1392,7 @@ class ChatOrchestrator:
                                     current_tool_input_json += event.delta.partial_json
                                     token_len: int = len(current_tool_input_json)
                                     if token_len % 200 < len(event.delta.partial_json):
-                                        yield json.dumps({
+                                        yield _json_dumps({
                                             "type": "tool_input_progress",
                                             "tool_id": current_tool["id"] if current_tool else "",
                                             "tool_name": current_tool["name"] if current_tool else "",
@@ -1397,7 +1402,7 @@ class ChatOrchestrator:
                             elif event.type == "content_block_stop":
                                 if is_thinking_block:
                                     is_thinking_block = False
-                                    yield json.dumps({"type": "thinking_stop"})
+                                    yield _json_dumps({"type": "thinking_stop"})
                                 elif current_tool is not None:
                                     try:
                                         current_tool["input"] = json.loads(current_tool_input_json) if current_tool_input_json else {}
@@ -1407,7 +1412,7 @@ class ChatOrchestrator:
                                     
                                     tool_uses.append(current_tool)
                                     _running_input: dict[str, Any] = current_tool["input"]
-                                    yield json.dumps({
+                                    yield _json_dumps({
                                         "type": "tool_call",
                                         "tool_name": current_tool["name"],
                                         "tool_input": _running_input,
@@ -1423,7 +1428,7 @@ class ChatOrchestrator:
 
                         # Emit context usage for frontend progress bar
                         if final_message and hasattr(final_message, 'usage'):
-                            yield json.dumps({
+                            yield _json_dumps({
                                 "type": "context_usage",
                                 "input_tokens": final_message.usage.input_tokens,
                                 "output_tokens": final_message.usage.output_tokens,
@@ -1505,7 +1510,7 @@ class ChatOrchestrator:
                 content_blocks.append({"type": "text", "text": current_text})
             
             # Signal frontend to complete current text block before showing tools
-            yield json.dumps({"type": "text_block_complete"})
+            yield _json_dumps({"type": "text_block_complete"})
             
             # === EARLY SAVE: Add tool_use blocks with "running" status and save message ===
             # This allows long-running tools to update their progress in the database
@@ -1527,7 +1532,7 @@ class ChatOrchestrator:
                 })
                 
                 # Send tool call info as JSON for frontend to display
-                yield json.dumps({
+                yield _json_dumps({
                     "type": "tool_call",
                     "tool_name": tool_name,
                     "tool_input": tool_input,
@@ -1636,7 +1641,7 @@ class ChatOrchestrator:
                 content_blocks[block_idx]["result"] = tool_result
                 content_blocks[block_idx]["status"] = "complete"
 
-                yield json.dumps({
+                yield _json_dumps({
                     "type": "tool_result",
                     "tool_name": tool_name,
                     "tool_id": tool_id,
@@ -1649,16 +1654,16 @@ class ChatOrchestrator:
                 if tool_result.get("status") == "success":
                     artifact_data: dict[str, Any] | None = tool_result.get("artifact")
                     if artifact_data:
-                        yield json.dumps({"type": "artifact", "artifact": artifact_data})
+                        yield _json_dumps({"type": "artifact", "artifact": artifact_data})
                         content_blocks.append({"type": "artifact", "artifact": artifact_data})
 
                     app_data: dict[str, Any] | None = tool_result.get("app")
                     if app_data:
-                        yield json.dumps({"type": "app", "app": app_data})
+                        yield _json_dumps({"type": "app", "app": app_data})
                         content_blocks.append({"type": "app", "app": app_data})
 
                 if tool_name == "initiate_connector" and tool_result.get("action") in ("connect_oauth", "connect_builtin"):
-                    yield json.dumps({
+                    yield _json_dumps({
                         "type": "connector_connect",
                         "action": tool_result.get("action"),
                         "provider": tool_result.get("provider"),
