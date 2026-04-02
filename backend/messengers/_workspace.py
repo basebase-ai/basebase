@@ -539,7 +539,7 @@ class WorkspaceMessenger(BaseMessenger):
         organization_id: str,
         user: User,
         message: InboundMessage,
-    ) -> Conversation:
+    ) -> str:
         ctx: dict[str, Any] = message.messenger_context
         channel_id: str = ctx.get("channel_id", "")
         thread_id: str | None = ctx.get("thread_id") or ctx.get("thread_ts")
@@ -576,7 +576,7 @@ class WorkspaceMessenger(BaseMessenger):
 
                 if changed:
                     await session.commit()
-                return conversation
+                return str(conversation.id)
 
             source_label: str = {
                 "direct": f"{self.meta.name} DM",
@@ -604,7 +604,7 @@ class WorkspaceMessenger(BaseMessenger):
                 "[%s] Created conversation %s channel=%s user=%s",
                 source, conversation.id, source_channel_id, revtops_user_id,
             )
-            return conversation
+            return str(conversation.id)
 
     # ------------------------------------------------------------------
     # Attachments
@@ -898,7 +898,7 @@ class WorkspaceMessenger(BaseMessenger):
             await self.remove_typing_indicator(message)
             return {"status": "error", "error": "insufficient_credits"}
 
-        conversation: Conversation = await self.find_or_create_conversation(
+        conversation_id: str = await self.find_or_create_conversation(
             organization_id, user, message,
         )
 
@@ -914,7 +914,7 @@ class WorkspaceMessenger(BaseMessenger):
                 organization_id,
             )
             should_invoke_agent = await resolve_agent_responding(
-                conversation_id=str(conversation.id),
+                conversation_id=conversation_id,
                 organization_id=organization_id,
                 mentions=mentions_for_resolve,
             )
@@ -924,7 +924,7 @@ class WorkspaceMessenger(BaseMessenger):
 
         if not should_invoke_agent:
             await save_user_message(
-                conversation_id=str(conversation.id),
+                conversation_id=conversation_id,
                 user_id=str(user.id),
                 organization_id=organization_id,
                 message_text=message_text,
@@ -933,7 +933,7 @@ class WorkspaceMessenger(BaseMessenger):
                 sender_email=slack_user_email or user.email,
             )
             await self.remove_typing_indicator(message)
-            return {"status": "human_only", "conversation_id": str(conversation.id)}
+            return {"status": "human_only", "conversation_id": conversation_id}
 
         workflow_context: dict[str, Any] | None = _build_workflow_context_for_message(
             platform_slug=self.meta.slug,
@@ -943,7 +943,7 @@ class WorkspaceMessenger(BaseMessenger):
         orchestrator = ChatOrchestrator(
             user_id=str(user.id),
             organization_id=organization_id,
-            conversation_id=str(conversation.id),
+            conversation_id=conversation_id,
             user_email=user.email,
             source_user_id=message.external_user_id,
             source_user_email=slack_user_email or user.email,
@@ -978,7 +978,7 @@ class WorkspaceMessenger(BaseMessenger):
                 await self.remove_typing_indicator(message)
                 return {
                     "status": "success",
-                    "conversation_id": str(conversation.id),
+                    "conversation_id": conversation_id,
                     "response_length": total,
                 }
 
@@ -991,7 +991,7 @@ class WorkspaceMessenger(BaseMessenger):
                 await self.remove_typing_indicator(message)
                 return {
                     "status": "success",
-                    "conversation_id": str(conversation.id),
+                    "conversation_id": conversation_id,
                     "response_length": total,
                 }
 
@@ -1016,7 +1016,7 @@ class WorkspaceMessenger(BaseMessenger):
                     await self.remove_typing_indicator(message)
 
             asyncio.create_task(_finish())
-            return {"status": "timeout_continuing", "conversation_id": str(conversation.id)}
+            return {"status": "timeout_continuing", "conversation_id": conversation_id}
 
         # Batch mode (fallback — workspace messengers are usually streaming)
         return await super().process_inbound(message)
