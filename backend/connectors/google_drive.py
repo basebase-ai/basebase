@@ -865,6 +865,40 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
     # Content Reading (on-demand from Google API)
     # -------------------------------------------------------------------------
 
+    async def _get_shared_file_snapshot(self, external_id: str) -> Optional[dict[str, Any]]:
+        """Fetch shared file fields as plain values to avoid detached ORM access."""
+        org_uuid: UUID = UUID(self.organization_id)
+        user_uuid: UUID = UUID(self.user_id)
+
+        async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
+            result = await session.execute(
+                select(
+                    SharedFile.name,
+                    SharedFile.mime_type,
+                    SharedFile.folder_path,
+                    SharedFile.web_view_link,
+                ).where(
+                    and_(
+                        SharedFile.organization_id == org_uuid,
+                        SharedFile.user_id == user_uuid,
+                        SharedFile.source == "google_drive",
+                        SharedFile.external_id == external_id,
+                    )
+                )
+            )
+            row = result.one_or_none()
+
+        if row is None:
+            logger.info("[GoogleDrive] Shared file metadata not found for external_id=%s", external_id)
+            return None
+
+        return {
+            "name": row.name or "",
+            "mime_type": row.mime_type or "",
+            "folder_path": row.folder_path or "/",
+            "web_view_link": row.web_view_link,
+        }
+
     async def get_file_content(self, external_id: str) -> dict[str, Any]:
         """
         Get the text content of a Google Drive file.
@@ -877,29 +911,12 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
         """
         await self.get_oauth_token()
 
-        # First look up the file metadata
-        org_uuid: UUID = UUID(self.organization_id)
-        user_uuid: UUID = UUID(self.user_id)
-
-        file_record: Optional[SharedFile] = None
-        async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
-            result = await session.execute(
-                select(SharedFile).where(
-                    and_(
-                        SharedFile.organization_id == org_uuid,
-                        SharedFile.user_id == user_uuid,
-                        SharedFile.source == "google_drive",
-                        SharedFile.external_id == external_id,
-                    )
-                )
-            )
-            file_record = result.scalar_one_or_none()
-
-        if not file_record:
+        file_snapshot: Optional[dict[str, Any]] = await self._get_shared_file_snapshot(external_id)
+        if not file_snapshot:
             return {"error": f"File not found in synced metadata: {external_id}"}
 
-        mime_type: str = file_record.mime_type or ""
-        file_name: str = file_record.name or ""
+        mime_type: str = file_snapshot["mime_type"]
+        file_name: str = file_snapshot["name"]
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             # Google Workspace files need export
@@ -940,8 +957,8 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
             "file_name": file_name,
             "external_id": external_id,
             "mime_type": mime_type,
-            "folder_path": file_record.folder_path or "/",
-            "web_view_link": file_record.web_view_link,
+            "folder_path": file_snapshot["folder_path"],
+            "web_view_link": file_snapshot["web_view_link"],
             "content": numbered_content,
             "line_count": line_count or None,
             "truncated": truncated,
@@ -1161,28 +1178,12 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
 
         await self.get_oauth_token()
 
-        org_uuid: UUID = UUID(self.organization_id)
-        user_uuid: UUID = UUID(self.user_id)
-
-        file_record: Optional[SharedFile] = None
-        async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
-            result = await session.execute(
-                select(SharedFile).where(
-                    and_(
-                        SharedFile.organization_id == org_uuid,
-                        SharedFile.user_id == user_uuid,
-                        SharedFile.source == "google_drive",
-                        SharedFile.external_id == external_id,
-                    )
-                )
-            )
-            file_record = result.scalar_one_or_none()
-
-        if not file_record:
+        file_snapshot: Optional[dict[str, Any]] = await self._get_shared_file_snapshot(external_id)
+        if not file_snapshot:
             return {"error": f"File not found in synced metadata: {external_id}"}
 
-        mime_type: str = file_record.mime_type or ""
-        file_name: str = file_record.name or ""
+        mime_type: str = file_snapshot["mime_type"]
+        file_name: str = file_snapshot["name"]
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             edit_error: Optional[str] = None
@@ -1203,7 +1204,7 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
         if edit_error:
             return {"error": edit_error}
 
-        web_link: str = file_record.web_view_link or f"https://docs.google.com/open?id={external_id}"
+        web_link: str = file_snapshot["web_view_link"] or f"https://docs.google.com/open?id={external_id}"
 
         return {
             "status": "edited",
@@ -1232,27 +1233,11 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
 
         await self.get_oauth_token()
 
-        org_uuid: UUID = UUID(self.organization_id)
-        user_uuid: UUID = UUID(self.user_id)
-
-        file_record: Optional[SharedFile] = None
-        async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
-            result = await session.execute(
-                select(SharedFile).where(
-                    and_(
-                        SharedFile.organization_id == org_uuid,
-                        SharedFile.user_id == user_uuid,
-                        SharedFile.source == "google_drive",
-                        SharedFile.external_id == external_id,
-                    )
-                )
-            )
-            file_record = result.scalar_one_or_none()
-
-        if not file_record:
+        file_snapshot: Optional[dict[str, Any]] = await self._get_shared_file_snapshot(external_id)
+        if not file_snapshot:
             return {"error": f"File not found in synced metadata: {external_id}"}
 
-        mime_type: str = file_record.mime_type or ""
+        mime_type: str = file_snapshot["mime_type"]
         if mime_type != GOOGLE_DOC_MIME:
             return {"error": "insert_text only works on Google Docs, not Sheets or Slides."}
 
@@ -1332,11 +1317,11 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
             if ins_resp.status_code != 200:
                 return {"error": f"Failed to insert text: {ins_resp.status_code} — {ins_resp.text[:200]}"}
 
-        web_link: str = file_record.web_view_link or f"https://docs.google.com/open?id={external_id}"
+        web_link: str = file_snapshot["web_view_link"] or f"https://docs.google.com/open?id={external_id}"
         return {
             "status": "inserted",
             "external_id": external_id,
-            "name": file_record.name or "",
+            "name": file_snapshot["name"],
             "line": line,
             "chars_inserted": len(insert_content),
             "web_view_link": web_link,
@@ -1354,27 +1339,11 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
 
         await self.get_oauth_token()
 
-        org_uuid: UUID = UUID(self.organization_id)
-        user_uuid: UUID = UUID(self.user_id)
-
-        file_record: Optional[SharedFile] = None
-        async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
-            result = await session.execute(
-                select(SharedFile).where(
-                    and_(
-                        SharedFile.organization_id == org_uuid,
-                        SharedFile.user_id == user_uuid,
-                        SharedFile.source == "google_drive",
-                        SharedFile.external_id == external_id,
-                    )
-                )
-            )
-            file_record = result.scalar_one_or_none()
-
-        if not file_record:
+        file_snapshot: Optional[dict[str, Any]] = await self._get_shared_file_snapshot(external_id)
+        if not file_snapshot:
             return {"error": f"File not found in synced metadata: {external_id}"}
 
-        mime_type: str = file_record.mime_type or ""
+        mime_type: str = file_snapshot["mime_type"]
         if mime_type != GOOGLE_SHEET_MIME:
             return {"error": "append_rows only works on Google Sheets."}
 
@@ -1407,11 +1376,11 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
                 return {"error": f"Failed to append rows: {resp.status_code} — {resp.text[:200]}"}
 
         updates: dict[str, Any] = resp.json().get("updates", {})
-        web_link: str = file_record.web_view_link or f"https://docs.google.com/open?id={external_id}"
+        web_link: str = file_snapshot["web_view_link"] or f"https://docs.google.com/open?id={external_id}"
         return {
             "status": "appended",
             "external_id": external_id,
-            "name": file_record.name or "",
+            "name": file_snapshot["name"],
             "rows_appended": len(rows),
             "updated_range": updates.get("updatedRange", ""),
             "web_view_link": web_link,
@@ -1431,27 +1400,11 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
 
         await self.get_oauth_token()
 
-        org_uuid: UUID = UUID(self.organization_id)
-        user_uuid: UUID = UUID(self.user_id)
-
-        file_record: Optional[SharedFile] = None
-        async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
-            result = await session.execute(
-                select(SharedFile).where(
-                    and_(
-                        SharedFile.organization_id == org_uuid,
-                        SharedFile.user_id == user_uuid,
-                        SharedFile.source == "google_drive",
-                        SharedFile.external_id == external_id,
-                    )
-                )
-            )
-            file_record = result.scalar_one_or_none()
-
-        if not file_record:
+        file_snapshot: Optional[dict[str, Any]] = await self._get_shared_file_snapshot(external_id)
+        if not file_snapshot:
             return {"error": f"File not found in synced metadata: {external_id}"}
 
-        mime_type: str = file_record.mime_type or ""
+        mime_type: str = file_snapshot["mime_type"]
         if mime_type != GOOGLE_SHEET_MIME:
             return {"error": "update_cells only works on Google Sheets."}
 
@@ -1467,11 +1420,11 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
             if resp.status_code != 200:
                 return {"error": f"Failed to update cells: {resp.status_code} — {resp.text[:200]}"}
 
-        web_link: str = file_record.web_view_link or f"https://docs.google.com/open?id={external_id}"
+        web_link: str = file_snapshot["web_view_link"] or f"https://docs.google.com/open?id={external_id}"
         return {
             "status": "updated",
             "external_id": external_id,
-            "name": file_record.name or "",
+            "name": file_snapshot["name"],
             "updated_range": range_notation,
             "updated_rows": len(values),
             "updated_cols": max(len(row) for row in values) if values else 0,
