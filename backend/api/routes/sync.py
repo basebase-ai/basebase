@@ -697,12 +697,12 @@ async def _execute_sync_all_integrations(organization_id: str) -> SyncAllRespons
 
     async with get_session(organization_id=organization_id) as session:
         result = await session.execute(
-            select(Integration).where(
+            select(Integration.connector, Integration.user_id).where(
                 Integration.organization_id == customer_uuid,
-                Integration.is_active == True,
+                Integration.is_active == True,  # noqa: E712
             )
         )
-        integrations = result.scalars().all()
+        integrations: list[tuple[str, UUID | None]] = list(result.all())
 
     if not integrations:
         raise HTTPException(status_code=404, detail="No active integrations found")
@@ -710,13 +710,12 @@ async def _execute_sync_all_integrations(organization_id: str) -> SyncAllRespons
     from workers.tasks.sync import sync_integration
 
     syncing_providers: list[str] = []
-    for integration in integrations:
-        prov: str = integration.connector
+    for prov, integration_user_id in integrations:
         connector_cls = CONNECTORS.get(prov)
         if connector_cls is not None and Capability.SYNC in connector_cls.meta.capabilities:
             if prov not in syncing_providers:
                 syncing_providers.append(prov)
-            uid: str | None = str(integration.user_id) if integration.user_id else None
+            uid: str | None = str(integration_user_id) if integration_user_id else None
             sync_integration.delay(organization_id, prov, uid)
 
     return SyncAllResponse(
@@ -776,15 +775,15 @@ async def trigger_sync(
     # Fetch *all* active integrations for this provider (may be per-user)
     async with get_session(organization_id=organization_id) as session:
         result = await session.execute(
-            select(Integration).where(
+            select(Integration.user_id).where(
                 Integration.organization_id == customer_uuid,
                 Integration.connector == provider,
-                Integration.is_active == True,
+                Integration.is_active == True,  # noqa: E712
             )
         )
-        integrations = result.scalars().all()
+        integration_user_ids: list[UUID | None] = list(result.scalars().all())
 
-        if not integrations:
+        if not integration_user_ids:
             raise HTTPException(
                 status_code=404,
                 detail=f"No active {provider} integration found",
@@ -797,8 +796,8 @@ async def trigger_sync(
 
     from workers.tasks.sync import sync_integration
 
-    for integration in integrations:
-        user_id: str | None = str(integration.user_id) if integration.user_id else None
+    for integration_user_id in integration_user_ids:
+        user_id: str | None = str(integration_user_id) if integration_user_id else None
         sync_integration.delay(
             organization_id,
             provider,
@@ -831,15 +830,21 @@ async def get_sync_status(
     # DB is the primary source of truth — check sync_started_at first
     async with get_session(organization_id=organization_id) as session:
         result = await session.execute(
-            select(Integration).where(
+            select(
+                Integration.sync_stats,
+                Integration.last_error,
+                Integration.last_sync_at,
+            ).where(
                 Integration.organization_id == UUID(organization_id),
                 Integration.connector == provider,
             )
         )
-        integration: Integration | None = result.scalars().first()
+        integration_row: tuple[dict[str, Any] | None, str | None, datetime | None] | None = (
+            result.first()
+        )
 
-    if integration:
-        stats: dict[str, Any] | None = integration.sync_stats
+    if integration_row:
+        stats, last_err, last_sync_at = integration_row
         sync_started_raw: str | None = (
             stats.get("sync_started_at") if isinstance(stats, dict) else None
         )
@@ -861,11 +866,10 @@ async def get_sync_status(
             except (ValueError, TypeError):
                 pass
 
-        last_err: str | None = integration.last_error
         if last_err and last_err.strip():
             completed_at: str | None = None
-            if integration.last_sync_at:
-                completed_at = f"{integration.last_sync_at.isoformat()}Z"
+            if last_sync_at:
+                completed_at = f"{last_sync_at.isoformat()}Z"
             return SyncStatusResponse(
                 organization_id=organization_id,
                 provider=provider,
@@ -876,13 +880,13 @@ async def get_sync_status(
                 counts=None,
             )
 
-    if integration and integration.last_sync_at:
+    if integration_row and integration_row[2]:
         return SyncStatusResponse(
             organization_id=organization_id,
             provider=provider,
             status="completed",
             started_at=None,
-            completed_at=f"{integration.last_sync_at.isoformat()}Z",
+            completed_at=f"{integration_row[2].isoformat()}Z",
             error=None,
             counts=None,
         )
@@ -1139,10 +1143,12 @@ async def get_tracked_github_repos(
                 GitHubRepository.is_tracked == True,
             )
         )
-        repos = result.scalars().all()
+        repos_payload: list[dict[str, Any]] = [
+            repo.to_dict() for repo in result.scalars().all()
+        ]
 
     return GitHubTrackedReposResponse(
-        repos=[GitHubTrackedRepoResponse(**r.to_dict()) for r in repos]
+        repos=[GitHubTrackedRepoResponse(**repo) for repo in repos_payload]
     )
 
 
