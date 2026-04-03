@@ -88,6 +88,7 @@ async def list_artifacts(
                 or_(
                     Artifact.title.ilike(term),
                     Artifact.description.ilike(term),
+                    Artifact.content.ilike(term),
                 )
             )
         result = await session.execute(stmt)
