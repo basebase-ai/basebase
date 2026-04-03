@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
 async def _is_org_admin(*, user_id: UUID, organization_id: UUID) -> bool:
     """Return True when the user is an active organization admin."""
     async with get_admin_session() as session:
@@ -45,6 +46,34 @@ async def _is_org_admin(*, user_id: UUID, organization_id: UUID) -> bool:
         ).scalar_one_or_none()
     return bool(membership and membership.role == "admin")
 
+
+def _norm_credit_ref_id(value: Any) -> Optional[str]:
+    """Canonical UUID string for conversation reference_id (stable dict keys across DB drivers)."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        return str(UUID(s))
+    except (ValueError, TypeError):
+        return s
+
+
+def _norm_user_id_str(value: Any) -> Optional[str]:
+    """Canonical UUID string for credit transaction user_id."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        return str(UUID(s))
+    except (ValueError, TypeError):
+        return s
+
+# Credit transactions returned for charts / history (deductions + grants such as renewals).
+CREDIT_HISTORY_LOOKBACK_DAYS = 365
 
 # Tier config: name, price_cents, credits_included
 # "free" tier requires no credit card; "partner" tier is hidden and assigned manually
@@ -149,17 +178,30 @@ class UserUsageItem(BaseModel):
     total_credits_used: int
 
 
+class ConversationUserSlice(BaseModel):
+    """Credits consumed in this conversation attributed to one user."""
+
+    user_id: str
+    total_credits_used: int
+
+
 class ConversationUsageItem(BaseModel):
     conversation_id: str
     title: Optional[str] = None
+    # Attributed debits (known user_id); matches team member / by_user sums.
     total_credits_used: int
+    # Orphan debits (user_id NULL, e.g. after member removed); excluded from team totals.
+    unattributed_credits_used: int = 0
     last_used_at: Optional[str] = None
+    by_user: list[ConversationUserSlice] = []
 
 
 class CreditDetailsResponse(BaseModel):
     transactions: list[CreditTransactionItem]
     usage_by_user: list[UserUsageItem]
     usage_by_conversation: list[ConversationUsageItem] = []
+    # Sum of orphan chat debits in period (same as sum of per-conversation unattributed).
+    unattributed_credits_used: int = 0
     period_start: Optional[str] = None
     period_end: Optional[str] = None
     starting_balance: int = 0
@@ -482,11 +524,10 @@ async def cancel_subscription(
 async def get_credit_details(
     auth: AuthContext = Depends(require_organization),
 ) -> CreditDetailsResponse:
-    """Return credit transactions and usage breakdown for the current billing period."""
+    """Return credit transactions (rolling history) and usage for the current billing period."""
     org_id = auth.organization_id
     if not org_id:
         raise HTTPException(status_code=403, detail="Organization required")
-    
     is_org_admin = auth.is_global_admin or await _is_org_admin(
         user_id=auth.user_id,
         organization_id=org_id,
@@ -515,7 +556,9 @@ async def get_credit_details(
         
         period_start = org.current_period_start
         period_end = org.current_period_end
-        
+        now = datetime.now(timezone.utc)
+        history_cutoff = now - timedelta(days=CREDIT_HISTORY_LOOKBACK_DAYS)
+
         def build_transactions_query(filter_start: Optional[datetime]) -> Any:
             q = (
                 select(CreditTransaction, User.email, User.name)
@@ -528,8 +571,9 @@ async def get_credit_details(
             if filter_start:
                 q = q.where(CreditTransaction.created_at >= filter_start)
             return q
-        
+
         def build_usage_query(filter_start: Optional[datetime]) -> Any:
+            """Per-user totals for chat-attributed usage only (matches Usage by Chat / filter)."""
             q = (
                 select(
                     CreditTransaction.user_id,
@@ -540,6 +584,9 @@ async def get_credit_details(
                 .outerjoin(User, CreditTransaction.user_id == User.id)
                 .where(CreditTransaction.organization_id == org_id)
                 .where(CreditTransaction.amount < 0)
+                .where(CreditTransaction.reference_type == "conversation")
+                .where(CreditTransaction.reference_id.isnot(None))
+                .where(CreditTransaction.user_id.isnot(None))
                 .group_by(CreditTransaction.user_id, User.email, User.name)
                 .order_by(func.sum(func.abs(CreditTransaction.amount)).desc())
             )
@@ -548,17 +595,18 @@ async def get_credit_details(
             if filter_start:
                 q = q.where(CreditTransaction.created_at >= filter_start)
             return q
-        
-        # Try current period first, fall back to all-time if empty
-        tx_result = await session.execute(build_transactions_query(period_start))
-        rows = tx_result.all()
-        
+
+        # No ledger rows in current billing period → align usage with all-time (same as main)
+        period_check = await session.execute(build_transactions_query(period_start))
+        period_tx_nonempty = bool(period_check.all())
         effective_period_start = period_start
-        if not rows and period_start:
-            # No transactions in current period - show all-time data
-            tx_result = await session.execute(build_transactions_query(None))
-            rows = tx_result.all()
+        if not period_tx_nonempty and period_start:
             effective_period_start = None
+
+        # Ledger for charts: rolling window in normal mode; full history when usage falls back to all-time
+        tx_window = history_cutoff if effective_period_start is not None else None
+        tx_result = await session.execute(build_transactions_query(tx_window))
+        rows = tx_result.all()
         
         transactions: list[CreditTransactionItem] = []
         for tx, user_email, user_name in rows:
@@ -570,60 +618,142 @@ async def get_credit_details(
                 user_email=user_email,
             ))
         
-        # Calculate starting balance
-        # If showing current period, derive from first transaction
-        # If showing all-time (fallback), use credits_included since old transactions may be from different plans
+        # Balance immediately before the first transaction in the returned window
         starting_balance = org.credits_included
         if transactions and effective_period_start:
             first_tx = transactions[0]
             starting_balance = first_tx.balance_after - first_tx.amount
-        
-        # Aggregate usage by user
+
+        # Usage tables: current period, or all-time when the period has no ledger activity
         usage_result = await session.execute(build_usage_query(effective_period_start))
         usage_rows = usage_result.all()
         
         usage_by_user: list[UserUsageItem] = []
         for user_id, email, name, total_used in usage_rows:
+            uid_key = _norm_user_id_str(user_id) if user_id else None
             usage_by_user.append(
                 UserUsageItem(
-                    user_id=str(user_id) if user_id else "unknown",
+                    user_id=uid_key if uid_key else "unknown",
                     user_email=email or "Unknown user",
                     user_name=name,
                     total_credits_used=int(total_used) if total_used else 0,
                 )
             )
 
-        # Aggregate usage by conversation (per-chat credit consumption)
+        # Aggregate usage by conversation (per-chat credit consumption).
+        # Same attribution rules as build_usage_query / conv_user_query so per-chat totals
+        # match teammate rows and by_user slices (excludes orphaned debits after user_id NULL).
         conv_usage_rows: list[tuple[str, int, datetime]] = []
-        if rows:
-            conv_usage_query = (
-                select(
-                    CreditTransaction.reference_id,
-                    func.sum(func.abs(CreditTransaction.amount)).label("total_used"),
-                    func.max(CreditTransaction.created_at).label("last_used_at"),
-                )
-                .where(CreditTransaction.organization_id == org_id)
-                .where(CreditTransaction.reference_type == "conversation")
-                .where(CreditTransaction.amount < 0)
+        conv_usage_query = (
+            select(
+                CreditTransaction.reference_id,
+                func.sum(func.abs(CreditTransaction.amount)).label("total_used"),
+                func.max(CreditTransaction.created_at).label("last_used_at"),
             )
-            if not is_org_admin:
-                conv_usage_query = conv_usage_query.where(
-                    CreditTransaction.user_id == auth.user_id
+            .where(CreditTransaction.organization_id == org_id)
+            .where(CreditTransaction.reference_type == "conversation")
+            .where(CreditTransaction.amount < 0)
+            .where(CreditTransaction.reference_id.isnot(None))
+            .where(CreditTransaction.user_id.isnot(None))
+        )
+        if not is_org_admin:
+            conv_usage_query = conv_usage_query.where(
+                CreditTransaction.user_id == auth.user_id
+            )
+        if effective_period_start:
+            conv_usage_query = conv_usage_query.where(
+                CreditTransaction.created_at >= effective_period_start
+            )
+        conv_usage_result = await session.execute(
+            conv_usage_query.group_by(CreditTransaction.reference_id)
+        )
+        conv_usage_rows = conv_usage_result.all()
+
+        # Orphan conversation debits (user_id NULL) — same period; surfaced as "Former user" in UI
+        conv_orphan_query = (
+            select(
+                CreditTransaction.reference_id,
+                func.sum(func.abs(CreditTransaction.amount)).label("total_used"),
+                func.max(CreditTransaction.created_at).label("last_used_at"),
+            )
+            .where(CreditTransaction.organization_id == org_id)
+            .where(CreditTransaction.reference_type == "conversation")
+            .where(CreditTransaction.amount < 0)
+            .where(CreditTransaction.reference_id.isnot(None))
+            .where(CreditTransaction.user_id.is_(None))
+        )
+        if not is_org_admin:
+            conv_orphan_query = conv_orphan_query.where(
+                CreditTransaction.user_id == auth.user_id
+            )
+        if effective_period_start:
+            conv_orphan_query = conv_orphan_query.where(
+                CreditTransaction.created_at >= effective_period_start
+            )
+        conv_orphan_result = await session.execute(
+            conv_orphan_query.group_by(CreditTransaction.reference_id)
+        )
+        orphan_by_ref: dict[str, tuple[int, Optional[datetime]]] = {}
+        for ref_id, total_used, last_used_at in conv_orphan_result.all():
+            if not ref_id:
+                continue
+            ref_key = _norm_credit_ref_id(ref_id) or str(ref_id).strip()
+            orphan_by_ref[ref_key] = (
+                int(total_used) if total_used else 0,
+                last_used_at,
+            )
+        unattributed_total = sum(t[0] for t in orphan_by_ref.values())
+
+        # Per-(conversation, user) slices so the UI can filter chats by teammate
+        conv_user_query = (
+            select(
+                CreditTransaction.reference_id,
+                CreditTransaction.user_id,
+                func.sum(func.abs(CreditTransaction.amount)).label("total_used"),
+            )
+            .where(CreditTransaction.organization_id == org_id)
+            .where(CreditTransaction.reference_type == "conversation")
+            .where(CreditTransaction.amount < 0)
+            .where(CreditTransaction.reference_id.isnot(None))
+            .where(CreditTransaction.user_id.isnot(None))
+        )
+        if not is_org_admin:
+            conv_user_query = conv_user_query.where(
+                CreditTransaction.user_id == auth.user_id
+            )
+        if effective_period_start:
+            conv_user_query = conv_user_query.where(
+                CreditTransaction.created_at >= effective_period_start
+            )
+        conv_user_result = await session.execute(
+            conv_user_query.group_by(
+                CreditTransaction.reference_id, CreditTransaction.user_id
+            )
+        )
+        conv_id_to_slices: dict[str, list[ConversationUserSlice]] = {}
+        for ref_id, uid, total_used in conv_user_result.all():
+            ref_key = _norm_credit_ref_id(ref_id)
+            uid_key = _norm_user_id_str(uid)
+            if not ref_key or not uid_key:
+                continue
+            conv_id_to_slices.setdefault(ref_key, []).append(
+                ConversationUserSlice(
+                    user_id=uid_key,
+                    total_credits_used=int(total_used) if total_used else 0,
                 )
-            if effective_period_start:
-                conv_usage_query = conv_usage_query.where(
-                    CreditTransaction.created_at >= effective_period_start
-                )
-            conv_usage_result = await session.execute(conv_usage_query.group_by(CreditTransaction.reference_id))
-            conv_usage_rows = conv_usage_result.all()
+            )
 
         # Resolve conversation titles from the org-scoped database
         usage_by_conversation: list[ConversationUsageItem] = []
-        if conv_usage_rows:
-            # Filter out rows without a reference_id
-            conv_id_strs = [
-                ref_id for (ref_id, _total_used, _last_used_at) in conv_usage_rows if ref_id
-            ]
+        if conv_usage_rows or orphan_by_ref:
+            conv_ids_for_titles: set[str] = set()
+            for ref_id, _tu, _lu in conv_usage_rows:
+                if ref_id:
+                    conv_ids_for_titles.add(
+                        _norm_credit_ref_id(ref_id) or str(ref_id).strip()
+                    )
+            conv_ids_for_titles.update(orphan_by_ref.keys())
+            conv_id_strs = list(conv_ids_for_titles)
 
             id_to_title: dict[str, Optional[str]] = {}
             if conv_id_strs:
@@ -645,31 +775,62 @@ async def get_credit_details(
                         for conv_id, title in conv_result.all():
                             id_to_title[str(conv_id)] = title
 
+            # Copy so we can pop orphan-only keys remaining after attributed merge
+            orphan_remaining = dict(orphan_by_ref)
+
             for ref_id, total_used, last_used_at in conv_usage_rows:
                 if not ref_id:
                     continue
-                title = id_to_title.get(ref_id)
+                ref_key = _norm_credit_ref_id(ref_id) or str(ref_id).strip()
+                o_amt, o_last = orphan_remaining.pop(ref_key, (0, None))
+                merged_last = last_used_at
+                if o_last is not None:
+                    if merged_last is None or o_last > merged_last:
+                        merged_last = o_last
+                title = id_to_title.get(ref_key) or id_to_title.get(str(ref_id))
+                slices = conv_id_to_slices.get(ref_key, [])
                 usage_by_conversation.append(
                     ConversationUsageItem(
-                        conversation_id=ref_id,
+                        conversation_id=ref_key,
                         title=title,
                         total_credits_used=int(total_used) if total_used else 0,
-                        last_used_at=last_used_at.isoformat().replace("+00:00", "Z")
-                        if last_used_at
+                        unattributed_credits_used=o_amt,
+                        last_used_at=merged_last.isoformat().replace("+00:00", "Z")
+                        if merged_last
                         else None,
+                        by_user=slices,
                     )
                 )
 
-            # Sort by total credits used (descending)
+            # Conversations with only orphan debits (no attributed rows this period)
+            for ref_key, (o_amt, o_last) in orphan_remaining.items():
+                if o_amt <= 0:
+                    continue
+                title = id_to_title.get(ref_key) or id_to_title.get(str(ref_key))
+                usage_by_conversation.append(
+                    ConversationUsageItem(
+                        conversation_id=ref_key,
+                        title=title,
+                        total_credits_used=0,
+                        unattributed_credits_used=o_amt,
+                        last_used_at=o_last.isoformat().replace("+00:00", "Z")
+                        if o_last
+                        else None,
+                        by_user=[],
+                    )
+                )
+
+            # Newest last activity first (reverse chronological)
             usage_by_conversation.sort(
-                key=lambda item: item.total_credits_used, reverse=True
+                key=lambda item: item.last_used_at or "",
+                reverse=True,
             )
-        
-        # Return effective period (None if showing all-time)
+
         return CreditDetailsResponse(
             transactions=transactions,
             usage_by_user=usage_by_user,
             usage_by_conversation=usage_by_conversation,
+            unattributed_credits_used=unattributed_total,
             period_start=effective_period_start.isoformat().replace("+00:00", "Z")
             if effective_period_start
             else None,
@@ -746,13 +907,13 @@ async def _handle_invoice_paid(invoice: Any) -> None:
         org = result.scalar_one_or_none()
         if not org:
             return
-        
+
         # Use plan credits if tier found, otherwise keep org's existing credits_included
         # This prevents overwriting 500 with 100 if tier lookup fails
         credits_included: int = plan.get("credits_included") or org.credits_included or 100
         effective_tier: str = tier or org.subscription_tier or ""
         cap: int = ROLLOVER_CAP.get(effective_tier, 0)
-        
+
         rollover = 0
         if cap > 1 and org.credits_balance > 0:
             rollover = min(
@@ -774,7 +935,7 @@ def _tier_from_price(invoice: Any) -> Optional[str]:
     """Infer tier from invoice line items price id."""
     for line in invoice.get("lines", {}).get("data", []):
         pid = line.get("price", {}).get("id")
-        for tier, price_id in STRIPE_PRICE_IDS.items():
+        for tier, price_id in _get_stripe_price_ids().items():
             if price_id and pid == price_id:
                 return tier
     return None
@@ -814,7 +975,7 @@ def _tier_from_subscription(sub: Any) -> Optional[str]:
     if not items:
         return None
     price_id = items[0].get("price", {}).get("id")
-    for tier, pid in STRIPE_PRICE_IDS.items():
+    for tier, pid in _get_stripe_price_ids().items():
         if pid and price_id == pid:
             return tier
     return None

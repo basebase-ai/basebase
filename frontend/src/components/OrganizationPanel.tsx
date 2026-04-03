@@ -54,20 +54,65 @@ interface UserUsage {
   total_credits_used: number;
 }
 
+interface ConversationUserSlice {
+  user_id: string;
+  total_credits_used: number;
+}
+
 interface ConversationUsage {
   conversation_id: string;
   title: string | null;
   total_credits_used: number;
+  unattributed_credits_used?: number;
   last_used_at: string | null;
+  by_user?: ConversationUserSlice[];
 }
 
 interface CreditDetails {
   transactions: CreditTransaction[];
   usage_by_user: UserUsage[];
   usage_by_conversation: ConversationUsage[];
+  unattributed_credits_used?: number;
   period_start: string | null;
   period_end: string | null;
   starting_balance: number;
+}
+
+/** Total credits for a chat (team + former-user) for sorting. */
+function chatTotalCredits(conv: ConversationUsage): number {
+  return conv.total_credits_used + (conv.unattributed_credits_used ?? 0);
+}
+
+type ChatUsageSort = 'recent' | 'credits_desc' | 'credits_asc';
+
+function compareChatsBySort(a: ConversationUsage, b: ConversationUsage, sort: ChatUsageSort): number {
+  if (sort === 'recent') {
+    const ta = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
+    const tb = b.last_used_at ? new Date(b.last_used_at).getTime() : 0;
+    if (tb !== ta) return tb - ta;
+    return a.conversation_id.localeCompare(b.conversation_id);
+  }
+  const ca = chatTotalCredits(a);
+  const cb = chatTotalCredits(b);
+  if (sort === 'credits_desc') {
+    if (cb !== ca) return cb - ca;
+  } else {
+    if (ca !== cb) return ca - cb;
+  }
+  const ta = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
+  const tb = b.last_used_at ? new Date(b.last_used_at).getTime() : 0;
+  if (tb !== ta) return tb - ta;
+  return a.conversation_id.localeCompare(b.conversation_id);
+}
+
+/** Normalize UUID strings so usage_by_user.user_id matches by_user[].user_id across APIs/drivers. */
+function canonicalCreditId(id: string): string {
+  const t = id.trim().toLowerCase();
+  const hex = t.replace(/-/g, '');
+  if (hex.length === 32 && /^[0-9a-f]+$/i.test(hex)) {
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+  }
+  return t;
 }
 
 interface OrganizationPanelProps {
@@ -1374,7 +1419,13 @@ interface CreditDetailsModalProps {
 
 function CreditDetailsModal({ organizationHandle, details, loading, onClose }: CreditDetailsModalProps): JSX.Element {
   const [PlotComponent, setPlotComponent] = useState<typeof import('react-plotly.js').default | null>(null);
-  const [chartRange, setChartRange] = useState<[string, string] | null>(null);
+  /** Filter "Usage by Chat" to conversations where this user consumed credits */
+  const [chatFilterUserId, setChatFilterUserId] = useState<string | null>(null);
+  /** Sort order for Usage by Chat */
+  const [chatUsageSort, setChatUsageSort] = useState<ChatUsageSort>('recent');
+  const [chartRangePreset, setChartRangePreset] = useState<
+    '1d' | '7d' | '30d' | 'beginningOfMonth'
+  >('30d');
 
   useEffect(() => {
     import('react-plotly.js')
@@ -1384,49 +1435,67 @@ function CreditDetailsModal({ organizationHandle, details, loading, onClose }: C
 
   const burndownData = useMemo(() => {
     if (!details?.transactions.length) return null;
-    
+
+    const txs = [...details.transactions].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    const first = txs[0];
+    if (!first) return null;
     const timestamps: string[] = [];
     const balances: number[] = [];
-    
-    // Start with starting_balance (which is credits_included when showing all-time)
-    let runningBalance = details.starting_balance;
-    
-    // Add starting point (use first transaction time if no period_start)
-    const startTime = details.period_start || details.transactions[0]?.timestamp || new Date().toISOString();
-    timestamps.push(startTime);
-    balances.push(runningBalance);
-    
-    // Add each transaction point, recalculating balance from starting point
-    for (const tx of details.transactions) {
-      runningBalance += tx.amount; // amount is negative for deductions
+    // Ledger-consistent path: balance_after from API (includes renewals / grants + deductions)
+    const beforeFirst = first.balance_after - first.amount;
+    timestamps.push(first.timestamp);
+    balances.push(beforeFirst);
+    for (const tx of txs) {
       timestamps.push(tx.timestamp);
-      balances.push(runningBalance);
+      balances.push(tx.balance_after);
     }
-    
+
     return { timestamps, balances };
   }, [details]);
 
-  const availableBillingPeriodRange = useMemo<[string, string] | null>(() => {
-    if (!burndownData || burndownData.timestamps.length === 0) return null;
+  const MS_DAY = 86400000;
 
-    const firstDataTimestamp = burndownData.timestamps[0];
-    const lastDataTimestamp = burndownData.timestamps[burndownData.timestamps.length - 1];
-    if (!firstDataTimestamp || !lastDataTimestamp) return null;
+  /** Windows end at the latest ledger time (not clamped to first tx — otherwise short history makes every preset identical). */
+  const chartXAxisRange = useMemo<[string, string] | undefined>(() => {
+    if (!burndownData?.timestamps.length) return undefined;
+    const ts = burndownData.timestamps.map((t) => new Date(t).getTime());
+    const minT = Math.min(...ts);
+    const maxT = Math.max(...ts);
+    if (minT === maxT) return undefined;
 
-    const start = details?.period_start
-      ? (firstDataTimestamp < details.period_start ? details.period_start : firstDataTimestamp)
-      : firstDataTimestamp;
+    let rangeStart: number;
+    const rangeEnd = maxT;
 
-    const end = details?.period_end
-      ? (lastDataTimestamp > details.period_end ? details.period_end : lastDataTimestamp)
-      : lastDataTimestamp;
+    switch (chartRangePreset) {
+      case '1d':
+        rangeStart = maxT - MS_DAY;
+        break;
+      case '7d':
+        rangeStart = maxT - 7 * MS_DAY;
+        break;
+      case '30d':
+        rangeStart = maxT - 30 * MS_DAY;
+        break;
+      case 'beginningOfMonth': {
+        const d = new Date(maxT);
+        rangeStart = new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0).getTime();
+        break;
+      }
+      default:
+        rangeStart = minT;
+    }
 
-    return [start, end];
-  }, [burndownData, details?.period_end, details?.period_start]);
+    if (rangeStart >= rangeEnd) return undefined;
 
-  useEffect(() => {
-    setChartRange(availableBillingPeriodRange);
-  }, [availableBillingPeriodRange]);
+    const span = rangeEnd - rangeStart;
+    const pad = Math.max(span * 0.02, 1);
+    return [new Date(rangeStart - pad).toISOString(), new Date(rangeEnd + pad).toISOString()];
+  }, [burndownData, chartRangePreset]);
+
+  const chartTickFormat =
+    chartRangePreset === '1d' ? '%b %d %H:%M' : '%b %d';
 
   const userUsageData = useMemo(() => {
     if (!details?.usage_by_user.length) return null;
@@ -1440,8 +1509,35 @@ function CreditDetailsModal({ organizationHandle, details, loading, onClose }: C
 
   const conversationUsage = useMemo(() => {
     if (!details?.usage_by_conversation?.length) return [];
-    return details.usage_by_conversation;
-  }, [details]);
+    let rows = [...details.usage_by_conversation];
+    if (chatFilterUserId) {
+      const fid = canonicalCreditId(chatFilterUserId);
+      rows = rows.filter((c) =>
+        (c.by_user ?? []).some((s) => canonicalCreditId(s.user_id) === fid),
+      );
+    }
+    rows.sort((a, b) => compareChatsBySort(a, b, chatUsageSort));
+    return rows;
+  }, [details, chatFilterUserId, chatUsageSort]);
+
+  const chatFilterLabel = useMemo(() => {
+    if (!chatFilterUserId || !details?.usage_by_user?.length) return null;
+    const fid = canonicalCreditId(chatFilterUserId);
+    const u = details.usage_by_user.find(
+      (x) => canonicalCreditId(x.user_id) === fid,
+    );
+    if (!u) return null;
+    return u.user_name || u.user_email.split('@')[0];
+  }, [chatFilterUserId, details?.usage_by_user]);
+
+  const attributedPeriodTotal = useMemo(
+    () =>
+      details?.usage_by_user.reduce((s, u) => s + u.total_credits_used, 0) ?? 0,
+    [details?.usage_by_user],
+  );
+  const unattributedPeriodTotal = details?.unattributed_credits_used ?? 0;
+  const showMemberUsageSection =
+    attributedPeriodTotal > 0 || unattributedPeriodTotal > 0;
 
   const navigateToConversation = (conversationId: string): void => {
     const base = organizationHandle ? `/${organizationHandle}` : '';
@@ -1484,22 +1580,44 @@ function CreditDetailsModal({ organizationHandle, details, loading, onClose }: C
             <>
               {/* Burndown Chart */}
               <div>
-                <div className="mb-4 flex items-center justify-between gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
                   <h3 className="text-sm font-medium text-surface-200">Credit Balance Over Time</h3>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setChartRange(availableBillingPeriodRange);
-                    }}
-                    disabled={!availableBillingPeriodRange}
-                    className="px-3 py-1.5 rounded-md border border-surface-600 text-xs font-medium text-surface-200 hover:bg-surface-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    Reset graph
-                  </button>
+                  {burndownData && PlotComponent && (
+                    <div className="flex flex-wrap items-center gap-x-1 gap-y-1 text-xs shrink-0">
+                      {(
+                        [
+                          { id: '1d' as const, label: '1 day' },
+                          { id: '7d' as const, label: '7 days' },
+                          { id: '30d' as const, label: '30 days' },
+                          { id: 'beginningOfMonth' as const, label: 'Beginning of month' },
+                        ] as const
+                      ).map((p, i) => (
+                        <span key={p.id} className="inline-flex items-center">
+                          {i > 0 && (
+                            <span className="text-surface-600 mx-1.5 select-none" aria-hidden>
+                              ·
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setChartRangePreset(p.id)}
+                            className={
+                              chartRangePreset === p.id
+                                ? 'text-surface-100 font-medium'
+                                : 'text-surface-400 hover:text-surface-200 transition-colors'
+                            }
+                          >
+                            {p.label}
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 {burndownData && PlotComponent ? (
                   <div className="bg-surface-800/50 rounded-lg p-4">
                     <PlotComponent
+                      key={chartRangePreset}
                       data={[
                         {
                           x: burndownData.timestamps,
@@ -1522,8 +1640,9 @@ function CreditDetailsModal({ organizationHandle, details, loading, onClose }: C
                         font: { color: '#a1a1aa' },
                         xaxis: {
                           gridcolor: 'rgba(255,255,255,0.05)',
-                          tickformat: '%b %d',
-                          range: chartRange ?? undefined,
+                          tickformat: chartTickFormat,
+                          range: chartXAxisRange,
+                          autorange: false,
                         },
                         yaxis: {
                           gridcolor: 'rgba(255,255,255,0.05)',
@@ -1532,18 +1651,10 @@ function CreditDetailsModal({ organizationHandle, details, loading, onClose }: C
                         },
                         hovermode: 'x unified',
                       }}
-                      config={{ displayModeBar: false, responsive: true }}
-                      onRelayout={(event) => {
-                        const eventWithRange = event as Record<string, unknown>;
-                        const start = eventWithRange['xaxis.range[0]'];
-                        const end = eventWithRange['xaxis.range[1]'];
-                        if (typeof start === 'string' && typeof end === 'string') {
-                          setChartRange([start, end]);
-                          return;
-                        }
-                        if (eventWithRange['xaxis.autorange'] === true) {
-                          setChartRange(availableBillingPeriodRange);
-                        }
+                      config={{
+                        responsive: true,
+                        displayModeBar: false,
+                        scrollZoom: true,
                       }}
                       style={{ width: '100%' }}
                     />
@@ -1561,16 +1672,46 @@ function CreditDetailsModal({ organizationHandle, details, loading, onClose }: C
 
               {/* Usage by User */}
               <div>
-                <h3 className="text-sm font-medium text-surface-200 mb-4">Usage by Team Member</h3>
-                {userUsageData && userUsageData.values.length > 0 ? (
+                <h3 className="text-sm font-medium text-surface-200">Usage by Team Member</h3>
+                <p className="text-xs text-surface-500 mb-4">
+                  Chat tool credits in this billing period (click to filter chats below)
+                </p>
+                {showMemberUsageSection ? (
                   <div className="space-y-4">
-                    {/* Bar visualization */}
+                    {attributedPeriodTotal === 0 && unattributedPeriodTotal > 0 && (
+                      <p className="text-xs text-surface-500">
+                        No credits attributed to current team members this period. Totals below are
+                        from chats where the member account was removed.
+                      </p>
+                    )}
+                    {userUsageData && userUsageData.values.length > 0 ? (
                     <div className="space-y-3">
                       {details.usage_by_user.map((user, idx) => {
                         const maxUsage = Math.max(...details.usage_by_user.map(u => u.total_credits_used));
                         const percentage = maxUsage > 0 ? (user.total_credits_used / maxUsage) * 100 : 0;
+                        const uid = canonicalCreditId(user.user_id);
+                        const selected =
+                          chatFilterUserId != null &&
+                          canonicalCreditId(chatFilterUserId) === uid;
                         return (
-                          <div key={user.user_id} className="group">
+                          <button
+                            key={user.user_id}
+                            type="button"
+                            onClick={() => {
+                              setChatFilterUserId((prev) => {
+                                if (prev != null && canonicalCreditId(prev) === uid) {
+                                  return null;
+                                }
+                                return uid;
+                              });
+                            }}
+                            className={`group w-full text-left rounded-lg px-2 -mx-2 py-1 transition-colors ${
+                              selected
+                                ? 'bg-primary-500/15 ring-1 ring-primary-500/40'
+                                : 'hover:bg-surface-800/60'
+                            }`}
+                            title="Show chats where this person used credits"
+                          >
                             <div className="flex items-center justify-between text-sm mb-1">
                               <span className="text-surface-300 truncate max-w-[200px]" title={user.user_email}>
                                 {user.user_name || user.user_email.split('@')[0]}
@@ -1586,17 +1727,41 @@ function CreditDetailsModal({ organizationHandle, details, loading, onClose }: C
                                 }}
                               />
                             </div>
-                          </div>
+                          </button>
                         );
                       })}
                     </div>
-                    
-                    {/* Total */}
-                    <div className="pt-3 border-t border-surface-700 flex justify-between text-sm">
-                      <span className="text-surface-400">Total used this period</span>
-                      <span className="text-surface-200 font-medium">
-                        {details.usage_by_user.reduce((sum, u) => sum + u.total_credits_used, 0)} credits
-                      </span>
+                    ) : null}
+
+                    {/* Total — breakdown when both team and former-user credits exist */}
+                    <div className="pt-3 border-t border-surface-700 text-sm">
+                      {unattributedPeriodTotal > 0 ? (
+                        <div className="space-y-2">
+                          {attributedPeriodTotal > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-surface-400">Team members</span>
+                              <span className="text-surface-200 font-medium">
+                                {attributedPeriodTotal} credits
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex justify-between">
+                            <span className="text-surface-400">Former user (removed account)</span>
+                            <span className="text-surface-200 font-medium">
+                              {unattributedPeriodTotal} credits
+                            </span>
+                          </div>
+                          <div className="flex justify-between pt-2 border-t border-surface-700 font-medium text-surface-100">
+                            <span>Total used this period</span>
+                            <span>{attributedPeriodTotal + unattributedPeriodTotal} credits</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex justify-between font-medium text-surface-100">
+                          <span className="text-surface-400 font-normal">Total used this period</span>
+                          <span>{attributedPeriodTotal} credits</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -1608,10 +1773,67 @@ function CreditDetailsModal({ organizationHandle, details, loading, onClose }: C
 
               {/* Usage by Conversation (per chat) */}
               <div>
-                <h3 className="text-sm font-medium text-surface-200 mb-4">Usage by Chat</h3>
+                <div className="flex flex-col gap-2 mb-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-sm font-medium text-surface-200">Usage by Chat</h3>
+                    {chatFilterUserId && (
+                      <div className="flex items-center gap-1.5 pl-2 pr-1 py-0.5 rounded-md border border-primary-500/30 bg-primary-500/10 text-xs">
+                        <span className="text-surface-300">
+                          {chatFilterLabel ?? 'Member'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setChatFilterUserId(null)}
+                          className="p-0.5 rounded hover:bg-primary-500/20 text-surface-400 hover:text-surface-100"
+                          title="Show all chats"
+                          aria-label="Clear chat filter"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {(details.usage_by_conversation?.length ?? 0) > 0 && (
+                    <div className="flex flex-wrap items-center gap-x-1 gap-y-1 text-xs">
+                      <span className="text-surface-500 mr-1 shrink-0">Sort:</span>
+                      {(
+                        [
+                          { id: 'recent' as const, label: 'Recent activity' },
+                          { id: 'credits_desc' as const, label: 'Most credits' },
+                          { id: 'credits_asc' as const, label: 'Fewest credits' },
+                        ] as const
+                      ).map((opt, i) => (
+                        <span key={opt.id} className="inline-flex items-center">
+                          {i > 0 && (
+                            <span className="text-surface-600 mx-1.5 select-none" aria-hidden>
+                              ·
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setChatUsageSort(opt.id)}
+                            className={
+                              chatUsageSort === opt.id
+                                ? 'text-surface-100 font-medium'
+                                : 'text-surface-400 hover:text-surface-200 transition-colors'
+                            }
+                          >
+                            {opt.label}
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 {conversationUsage.length > 0 ? (
                   <div className="space-y-2">
-                    {conversationUsage.map((conv) => (
+                    {conversationUsage.map((conv) => {
+                      const orphan = conv.unattributed_credits_used ?? 0;
+                      const attributed = conv.total_credits_used;
+                      const lineTotal = chatTotalCredits(conv);
+                      return (
                       <button
                         key={conv.conversation_id}
                         type="button"
@@ -1635,9 +1857,18 @@ function CreditDetailsModal({ organizationHandle, details, loading, onClose }: C
                           )}
                         </div>
                         <div className="flex items-center gap-3 flex-shrink-0">
-                          <span className="text-sm font-medium text-surface-50 whitespace-nowrap">
-                            {conv.total_credits_used} credits
-                          </span>
+                          <div className="text-right">
+                            <span className="text-sm font-medium text-surface-50 whitespace-nowrap block">
+                              {lineTotal} credits
+                            </span>
+                            {orphan > 0 && (
+                              <span className="text-xs text-surface-500 block mt-0.5">
+                                {attributed > 0
+                                  ? `${attributed} team · ${orphan} former user`
+                                  : 'Former user (removed account)'}
+                              </span>
+                            )}
+                          </div>
                           <span className="inline-flex items-center gap-1 text-xs text-primary-300">
                             View chat
                             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1646,7 +1877,12 @@ function CreditDetailsModal({ organizationHandle, details, loading, onClose }: C
                           </span>
                         </div>
                       </button>
-                    ))}
+                      );
+                    })}
+                  </div>
+                ) : (details.usage_by_conversation?.length ?? 0) > 0 && chatFilterUserId && conversationUsage.length === 0 ? (
+                  <div className="bg-surface-800/50 rounded-lg p-6 text-center text-surface-400">
+                    No chats with credit usage from this teammate in this period
                   </div>
                 ) : (
                   <div className="bg-surface-800/50 rounded-lg p-6 text-center text-surface-400">
