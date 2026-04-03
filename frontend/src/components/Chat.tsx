@@ -359,26 +359,33 @@ export function Chat({
   const handleSuggestedInvitesAdd = useCallback(async (userIds: string[]) => {
     if (!chatId) return;
     try {
-      const { data, error } = await apiRequest<{
-        participants: Array<{ id: string; name: string | null; email: string }>;
-      }>(`/chat/conversations/${chatId}/participants`, {
-        method: 'POST',
-        body: JSON.stringify({ user_ids: userIds }),
-      });
+      const added: Array<{ id: string; name: string | null; email: string }> = [];
+      for (const uid of userIds) {
+        const { data, error } = await apiRequest<{
+          participant: { id: string; name: string | null; email: string };
+        }>(`/chat/conversations/${chatId}/participants`, {
+          method: 'POST',
+          body: JSON.stringify({ user_id: uid }),
+        });
 
-      if (error) {
-        throw new Error(error);
+        if (error) {
+          console.error(`[Chat] Failed to add participant ${uid}:`, error);
+          continue;
+        }
+
+        if (data?.participant) {
+          added.push({
+            id: data.participant.id,
+            name: data.participant.name,
+            email: data.participant.email,
+          });
+        }
       }
 
-      if (data) {
-        const added = data.participants.map((p) => ({
-          id: p.id,
-          name: p.name,
-          email: p.email,
-        }));
+      if (added.length > 0) {
         setConversationParticipants((prev) => [...prev, ...added]);
-        useChatStore.getState().clearConversationSuggestedInvites(chatId);
       }
+      useChatStore.getState().clearConversationSuggestedInvites(chatId);
     } catch (err) {
       console.error('[Chat] Failed to add suggested participants:', err);
     }
@@ -1275,7 +1282,7 @@ export function Chat({
         setMentionPopover((p) => ({ ...p, selectedIndex: Math.max(p.selectedIndex - 1, 0) }));
         return;
       }
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
         const sel = mentionSuggestions[mentionPopover.selectedIndex];
         if (sel) {
