@@ -2096,14 +2096,9 @@ export function Chat({
             <div className="flex items-center gap-2">
               <div className="flex -space-x-2">
                 {conversationParticipants.slice(0, 4).map((p, idx) => (
-                  <Avatar
-                    key={p.id}
-                    user={p}
-                    size="sm"
-                    bordered
-                    className="border-2 border-surface-900"
-                    style={{ zIndex: 4 - idx }}
-                  />
+                  <div key={p.id} title={p.name || p.email} style={{ zIndex: 4 - idx }}>
+                    <Avatar user={p} size="sm" bordered className="border-2 border-surface-900" />
+                  </div>
                 ))}
                 {conversationParticipants.length > 4 && (
                   <div
@@ -2122,14 +2117,9 @@ export function Chat({
               {conversationParticipants.length > 0 && (
                 <div className="flex -space-x-2">
                   {conversationParticipants.slice(0, 4).map((p, idx) => (
-                    <Avatar
-                      key={p.id}
-                      user={p}
-                      size="sm"
-                      bordered
-                      className="border-2 border-surface-900"
-                      style={{ zIndex: 4 - idx }}
-                    />
+                    <div key={p.id} title={p.name || p.email} style={{ zIndex: 4 - idx }}>
+                      <Avatar user={p} size="sm" bordered className="border-2 border-surface-900" />
+                    </div>
                   ))}
                   {conversationParticipants.length > 4 && (
                     <div
@@ -2494,6 +2484,7 @@ export function Chat({
                 type="button"
                 role="option"
                 aria-selected={idx === mentionPopover.selectedIndex}
+                ref={idx === mentionPopover.selectedIndex ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}
                 className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors ${
                   idx === mentionPopover.selectedIndex ? 'bg-primary-500/15 text-surface-100' : 'hover:bg-surface-800 text-surface-200'
                 }`}
