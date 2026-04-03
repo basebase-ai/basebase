@@ -5507,18 +5507,19 @@ async def _search_documents(
                 for u in user_result.scalars().all():
                     users_map[u.id] = u.name or u.email
 
-        docs = [
-            {
-                "id": str(a.id),
-                "title": a.title,
-                "description": a.description,
-                "content_type": a.content_type,
-                "created_at": f"{a.created_at.isoformat()}Z" if a.created_at else None,
-                "creator": users_map.get(a.user_id, "unknown"),
-                "conversation_id": str(a.conversation_id) if a.conversation_id else None,
-            }
-            for a in artifacts
-        ]
+            # Build response inside session to avoid DetachedInstanceError
+            docs = [
+                {
+                    "id": str(a.id),
+                    "title": a.title,
+                    "description": a.description,
+                    "content_type": a.content_type,
+                    "created_at": f"{a.created_at.isoformat()}Z" if a.created_at else None,
+                    "creator": users_map.get(a.user_id, "unknown"),
+                    "conversation_id": str(a.conversation_id) if a.conversation_id else None,
+                }
+                for a in artifacts
+            ]
 
         if not docs:
             return {
