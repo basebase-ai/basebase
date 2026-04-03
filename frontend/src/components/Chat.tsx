@@ -386,28 +386,48 @@ export function Chat({
   const handleSuggestedInvitesAdd = useCallback(async (userIds: string[]) => {
     if (!chatId) return;
     try {
-      const { data, error } = await apiRequest<{
-        participants: Array<{ id: string; name: string | null; email: string }>;
-      }>(`/chat/conversations/${chatId}/participants`, {
-        method: 'POST',
-        body: JSON.stringify({ user_ids: userIds }),
-      });
+      const added: ParticipantRow[] = [];
+      for (const uid of userIds) {
+        const { data, error } = await apiRequest<{
+          participant: { id: string; name: string | null; email: string; avatar_url?: string | null };
+        }>(`/chat/conversations/${chatId}/participants`, {
+          method: 'POST',
+          body: JSON.stringify({ user_id: uid }),
+        });
 
-      if (error) {
-        throw new Error(error);
+        if (error) {
+          console.error(`[Chat] Failed to add participant ${uid}:`, error);
+          continue;
+        }
+
+        if (data?.participant) {
+          added.push({
+            id: data.participant.id,
+            name: data.participant.name,
+            email: data.participant.email,
+            avatarUrl: data.participant.avatar_url,
+          });
+        }
       }
 
-      if (data) {
-        const added = data.participants.map((p) => ({
-          id: p.id,
-          name: p.name,
-          email: p.email,
-        }));
-        setConversationParticipants((prev) => [...prev, ...added]);
-        useChatStore.getState().clearConversationSuggestedInvites(chatId);
+      if (added.length > 0) {
+        setConversationParticipants((prev) => {
+          const seen = new Set(prev.map(p => p.id));
+          const next = [...prev];
+          for (const p of added) {
+            if (!seen.has(p.id)) {
+              seen.add(p.id);
+              next.push(p);
+            }
+          }
+          return next;
+        });
       }
+      
+      // Always clear suggests once we've attempted the bulk add
+      useChatStore.getState().clearConversationSuggestedInvites(chatId);
     } catch (err) {
-      console.error('[Chat] Failed to add suggested participants:', err);
+      console.error('[Chat] Error adding suggested participants:', err);
     }
   }, [chatId]);
 
