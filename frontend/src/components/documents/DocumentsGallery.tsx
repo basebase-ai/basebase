@@ -1,9 +1,10 @@
 /**
  * Documents gallery – lists all artifacts (reports, charts, files) created by the agent.
- * Accessible via the "Documents" nav item. Search at top, default sort recent first.
+ * Accessible via the "Documents" nav item. Supports grid (icon) and list views with
+ * sortable columns in list mode.
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { apiRequest } from "../../lib/api";
 import { useAppStore, useUIStore } from "../../store";
 
@@ -27,6 +28,10 @@ interface ArtifactsListResponse {
   total: number;
 }
 
+type SortField = "title" | "creator_name" | "content_type" | "created_at";
+type SortDir = "asc" | "desc";
+type ViewMode = "grid" | "list";
+
 const SEARCH_DEBOUNCE_MS = 300;
 
 function contentTypeIcon(contentType: string | null): JSX.Element {
@@ -44,12 +49,6 @@ function contentTypeIcon(contentType: string | null): JSX.Element {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
         </svg>
       );
-    case "markdown":
-      return (
-        <svg className={baseClass} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-      );
     default:
       return (
         <svg className={baseClass} fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -59,11 +58,51 @@ function contentTypeIcon(contentType: string | null): JSX.Element {
   }
 }
 
+function contentTypeLabel(contentType: string | null): string {
+  switch (contentType) {
+    case "chart": return "Chart";
+    case "pdf": return "PDF";
+    case "markdown": return "Markdown";
+    case "text": return "Text";
+    default: return contentType ?? "—";
+  }
+}
+
+function SortHeader({ label, field, sortField, sortDir, onSort }: {
+  label: string;
+  field: SortField;
+  sortField: SortField;
+  sortDir: SortDir;
+  onSort: (field: SortField) => void;
+}): JSX.Element {
+  const active = sortField === field;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(field)}
+      className={`flex items-center gap-1 text-left text-xs font-medium uppercase tracking-wider ${
+        active ? 'text-primary-400' : 'text-surface-500 hover:text-surface-300'
+      } transition-colors`}
+    >
+      {label}
+      {active && (
+        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+            d={sortDir === 'asc' ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7'} />
+        </svg>
+      )}
+    </button>
+  );
+}
+
 export function DocumentsGallery(): JSX.Element {
   const [artifacts, setArtifacts] = useState<ArtifactItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState<string>("");
+  const [viewMode, setViewMode] = useState<ViewMode>("grid");
+  const [sortField, setSortField] = useState<SortField>("created_at");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const openArtifact = useUIStore((s) => s.openArtifact);
@@ -109,6 +148,31 @@ export function DocumentsGallery(): JSX.Element {
     window.history.pushState({}, "", `${pathPrefix}/artifacts/${artifactId}`);
   };
 
+  const handleSort = (field: SortField): void => {
+    if (field === sortField) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDir(field === "created_at" ? "desc" : "asc");
+    }
+  };
+
+  const sorted = useMemo(() => {
+    const copy = [...artifacts];
+    copy.sort((a, b) => {
+      const av = (a[sortField] ?? "").toLowerCase();
+      const bv = (b[sortField] ?? "").toLowerCase();
+      if (sortField === "created_at") {
+        const da = av ? new Date(av).getTime() : 0;
+        const db = bv ? new Date(bv).getTime() : 0;
+        return sortDir === "asc" ? da - db : db - da;
+      }
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return copy;
+  }, [artifacts, sortField, sortDir]);
+
   if (loading && artifacts.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -129,6 +193,7 @@ export function DocumentsGallery(): JSX.Element {
 
   return (
     <div className="max-w-5xl mx-auto p-6 h-full overflow-y-auto">
+      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-xl font-bold text-surface-100">Documents</h1>
@@ -141,48 +206,60 @@ export function DocumentsGallery(): JSX.Element {
         </span>
       </div>
 
-      <div className="mb-4">
+      {/* Search + view toggle */}
+      <div className="flex items-center gap-3 mb-4">
         <input
           type="search"
           placeholder="Search documents..."
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
-          className="w-full max-w-md px-3 py-2 rounded-lg bg-surface-800 border border-surface-700 text-surface-100 placeholder-surface-500 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
+          className="flex-1 max-w-md px-3 py-2 rounded-lg bg-surface-800 border border-surface-700 text-surface-100 placeholder-surface-500 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
           aria-label="Search documents"
         />
+        <div className="flex items-center border border-surface-700 rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setViewMode("grid")}
+            className={`p-2 transition-colors ${viewMode === "grid" ? "bg-surface-700 text-surface-100" : "text-surface-500 hover:text-surface-300"}`}
+            title="Grid view"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("list")}
+            className={`p-2 transition-colors ${viewMode === "list" ? "bg-surface-700 text-surface-100" : "text-surface-500 hover:text-surface-300"}`}
+            title="List view"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {artifacts.length === 0 ? (
         <div className="text-center py-16">
-          <svg
-            className="w-12 h-12 text-surface-600 mx-auto mb-4"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.5}
-              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-            />
+          <svg className="w-12 h-12 text-surface-600 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
           </svg>
-          <p className="text-surface-400 mb-2">No documents yet</p>
+          <p className="text-surface-400 mb-2">No documents found</p>
           <p className="text-surface-500 text-sm">
-            Ask Basebase to create a report or analysis in chat
+            {searchInput.trim() ? "Try a different search term" : "Ask Basebase to create a report or analysis in chat"}
           </p>
         </div>
-      ) : (
+      ) : viewMode === "grid" ? (
+        /* ── Grid (icon) view ── */
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {artifacts.map((doc) => (
+          {sorted.map((doc) => (
             <div
               key={doc.id}
               role="button"
               tabIndex={0}
               onClick={() => handleOpen(doc.id)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleOpen(doc.id);
-              }}
+              onKeyDown={(e) => { if (e.key === "Enter") handleOpen(doc.id); }}
               className="text-left p-4 rounded-lg bg-surface-800 border border-surface-700 hover:border-primary-500/50 hover:bg-surface-800/80 transition-all group cursor-pointer"
             >
               <div className="flex items-start gap-3">
@@ -190,13 +267,11 @@ export function DocumentsGallery(): JSX.Element {
                   {contentTypeIcon(doc.content_type)}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <h3 className="text-sm font-medium text-surface-100 group-hover:text-primary-300 transition-colors truncate max-w-[35ch]">
+                  <h3 className="text-sm font-medium text-surface-100 group-hover:text-primary-300 transition-colors truncate">
                     {doc.title ?? doc.filename ?? "Untitled"}
                   </h3>
                   {doc.description && (
-                    <p className="text-xs text-surface-400 mt-1 line-clamp-2">
-                      {doc.description}
-                    </p>
+                    <p className="text-xs text-surface-400 mt-1 line-clamp-2">{doc.description}</p>
                   )}
                   <div className="flex items-center gap-2 mt-2 text-xs text-surface-500">
                     {doc.creator_name && <span>{doc.creator_name}</span>}
@@ -208,6 +283,48 @@ export function DocumentsGallery(): JSX.Element {
                     )}
                   </div>
                 </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        /* ── List view ── */
+        <div className="rounded-lg border border-surface-700 overflow-hidden">
+          {/* Column headers */}
+          <div className="grid grid-cols-[1fr_140px_100px_120px] gap-4 px-4 py-2.5 bg-surface-800/50 border-b border-surface-700">
+            <SortHeader label="Name" field="title" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+            <SortHeader label="Creator" field="creator_name" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+            <SortHeader label="Type" field="content_type" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+            <SortHeader label="Date" field="created_at" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+          </div>
+          {/* Rows */}
+          {sorted.map((doc) => (
+            <div
+              key={doc.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => handleOpen(doc.id)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleOpen(doc.id); }}
+              className="grid grid-cols-[1fr_140px_100px_120px] gap-4 px-4 py-3 border-b border-surface-800 hover:bg-surface-800/60 cursor-pointer transition-colors group"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="text-primary-400 flex-shrink-0">
+                  {contentTypeIcon(doc.content_type)}
+                </div>
+                <span className="text-sm text-surface-100 group-hover:text-primary-300 truncate transition-colors">
+                  {doc.title ?? doc.filename ?? "Untitled"}
+                </span>
+              </div>
+              <div className="flex items-center">
+                <span className="text-sm text-surface-400 truncate">{doc.creator_name ?? "—"}</span>
+              </div>
+              <div className="flex items-center">
+                <span className="text-xs text-surface-500">{contentTypeLabel(doc.content_type)}</span>
+              </div>
+              <div className="flex items-center">
+                <span className="text-sm text-surface-500">
+                  {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : "—"}
+                </span>
               </div>
             </div>
           ))}
