@@ -2523,7 +2523,7 @@ export function Chat({
           )}
           {chatId && conversationState && conversationState.agentResponding === false && (
             <div className="mb-2 px-3 py-2 rounded-lg bg-surface-700/50 border border-surface-600 text-surface-400 text-sm flex items-center justify-between">
-              <span>Basebase paused</span>
+              <span>Basebase paused — use @Basebase to resume</span>
               <button
                 type="button"
                 onClick={() => {
