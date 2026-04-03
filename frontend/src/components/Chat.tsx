@@ -314,7 +314,9 @@ function SuggestedInvitesBanner({ invites, onAdd, onDismiss, bannerRef, addButto
   return (
     <div
       ref={bannerRef}
-      className="mb-4 rounded-lg border border-primary-500/30 bg-primary-500/10 px-4 py-3 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300 group focus-within:border-primary-500/50 transition-colors"
+      onKeyDown={handleKeyDown}
+      tabIndex={-1}
+      className="mb-4 rounded-lg border border-primary-500/30 bg-primary-500/10 px-4 py-3 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300 group focus-within:border-primary-500/50 outline-none transition-colors"
     >
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 min-w-0">
@@ -1296,6 +1298,13 @@ export function Chat({
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (e.key === 'Tab' && suggestedInvites.length > 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      suggestedInvitesAddButtonRef.current?.focus();
+      return;
+    }
+
     if (mentionPopover.open && mentionSuggestions.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -1322,14 +1331,6 @@ export function Chat({
         setMentionPopover({ open: false, query: '', selectedIndex: 0 });
         return;
       }
-    }
-    if (e.key === 'Tab' && suggestedInvites.length > 0) {
-      e.preventDefault();
-      e.stopPropagation();
-      requestAnimationFrame(() => {
-        suggestedInvitesAddButtonRef.current?.focus();
-      });
-      return;
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
