@@ -7,6 +7,7 @@ Endpoints:
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date, timedelta, timezone, datetime
 from typing import Any
@@ -133,6 +134,7 @@ async def get_top_conversations(
                     Conversation.organization_id,
                     Conversation.title,
                     Conversation.summary,
+                    Conversation.last_message_preview,
                     Conversation.message_count,
                     Conversation.source,
                     Conversation.updated_at,
@@ -150,10 +152,25 @@ async def get_top_conversations(
     for c in conv_rows:
         oid: str = str(c.organization_id)
         if oid in org_convs and len(org_convs[oid]) < 5:
+            summary_text: str | None = None
+            if c.summary:
+                try:
+                    parsed: dict[str, Any] = json.loads(c.summary)
+                    overall: str | None = parsed.get("overall")
+                    recent: str | None = parsed.get("recent")
+                    if overall and recent:
+                        summary_text = f"{overall} — Recently: {recent}"
+                    elif overall:
+                        summary_text = overall
+                except (json.JSONDecodeError, TypeError):
+                    summary_text = c.summary
+            if not summary_text and c.last_message_preview:
+                summary_text = c.last_message_preview
+
             org_convs[oid].append({
                 "id": str(c.id),
                 "title": c.title or "Untitled",
-                "summary": c.summary,
+                "summary": summary_text,
                 "message_count": c.message_count,
                 "source": c.source,
                 "updated_at": c.updated_at.isoformat() + "Z" if c.updated_at else None,
