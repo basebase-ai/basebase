@@ -77,6 +77,9 @@ async def list_artifacts(
     List all artifacts for the current organization (most recent first).
     Optional search filters on title and description (case-insensitive).
     """
+    import logging
+    _log = logging.getLogger(__name__)
+    _log.info("[artifacts] list_artifacts org_id=%s user_id=%s search=%s", auth.organization_id_str, auth.user_id, search)
     async with get_session(organization_id=auth.organization_id_str) as session:
         stmt = select(Artifact).order_by(Artifact.created_at.desc())
         if search and search.strip():
