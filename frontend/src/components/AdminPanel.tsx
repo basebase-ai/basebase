@@ -8,6 +8,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import ReactMarkdown from 'react-markdown';
 import { API_BASE, apiRequest, getAuthenticatedRequestHeaders } from '../lib/api';
 import { useDeleteOrganization } from '../hooks';
 import { useAppStore, useAuthStore, type UserProfile, type OrganizationInfo } from '../store';
@@ -43,6 +44,79 @@ interface TopOrgConversations {
 
 interface TopConversationsResponse {
   organizations: TopOrgConversations[];
+}
+
+function useThemeColors(): { fontColor: string; gridColor: string } {
+  const [colors, setColors] = useState<{ fontColor: string; gridColor: string }>({
+    fontColor: '#71717a',
+    gridColor: 'rgba(0,0,0,0.08)',
+  });
+
+  useEffect(() => {
+    const update = (): void => {
+      const isDark: boolean = document.documentElement.classList.contains('dark');
+      setColors({
+        fontColor: getComputedStyle(document.documentElement).getPropertyValue('--surface-400').trim() || '#71717a',
+        gridColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)',
+      });
+    };
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  return colors;
+}
+
+function CreditUsageChart({ PlotComponent, data }: {
+  PlotComponent: typeof import('react-plotly.js').default;
+  data: CreditUsageResponse;
+}): JSX.Element {
+  const { fontColor, gridColor } = useThemeColors();
+
+  return (
+    <div className="bg-surface-900 border border-surface-800 rounded-xl p-4">
+      <PlotComponent
+        data={data.series.map((s) => ({
+          x: data.days,
+          y: s.values,
+          name: s.org_name,
+          type: 'scatter' as const,
+          mode: 'lines' as const,
+          fill: 'tonexty' as const,
+          stackgroup: 'one',
+          line: { width: 1.5 },
+          hovertemplate: `${s.org_name}: %{y} credits<br>%{x}<extra></extra>`,
+        }))}
+        layout={{
+          autosize: true,
+          height: 360,
+          margin: { l: 50, r: 20, t: 10, b: 40 },
+          paper_bgcolor: 'transparent',
+          plot_bgcolor: 'transparent',
+          font: { color: fontColor, size: 12 },
+          xaxis: {
+            gridcolor: gridColor,
+            tickformat: '%b %d',
+          },
+          yaxis: {
+            gridcolor: gridColor,
+            title: { text: 'Credits used' },
+          },
+          legend: {
+            orientation: 'h' as const,
+            y: -0.2,
+            font: { size: 11 },
+          },
+          hovermode: 'x unified' as const,
+        }}
+        config={{ displayModeBar: false, responsive: true }}
+        useResizeHandler
+        style={{ width: '100%' }}
+      />
+    </div>
+  );
 }
 
 interface WaitlistEntry {
@@ -1112,46 +1186,7 @@ export function AdminPanel(): JSX.Element {
                 <div className="text-center py-16 text-red-400">{creditUsageError}</div>
               )}
               {!creditUsageLoading && !creditUsageError && creditUsage && PlotComponent && (
-                <div className="bg-surface-900 border border-surface-800 rounded-xl p-4">
-                  <PlotComponent
-                    data={creditUsage.series.map((s) => ({
-                      x: creditUsage.days,
-                      y: s.values,
-                      name: s.org_name,
-                      type: 'scatter' as const,
-                      mode: 'lines' as const,
-                      fill: 'tonexty' as const,
-                      stackgroup: 'one',
-                      line: { width: 1.5 },
-                      hovertemplate: `${s.org_name}: %{y} credits<br>%{x}<extra></extra>`,
-                    }))}
-                    layout={{
-                      autosize: true,
-                      height: 360,
-                      margin: { l: 50, r: 20, t: 10, b: 40 },
-                      paper_bgcolor: 'transparent',
-                      plot_bgcolor: 'transparent',
-                      font: { color: '#a1a1aa', size: 12 },
-                      xaxis: {
-                        gridcolor: 'rgba(255,255,255,0.06)',
-                        tickformat: '%b %d',
-                      },
-                      yaxis: {
-                        gridcolor: 'rgba(255,255,255,0.06)',
-                        title: { text: 'Credits used' },
-                      },
-                      legend: {
-                        orientation: 'h' as const,
-                        y: -0.2,
-                        font: { size: 11 },
-                      },
-                      hovermode: 'x unified' as const,
-                    }}
-                    config={{ displayModeBar: false, responsive: true }}
-                    useResizeHandler
-                    style={{ width: '100%' }}
-                  />
-                </div>
+                <CreditUsageChart PlotComponent={PlotComponent} data={creditUsage} />
               )}
               {!creditUsageLoading && !creditUsageError && creditUsage && creditUsage.series.length === 0 && (
                 <div className="text-center py-16 text-surface-400">No credit usage in the past 7 days.</div>
@@ -1193,7 +1228,9 @@ export function AdminPanel(): JSX.Element {
                                 <div className="min-w-0 flex-1">
                                   <div className="text-sm font-medium text-surface-200 truncate">{conv.title}</div>
                                   {conv.summary && (
-                                    <div className="mt-1 text-xs text-surface-400 line-clamp-2">{conv.summary}</div>
+                                    <div className="mt-1 text-xs text-surface-300 line-clamp-3 prose dark:prose-invert prose-xs max-w-none [&_p]:m-0 [&_strong]:text-surface-100 [&_em]:text-surface-200 [&_a]:text-primary-600 dark:[&_a]:text-primary-400 [&_li]:text-surface-300">
+                                      <ReactMarkdown>{conv.summary}</ReactMarkdown>
+                                    </div>
                                   )}
                                 </div>
                                 <div className="flex items-center gap-3 shrink-0">
