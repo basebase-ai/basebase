@@ -294,68 +294,59 @@ interface SuggestedInvitesBannerProps {
 }
 
 function SuggestedInvitesBanner({ invites, onAdd, onDismiss, bannerRef, addButtonRef }: SuggestedInvitesBannerProps): JSX.Element {
-  const names = invites.map(u => u.name || u.email).join(', ');
-  const isMultiple = invites.length > 1;
-
-  const handleKeyDown = (e: React.KeyboardEvent): void => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      onAdd(invites.map(u => u.id));
-    } else if (e.key === 'Escape') {
+  const handleContainerKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.key === 'Escape') {
       e.preventDefault();
       onDismiss();
-    } else if (e.key === 'Tab') {
-      // If pressing Tab on the banner button, we can either let it go to the next element
-      // or explicitly return to the composer if we want to "trap" focus while banner is up.
-      // For now, let's just let it be, but preventDefault on the composer's Tab was the key.
     }
   };
 
   return (
     <div
       ref={bannerRef}
-      onKeyDown={handleKeyDown}
+      onKeyDown={handleContainerKeyDown}
       tabIndex={-1}
       className="mb-4 rounded-lg border border-primary-500/30 bg-primary-500/10 px-4 py-3 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300 group focus-within:border-primary-500/50 outline-none transition-colors"
     >
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center flex-shrink-0 group-hover:bg-primary-500/30 group-focus-within:bg-primary-500/30 transition-colors">
-            <svg className="w-4 h-4 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-            </svg>
+      <div className="flex flex-col gap-3">
+        {invites.map((user, idx) => (
+          <div key={user.id} className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                </svg>
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-surface-100">
+                  <span className="text-primary-400">{user.name || user.email}</span> is not in this chat.
+                </p>
+                <p className="text-xs text-surface-400 truncate">
+                  Would you like to add them so they can see this conversation?
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); onDismiss(); }}
+                onClick={onDismiss}
+                className="px-3 py-1.5 text-xs font-medium text-surface-400 hover:text-surface-200 transition-colors"
+              >
+                Dismiss
+              </button>
+              <button
+                type="button"
+                ref={idx === 0 ? addButtonRef : undefined}
+                onMouseDown={(e) => { e.preventDefault(); onAdd([user.id]); }}
+                onClick={() => onAdd([user.id])}
+                className="px-3 py-1.5 text-xs font-medium bg-primary-600 hover:bg-primary-500 text-white rounded-md shadow-sm transition-colors focus:ring-2 focus:ring-primary-500 focus:outline-none"
+              >
+                Add them
+              </button>
+            </div>
           </div>
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-surface-100">
-              <span className="group-hover:text-primary-400 group-focus-within:text-primary-400 transition-colors">
-                {isMultiple ? `${names} are not in this chat.` : `${names} is not in this chat.`}
-              </span>
-            </p>
-            <p className="text-xs text-surface-400 truncate">
-              {isMultiple ? 'Would you like to add them so they can see this conversation?' : 'Would you like to add them so they can see this conversation?'}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <button
-            type="button"
-            onMouseDown={(e) => { e.preventDefault(); onDismiss(); }}
-            onClick={onDismiss}
-            className="px-3 py-1.5 text-xs font-medium text-surface-400 hover:text-surface-200 transition-colors"
-          >
-            Dismiss
-          </button>
-          <button
-            type="button"
-            ref={addButtonRef}
-            onMouseDown={(e) => { e.preventDefault(); onAdd(invites.map(u => u.id)); }}
-            onClick={() => onAdd(invites.map(u => u.id))}
-            onKeyDown={handleKeyDown}
-            className="px-3 py-1.5 text-xs font-medium bg-primary-600 hover:bg-primary-500 text-white rounded-md shadow-sm transition-colors focus:ring-2 focus:ring-primary-500 focus:outline-none"
-          >
-            {isMultiple ? 'Add them' : 'Add them'}
-          </button>
-        </div>
+        ))}
       </div>
     </div>
   );
