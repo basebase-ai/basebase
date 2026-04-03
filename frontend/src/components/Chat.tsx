@@ -304,24 +304,28 @@ function SuggestedInvitesBanner({ invites, onAdd, onDismiss, bannerRef, addButto
     } else if (e.key === 'Escape') {
       e.preventDefault();
       onDismiss();
+    } else if (e.key === 'Tab') {
+      // If pressing Tab on the banner button, we can either let it go to the next element
+      // or explicitly return to the composer if we want to "trap" focus while banner is up.
+      // For now, let's just let it be, but preventDefault on the composer's Tab was the key.
     }
   };
 
   return (
     <div
       ref={bannerRef}
-      className="mb-4 rounded-lg border border-primary-500/30 bg-primary-500/10 px-4 py-3 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300 group"
+      className="mb-4 rounded-lg border border-primary-500/30 bg-primary-500/10 px-4 py-3 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300 group focus-within:border-primary-500/50 transition-colors"
     >
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center flex-shrink-0 group-hover:bg-primary-500/30 transition-colors">
+          <div className="w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center flex-shrink-0 group-hover:bg-primary-500/30 group-focus-within:bg-primary-500/30 transition-colors">
             <svg className="w-4 h-4 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
             </svg>
           </div>
           <div className="min-w-0">
             <p className="text-sm font-medium text-surface-100">
-              <span className="group-hover:text-primary-400 transition-colors">
+              <span className="group-hover:text-primary-400 group-focus-within:text-primary-400 transition-colors">
                 {isMultiple ? `${names} are not in this chat.` : `${names} is not in this chat.`}
               </span>
             </p>
@@ -1321,7 +1325,10 @@ export function Chat({
     }
     if (e.key === 'Tab' && suggestedInvites.length > 0) {
       e.preventDefault();
-      suggestedInvitesAddButtonRef.current?.focus();
+      e.stopPropagation();
+      requestAnimationFrame(() => {
+        suggestedInvitesAddButtonRef.current?.focus();
+      });
       return;
     }
     if (e.key === 'Enter' && !e.shiftKey) {
