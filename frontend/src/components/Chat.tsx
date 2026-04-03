@@ -780,6 +780,7 @@ export function Chat({
       setIsWorkflowPolling(false);
       setNewConversationScope('shared'); // Default to shared for new conversations
       setConversationCreatorId(null);
+      setConversationParticipants([]);
     }
     setIsEditingHeaderTitle(false);
     // Reset workflow-done flag whenever the conversation changes
