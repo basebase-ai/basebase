@@ -415,6 +415,7 @@ export function Chat({
   
   // Local state
   const [input, setInput] = useState<string>('');
+  const draftsRef = useRef<Map<string, string>>(new Map());
   const [composerFocused, setComposerFocused] = useState<boolean>(false);
   const [currentArtifactId, setCurrentArtifactId] = useState<string | null>(null);
   const [currentAttachmentId, setCurrentAttachmentId] = useState<string | null>(null);
@@ -765,7 +766,21 @@ export function Chat({
   }, [crmApprovalResults]);
 
   // Reset local state when chatId changes
+  const prevChatIdRef = useRef<string | null | undefined>(chatId);
   useEffect(() => {
+    // Save draft from the chat we're leaving
+    const prevId = prevChatIdRef.current;
+    const currentInput = inputRef.current?.value ?? '';
+    if (prevId && currentInput.trim()) {
+      draftsRef.current.set(prevId, currentInput);
+    } else if (prevId) {
+      draftsRef.current.delete(prevId);
+    }
+    prevChatIdRef.current = chatId;
+
+    // Restore draft for the chat we're entering
+    setInput(chatId ? (draftsRef.current.get(chatId) ?? '') : '');
+
     setLocalConversationId(chatId ?? null);
     setCurrentArtifactId(null);
     setCurrentAttachmentId(null);
