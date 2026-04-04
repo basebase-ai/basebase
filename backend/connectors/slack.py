@@ -295,7 +295,11 @@ Returns normalized messages for one channel since a cutoff (does not write to th
                 candidates[0].id,
             )
         if candidates:
-            return candidates[0]
+            selected = candidates[0]
+            # Detach so downstream code can safely read scalar attributes after
+            # the session context exits.
+            session.expunge(selected)
+            return selected
 
         logger.warning(
             "No Slack integration matched org=%s team=%s; falling back to default connector selection",
@@ -687,19 +691,29 @@ Returns normalized messages for one channel since a cutoff (does not write to th
             )
             return None
 
+        integration_id: str = str(self._integration.id)
+        integration_user_id: str | None = (
+            str(self._integration.user_id) if self._integration.user_id else None
+        )
+        integration_connected_by_user_id: str | None = (
+            str(self._integration.connected_by_user_id)
+            if self._integration.connected_by_user_id
+            else None
+        )
+
         candidate_ids: list[str] = []
         if self.user_id:
             candidate_ids.append(self.user_id)
-        if self._integration.user_id:
-            candidate_ids.append(str(self._integration.user_id))
-        if self._integration.connected_by_user_id:
-            candidate_ids.append(str(self._integration.connected_by_user_id))
+        if integration_user_id:
+            candidate_ids.append(integration_user_id)
+        if integration_connected_by_user_id:
+            candidate_ids.append(integration_connected_by_user_id)
 
         deduped_candidates = list(dict.fromkeys(candidate_ids))
         logger.info(
             "[Slack Sync] Candidate RevTops user IDs for mapping org=%s integration=%s candidates=%s",
             self.organization_id,
-            self._integration.id,
+            integration_id,
             deduped_candidates,
         )
 
@@ -707,7 +721,7 @@ Returns normalized messages for one channel since a cutoff (does not write to th
             logger.warning(
                 "[Slack Sync] No RevTops user ID candidates found for org=%s integration=%s",
                 self.organization_id,
-                self._integration.id,
+                integration_id,
             )
             return None
 
@@ -719,41 +733,46 @@ Returns normalized messages for one channel since a cutoff (does not write to th
                 "[Slack Sync] Invalid RevTops user ID candidate %s for org=%s integration=%s",
                 preferred_id,
                 self.organization_id,
-                self._integration.id,
+                integration_id,
             )
             return None
 
         async with get_session(organization_id=self.organization_id) as session:
-            result = await session.execute(select(User).where(User.id == user_uuid))
-            user = result.scalar_one_or_none()
+            result = await session.execute(
+                select(User.id, User.email).where(User.id == user_uuid)
+            )
+            row = result.one_or_none()
 
-        if not user:
+        if row is None:
             logger.warning(
                 "[Slack Sync] RevTops user %s not found for org=%s integration=%s",
                 preferred_id,
                 self.organization_id,
-                self._integration.id,
+                integration_id,
             )
             return None
 
-        if self.user_id != str(user.id):
+        resolved_user_id: str = str(row.id)
+        resolved_email: str | None = row.email
+
+        if self.user_id != resolved_user_id:
             logger.info(
                 "[Slack Sync] Updating connector user_id from %s to %s for org=%s integration=%s",
                 self.user_id,
-                user.id,
+                resolved_user_id,
                 self.organization_id,
-                self._integration.id,
+                integration_id,
             )
-            self.user_id = str(user.id)
+            self.user_id = resolved_user_id
 
         logger.info(
             "[Slack Sync] Resolved current RevTops user id=%s email=%s org=%s integration=%s",
-            user.id,
-            user.email,
+            resolved_user_id,
+            resolved_email,
             self.organization_id,
-            self._integration.id,
+            integration_id,
         )
-        return str(user.id)
+        return resolved_user_id
 
     async def sync_deals(self) -> int:
         """Slack doesn't have deals - return 0."""
