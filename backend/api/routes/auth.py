@@ -2346,17 +2346,15 @@ async def update_organization(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
-    async with get_session() as session:
+    async with get_session(organization_id=org_id) as session:
         requesting_user = await session.get(User, user_uuid)
         if not await _can_administer_org(session, requesting_user, org_uuid):
             raise HTTPException(status_code=403, detail="Org admin or global_admin required for this organization")
 
-        # Fetch and update organization
         org = await session.get(Organization, org_uuid)
         if not org:
             raise HTTPException(status_code=404, detail="Organization not found")
 
-        # Update fields if provided
         if request.name is not None:
             org.name = request.name
         if request.logo_url is not None:
