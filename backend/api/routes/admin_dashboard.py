@@ -173,5 +173,3 @@ async def get_top_conversations(
         })
 
     return {"organizations": organizations}
-
-

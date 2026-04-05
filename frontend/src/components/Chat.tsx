@@ -2302,6 +2302,9 @@ export function Chat({
           </div>
         </div>
       </header>
+      {showSummaryPanel && chatSummary && (
+        <SummaryPanel summary={chatSummary} onClose={() => setShowSummaryPanel(false)} />
+      )}
 
       {/* Delete confirmation modal */}
       {showDeleteConfirm && (
