@@ -856,6 +856,9 @@ export function Chat({
       if (chatInfo) {
         setConversationScope(chatInfo.scope);
         setConversationCreatorId(chatInfo.userId ?? null);
+        if (chatInfo.participants) {
+          setConversationParticipants(chatInfo.participants);
+        }
       }
       setIsLoading(false);
       return;
@@ -900,6 +903,9 @@ export function Chat({
           if (chatInfo) {
             setConversationScope(chatInfo.scope);
             setConversationCreatorId(chatInfo.userId ?? null);
+            if (chatInfo.participants) {
+              setConversationParticipants(chatInfo.participants);
+            }
           }
         }
       } catch (err) {
