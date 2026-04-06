@@ -885,6 +885,23 @@ async def _get_connector_docs(
     return {"connector": slug, "name": display_name, "docs": docs}
 
 
+async def _attach_connector_docs(
+    error_result: dict[str, Any], connector: str, organization_id: str
+) -> dict[str, Any]:
+    """Best-effort: append connector documentation to an error response so the
+    agent can self-correct without a separate get_connector_docs round-trip."""
+    try:
+        docs_result: dict[str, Any] = await _get_connector_docs(
+            {"connector": connector}, organization_id
+        )
+        docs_text: str | None = docs_result.get("docs")
+        if docs_text:
+            error_result["documentation"] = docs_text
+    except Exception:
+        pass
+    return error_result
+
+
 async def _query_on_connector(
     params: dict[str, Any], organization_id: str, user_id: str | None
 ) -> dict[str, Any]:
@@ -915,7 +932,10 @@ async def _query_on_connector(
         return await instance.query(query)
     except Exception as exc:
         logger.error("[Tools] query_on_connector(%s) failed: %s", connector, exc, exc_info=True)
-        return {"error": f"Query to {connector} failed: {exc}"}
+        return await _attach_connector_docs(
+            {"error": f"Query to {connector} failed: {exc}"},
+            connector, organization_id,
+        )
 
 
 async def _write_on_connector(
@@ -981,7 +1001,10 @@ async def _write_on_connector(
     except Exception as exc:
         await record_outcome(change_id, organization_id, {"error": str(exc)})
         logger.error("[Tools] write_on_connector(%s, %s) failed: %s", connector, operation, exc, exc_info=True)
-        return {"error": f"Write to {connector}.{operation} failed: {exc}"}
+        return await _attach_connector_docs(
+            {"error": f"Write to {connector}.{operation} failed: {exc}"},
+            connector, organization_id,
+        )
 
 
 async def _run_on_connector(
@@ -1036,7 +1059,10 @@ async def _run_on_connector(
     except Exception as exc:
         await record_outcome(change_id, organization_id, {"error": str(exc)})
         logger.error("[Tools] run_on_connector(%s, %s) failed: %s", connector, action, exc, exc_info=True)
-        return {"error": f"Action {connector}.{action} failed: {exc}"}
+        return await _attach_connector_docs(
+            {"error": f"Action {connector}.{action} failed: {exc}"},
+            connector, organization_id,
+        )
 
 
 # =============================================================================
