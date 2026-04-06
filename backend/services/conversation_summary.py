@@ -20,7 +20,7 @@ from anthropic import AsyncAnthropic
 from config import settings
 from models.chat_message import ChatMessage as ChatMessageModel
 from models.conversation import Conversation
-from models.database import get_session
+from models.database import get_admin_session, get_session
 from models.user import User
 from sqlalchemy import select, update
 
@@ -46,10 +46,15 @@ _SUMMARY_SYSTEM_PROMPT = (
     "missing content, or cut-off messages. Summarize only what is present."
 )
 
+_TITLE_MIN_WORDS = 20
+
 _TITLE_SYSTEM_PROMPT = (
     "You name chat conversations for a sidebar list. Return ONLY a short title: "
     "5–12 words, no quotes, no trailing punctuation. Mention the user by first name if a name is given. "
-    "Describe the main topic or outcome, not the opening greeting."
+    "Describe the main topic or outcome, not the opening greeting.\n"
+    "NEVER start with 'Tool call', '[Tool call', or any bracketed prefix.\n"
+    "NEVER echo or quote the conversation text. Write a fresh descriptive label.\n"
+    "NEVER write the title from the assistant's perspective (no 'I', 'me', 'my')."
 )
 
 
@@ -122,7 +127,9 @@ def _format_messages(messages: list[ChatMessageModel]) -> str:
 
 def _sanitize_title(raw: str) -> str:
     cleaned: str = raw.strip().strip('"').strip("'")
-    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = re.sub(r"^\[.*?\]\s*", "", cleaned)
+    cleaned = re.sub(r"^Tool call:\s*\w+\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
     if len(cleaned) > _TITLE_MAX_CHARS:
         cleaned = cleaned[: _TITLE_MAX_CHARS - 1].rstrip() + "…"
     return cleaned or "Conversation"
@@ -145,7 +152,7 @@ async def generate_conversation_summary(
         current_summary: str | None = None
         summary_word_count_col: int | None = None
 
-        async with get_session(organization_id=organization_id) as session:
+        async with get_admin_session() as session:
             conv = await session.get(Conversation, conv_uuid)
             if not conv:
                 logger.warning("Summary: conversation %s not found", conversation_id)
@@ -210,7 +217,7 @@ async def generate_conversation_summary(
             return None
 
         now_utc: datetime = datetime.now(timezone.utc)
-        async with get_session(organization_id=organization_id) as session:
+        async with get_admin_session() as session:
             await session.execute(
                 update(Conversation)
                 .where(Conversation.id == conv_uuid)
@@ -249,7 +256,7 @@ async def generate_conversation_title(
         semantic_words: int = 0
         user_display: str = "the user"
 
-        async with get_session(organization_id=organization_id) as session:
+        async with get_admin_session() as session:
             conv = await session.get(Conversation, conv_uuid)
             if not conv:
                 return None
@@ -257,7 +264,7 @@ async def generate_conversation_title(
                 return None
 
             semantic_words = await count_semantic_words_for_conversation(session, conv_uuid)
-            if semantic_words < _SEMANTIC_MIN_WORDS:
+            if semantic_words < _TITLE_MIN_WORDS:
                 return None
 
             result = await session.execute(
@@ -303,7 +310,7 @@ async def generate_conversation_title(
         if not title:
             return None
 
-        async with get_session(organization_id=organization_id) as session:
+        async with get_admin_session() as session:
             await session.execute(
                 update(Conversation)
                 .where(Conversation.id == conv_uuid)
