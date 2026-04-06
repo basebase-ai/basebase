@@ -1705,14 +1705,14 @@ export function Chat({
         return;
       }
 
-      setConversationParticipants(
-        (data.participants ?? []).map((p) => ({
-          id: p.id,
-          name: p.name,
-          email: p.email,
-          avatarUrl: p.avatar_url,
-        }))
-      );
+      const mapped = (data.participants ?? []).map((p) => ({
+        id: p.id,
+        name: p.name,
+        email: p.email,
+        avatarUrl: p.avatar_url,
+      }));
+      setConversationParticipants(mapped);
+      useChatStore.getState().setChatParticipants(chatId, mapped);
     } catch (err) {
       console.error('Failed to make shared:', err);
       revert();
@@ -1733,11 +1733,13 @@ export function Chat({
     setConversationScope('private');
     useAppStore.getState().setChatScope(chatId, 'private');
     setConversationParticipants([]);
+    useChatStore.getState().setChatParticipants(chatId, []);
 
     const revert = (): void => {
       setConversationScope(prevScope);
       setConversationParticipants(prevParticipants);
       useAppStore.getState().setChatScope(chatId, prevScope);
+      useChatStore.getState().setChatParticipants(chatId, prevParticipants);
     };
 
     try {
@@ -2887,6 +2889,10 @@ export function Chat({
                   seen.add(p.id);
                   merged.push(p);
                 }
+              }
+              // Sync to sidebar so left nav avatars update immediately
+              if (chatId) {
+                useChatStore.getState().setChatParticipants(chatId, merged);
               }
               return merged;
             });
