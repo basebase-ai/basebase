@@ -94,11 +94,8 @@ def upgrade() -> None:
         )
     )
 
-    op.alter_column(
-        "conversations",
-        "title_llm_upgraded",
-        server_default=None,
-    )
+    # Keep server_default so INSERTs that omit the column still succeed
+    # (e.g. during rolling deploys before new model code is live).
 
 
 def downgrade() -> None:
