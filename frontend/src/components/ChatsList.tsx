@@ -78,14 +78,21 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
   const searchVersionRef = useRef<number>(0);
 
   const handleSearchSubmit = useCallback(() => {
-    setCommittedSearch(searchQuery.trim());
-  }, [searchQuery]);
+    const trimmed: string = searchQuery.trim();
+    if (trimmed !== committedSearch) {
+      setInitialLoaded(false);
+    }
+    setCommittedSearch(trimmed);
+  }, [searchQuery, committedSearch]);
 
   const handleSearchClear = useCallback(() => {
     setSearchQuery('');
+    if (committedSearch) {
+      setInitialLoaded(false);
+    }
     setCommittedSearch('');
     useChatStore.setState({ chatSearchTerm: null, chatSearchMatchCount: 0 });
-  }, []);
+  }, [committedSearch]);
 
   const loadPage = useCallback(async (reset: boolean = false): Promise<void> => {
     if (isLoadingMore && !reset) return;
