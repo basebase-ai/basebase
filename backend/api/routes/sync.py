@@ -1227,14 +1227,14 @@ class SaveIdentityMappingsResponse(BaseModel):
 
 def _auto_match_users(
     external_users: list[dict[str, Any]],
-    team_users: list[User],
+    team_members: list[TeamMemberRow],
 ) -> list[ExternalUserRow]:
     """Match external users to team members by email and name."""
-    email_to_user: dict[str, User] = {
-        u.email.strip().lower(): u for u in team_users if u.email
+    email_to_member: dict[str, TeamMemberRow] = {
+        m.email.strip().lower(): m for m in team_members if m.email
     }
-    name_to_user: dict[str, User] = {
-        u.name.strip().lower(): u for u in team_users if u.name
+    name_to_member: dict[str, TeamMemberRow] = {
+        m.name.strip().lower(): m for m in team_members if m.name
     }
 
     rows: list[ExternalUserRow] = []
@@ -1244,17 +1244,17 @@ def _auto_match_users(
 
         ext_email: str | None = ext.get("email")
         if ext_email:
-            matched_user: User | None = email_to_user.get(ext_email.strip().lower())
-            if matched_user:
-                suggested_id = str(matched_user.id)
+            matched: TeamMemberRow | None = email_to_member.get(ext_email.strip().lower())
+            if matched:
+                suggested_id = matched.user_id
                 confidence = "email"
 
         if suggested_id is None:
             ext_name: str = (ext.get("display_name") or "").strip().lower()
             if ext_name:
-                name_matched: User | None = name_to_user.get(ext_name)
+                name_matched: TeamMemberRow | None = name_to_member.get(ext_name)
                 if name_matched:
-                    suggested_id = str(name_matched.id)
+                    suggested_id = name_matched.user_id
                     confidence = "name"
 
         rows.append(ExternalUserRow(
@@ -1303,7 +1303,8 @@ async def list_external_users(
             detail=f"Identity mapping not supported for provider: {provider}",
         )
 
-    # Load team members for matching
+    # Load team members for matching — extract scalars inside session
+    team_member_rows: list[TeamMemberRow] = []
     async with get_session(organization_id=organization_id) as session:
         member_sub = select(OrgMember.user_id).where(
             OrgMember.organization_id == org_uuid,
@@ -1315,19 +1316,15 @@ async def list_external_users(
                 User.is_guest.is_(False),
             )
         )
-        team_users: list[User] = list(result.scalars().all())
+        for u in result.scalars().all():
+            team_member_rows.append(TeamMemberRow(
+                user_id=str(u.id),
+                name=u.name,
+                email=u.email,
+                avatar_url=u.avatar_url,
+            ))
 
-    matched_rows: list[ExternalUserRow] = _auto_match_users(external_users, team_users)
-
-    team_member_rows: list[TeamMemberRow] = [
-        TeamMemberRow(
-            user_id=str(u.id),
-            name=u.name,
-            email=u.email,
-            avatar_url=u.avatar_url,
-        )
-        for u in team_users
-    ]
+    matched_rows: list[ExternalUserRow] = _auto_match_users(external_users, team_member_rows)
 
     return ListExternalUsersResponse(
         external_users=matched_rows,
