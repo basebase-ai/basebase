@@ -11,6 +11,7 @@ import type { WidgetConfig } from "../../store/types";
 import { AppPreview } from "../widgets/AppPreview";
 import { VisibilityBadge } from "../VisibilitySelector";
 import { GallerySearchInput } from "../shared/GallerySearchInput";
+import { useViewMode } from "../../hooks/useViewMode";
 
 /** Preload CDN libraries used by SandpackAppRenderer so they're browser-cached before user opens an app. */
 const CDN_PRELOADS = [
@@ -52,7 +53,6 @@ interface AppsListResponse {
 
 type SortField = "title" | "creator_name" | "created_at";
 type SortDir = "asc" | "desc";
-type ViewMode = "grid" | "list";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -133,7 +133,7 @@ export function AppsGallery(): JSX.Element {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState<string>("");
-  const [viewMode, setViewMode] = useState<ViewMode>("grid");
+  const [viewMode, setViewMode] = useViewMode();
   const [sortField, setSortField] = useState<SortField>("created_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);

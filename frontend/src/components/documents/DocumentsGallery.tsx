@@ -8,6 +8,7 @@ import { apiRequest } from "../../lib/api";
 import { useAppStore, useUIStore } from "../../store";
 import { VisibilityBadge } from "../VisibilitySelector";
 import { GallerySearchInput } from "../shared/GallerySearchInput";
+import { useViewMode } from "../../hooks/useViewMode";
 
 interface ArtifactItem {
   id: string;
@@ -34,7 +35,7 @@ interface ArtifactsListResponse {
 
 type SortField = "title" | "creator_name" | "content_type" | "created_at";
 type SortDir = "asc" | "desc";
-type ViewMode = "grid" | "list";
+
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -104,7 +105,7 @@ export function DocumentsGallery(): JSX.Element {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState<string>("");
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const [viewMode, setViewMode] = useViewMode();
   const [sortField, setSortField] = useState<SortField>("created_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
