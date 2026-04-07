@@ -27,6 +27,21 @@ logger = logging.getLogger(__name__)
 MICROSOFT_GRAPH_API_BASE = "https://graph.microsoft.com/v1.0"
 
 
+def _parse_graph_datetime(dt_str: str) -> datetime:
+    """Parse a Microsoft Graph dateTime string into a naive-UTC datetime.
+
+    Graph returns values like ``2026-04-07T20:00:00.0000000`` (no tz suffix
+    when the ``Prefer: outlook.timezone="UTC"`` header is set) or with a
+    trailing ``Z``.  We normalise to naive-UTC so it matches the DB column
+    (``TIMESTAMP WITHOUT TIME ZONE``).
+    """
+    cleaned: str = dt_str.replace("Z", "+00:00")
+    if "+" not in cleaned and "-" not in cleaned[10:]:
+        cleaned += "+00:00"
+    parsed: datetime = datetime.fromisoformat(cleaned)
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 class MicrosoftCalendarConnector(BaseConnector):
     """Connector for Microsoft Outlook Calendar data via Microsoft Graph."""
 
@@ -207,6 +222,7 @@ class MicrosoftCalendarConnector(BaseConnector):
                             organizer_email=parsed["organizer_email"],
                             status=parsed["meeting_status"],
                         )
+                        meeting = await session.merge(meeting)
 
                         existing_result = await session.execute(
                             select(Activity).where(
@@ -272,25 +288,20 @@ class MicrosoftCalendarConnector(BaseConnector):
         if ms_event.get("isCancelled"):
             return None
 
-        # Parse start time (dateTime for timed events, date for all-day)
+        # Parse start time (dateTime for timed events, date for all-day).
+        # The Prefer header requests UTC; store as naive-UTC to match the DB column.
         start = ms_event.get("start", {})
         activity_date: Optional[datetime] = None
         is_all_day: bool = False
 
         if start.get("dateTime"):
             try:
-                dt_str: str = start["dateTime"]
-                raw: str = dt_str.replace("Z", "+00:00")
-                if "+" not in raw and "-" not in raw[10:]:
-                    raw += "+00:00"
-                activity_date = datetime.fromisoformat(raw)
+                activity_date = _parse_graph_datetime(start["dateTime"])
             except (ValueError, TypeError):
                 pass
         elif start.get("date"):
             try:
-                activity_date = datetime.fromisoformat(start["date"]).replace(
-                    tzinfo=timezone.utc
-                )
+                activity_date = datetime.fromisoformat(start["date"])
                 is_all_day = True
             except (ValueError, TypeError):
                 pass
@@ -304,18 +315,12 @@ class MicrosoftCalendarConnector(BaseConnector):
 
         if end.get("dateTime"):
             try:
-                dt_str = end["dateTime"]
-                raw = dt_str.replace("Z", "+00:00")
-                if "+" not in raw and "-" not in raw[10:]:
-                    raw += "+00:00"
-                end_time = datetime.fromisoformat(raw)
+                end_time = _parse_graph_datetime(end["dateTime"])
             except (ValueError, TypeError):
                 pass
         elif end.get("date"):
             try:
-                end_time = datetime.fromisoformat(end["date"]).replace(
-                    tzinfo=timezone.utc
-                )
+                end_time = datetime.fromisoformat(end["date"])
             except (ValueError, TypeError):
                 pass
 
@@ -372,14 +377,8 @@ class MicrosoftCalendarConnector(BaseConnector):
             else:
                 meeting_type = "online_meeting"
 
-        # Determine meeting status - convert to UTC for proper comparison
-        now_utc = datetime.now(timezone.utc)
-        if activity_date.tzinfo is not None:
-            activity_date_utc = activity_date.astimezone(timezone.utc)
-        else:
-            activity_date_utc = activity_date.replace(tzinfo=timezone.utc)
-        
-        if activity_date_utc < now_utc:
+        # Determine meeting status (activity_date is naive-UTC)
+        if activity_date < datetime.utcnow():
             meeting_status = "completed"
         else:
             meeting_status = "scheduled"
