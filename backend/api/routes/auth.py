@@ -3407,30 +3407,150 @@ async def nango_oauth_callback_redirect(request: Request) -> RedirectResponse:
     return RedirectResponse(url=redirect_url, status_code=302)
 
 
-# --- Slack OAuth callback (Nango Connect flow) ---
+# --- Slack "Add to Slack" direct install + OAuth callback ---
 
 def _slack_oauth_callback_url() -> str:
     """Absolute URL for Slack OAuth redirect_uri (must match Slack app config)."""
-    base = settings.BACKEND_PUBLIC_URL or ""
+    base: str = settings.BACKEND_PUBLIC_URL or ""
     if not base:
         base = "http://localhost:8000"
     return base.rstrip("/") + "/api/auth/slack/oauth-callback"
 
 
+_DIRECT_INSTALL_STATE_PREFIX: str = "bb_direct_"
+
+
+@router.get("/slack/install")
+async def slack_direct_install(request: Request) -> RedirectResponse:
+    """Public (unauthenticated) "Add to Slack" redirect.
+
+    Constructs a ``slack.com/oauth/v2/authorize`` URL with the canonical
+    bot + user scopes and redirects the caller.  Used by the Slack
+    Marketplace landing page's "Add to Slack" button.
+    """
+    from connectors.slack_scopes import SLACK_BOT_SCOPES, SLACK_USER_SCOPES
+    from urllib.parse import quote, urlencode
+
+    client_id: str | None = settings.SLACK_CLIENT_ID
+    if not client_id:
+        raise HTTPException(status_code=500, detail="SLACK_CLIENT_ID is not configured")
+
+    redirect_uri: str = _slack_oauth_callback_url()
+    state: str = _DIRECT_INSTALL_STATE_PREFIX + "1"
+
+    params: dict[str, str] = {
+        "client_id": client_id,
+        "scope": SLACK_BOT_SCOPES,
+        "user_scope": SLACK_USER_SCOPES,
+        "redirect_uri": redirect_uri,
+        "state": state,
+    }
+    authorize_url: str = f"https://slack.com/oauth/v2/authorize?{urlencode(params, quote_via=quote)}"
+    return RedirectResponse(url=authorize_url, status_code=302)
+
+
 @router.get("/slack/oauth-callback")
 async def slack_oauth_callback(request: Request) -> RedirectResponse:
-    """
-    Slack OAuth callback — forwards to Nango.
+    """Slack OAuth callback — handles both Nango and direct-install flows.
 
-    Configure this URL as the Redirect URL in your Slack app and in Nango's
-    Slack integration callback. Nango handles the code exchange and token
-    storage; the bot token is then extracted and stored in messenger_bot_installs
-    by confirm_integration.
+    * **Nango flow** (state does not start with ``bb_direct_``): forwards the
+      entire request to Nango's callback as before.
+    * **Direct install** (state starts with ``bb_direct_``): exchanges the
+      OAuth code with Slack, stores the bot token via
+      :func:`~services.slack_bot_install.upsert_bot_install`, and redirects
+      to the app so the user can sign up / log in.
     """
-    nango_callback_url = "https://api.nango.dev/oauth/callback"
-    query_string: str = request.url.query
-    redirect_url: str = f"{nango_callback_url}?{query_string}" if query_string else nango_callback_url
-    return RedirectResponse(url=redirect_url, status_code=302)
+    state: str = request.query_params.get("state", "")
+
+    if not state.startswith(_DIRECT_INSTALL_STATE_PREFIX):
+        nango_callback_url: str = "https://api.nango.dev/oauth/callback"
+        query_string: str = request.url.query
+        redirect_url: str = (
+            f"{nango_callback_url}?{query_string}" if query_string else nango_callback_url
+        )
+        return RedirectResponse(url=redirect_url, status_code=302)
+
+    # --- Direct install: exchange code ourselves ---
+    code: str | None = request.query_params.get("code")
+    error: str | None = request.query_params.get("error")
+    frontend_url: str = settings.FRONTEND_URL.rstrip("/")
+
+    if error or not code:
+        logger.warning(
+            "[slack_direct_install] OAuth denied or missing code error=%s", error,
+        )
+        return RedirectResponse(
+            url=f"{frontend_url}/?slack_install=error&reason={error or 'no_code'}",
+            status_code=302,
+        )
+
+    client_id: str | None = settings.SLACK_CLIENT_ID
+    client_secret: str | None = settings.SLACK_CLIENT_SECRET
+    if not client_id or not client_secret:
+        logger.error("[slack_direct_install] Missing SLACK_CLIENT_ID or SLACK_CLIENT_SECRET")
+        return RedirectResponse(
+            url=f"{frontend_url}/?slack_install=error&reason=config",
+            status_code=302,
+        )
+
+    redirect_uri: str = _slack_oauth_callback_url()
+
+    try:
+        async with httpx.AsyncClient() as client:
+            token_response: httpx.Response = await client.post(
+                "https://slack.com/api/oauth.v2.access",
+                data={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                },
+                timeout=30.0,
+            )
+            token_data: dict[str, Any] = token_response.json()
+    except Exception as exc:
+        logger.error("[slack_direct_install] Token exchange failed: %s", exc)
+        return RedirectResponse(
+            url=f"{frontend_url}/?slack_install=error&reason=exchange",
+            status_code=302,
+        )
+
+    if not token_data.get("ok"):
+        slack_error: str = str(token_data.get("error", "unknown"))
+        logger.warning("[slack_direct_install] Slack token error: %s", slack_error)
+        return RedirectResponse(
+            url=f"{frontend_url}/?slack_install=error&reason={slack_error}",
+            status_code=302,
+        )
+
+    access_token: str | None = token_data.get("access_token")
+    team_info: dict[str, Any] = token_data.get("team", {})
+    team_id: str = str(team_info.get("id", "")).strip()
+    team_name: str = str(team_info.get("name", "")).strip()
+
+    if access_token and team_id:
+        from services.slack_bot_install import upsert_bot_install
+
+        try:
+            await upsert_bot_install(
+                organization_id=UUID(int=0),
+                team_id=team_id,
+                access_token=access_token,
+            )
+            logger.info(
+                "[slack_direct_install] Stored bot token for team_id=%s team_name=%s (pending org link)",
+                team_id, team_name,
+            )
+        except Exception as exc:
+            logger.error(
+                "[slack_direct_install] Failed to store bot token team_id=%s: %s",
+                team_id, exc,
+            )
+
+    return RedirectResponse(
+        url=f"{frontend_url}/?slack_install=success&team_id={team_id}&team_name={team_name}",
+        status_code=302,
+    )
 
 
 @router.post("/callback")
