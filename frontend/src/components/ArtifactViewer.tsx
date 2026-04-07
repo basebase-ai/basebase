@@ -17,6 +17,7 @@ import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { apiRequest, API_BASE, getAuthenticatedRequestHeaders } from "../lib/api";
+import { downloadArtifactAsFile } from "../lib/artifactDownload";
 import { formatDateOnly } from "../lib/dates";
 
 
@@ -48,6 +49,8 @@ export interface ArtifactViewerProps {
   attachmentId?: string | null;
   attachmentMeta?: AttachmentMeta | null;
   onDownload?: () => void;
+  /** When true, hide the content-type badge and Download toolbar (parent provides chrome). */
+  hideToolbar?: boolean;
 }
 
 // Type guard to check if artifact is file-based
@@ -69,6 +72,7 @@ export function ArtifactViewer({
   attachmentId,
   attachmentMeta,
   onDownload,
+  hideToolbar = false,
 }: ArtifactViewerProps): JSX.Element {
   const [content, setContent] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
@@ -176,27 +180,7 @@ export function ArtifactViewer({
     setShowDownloadMenu(false);
 
     try {
-      const dlHeaders = await getAuthenticatedRequestHeaders();
-      const response = await fetch(
-        `${API_BASE}/artifacts/${artifact.id}/download?format=${format}`,
-        { headers: dlHeaders },
-      );
-      if (!response.ok) {
-        throw new Error("Failed to download artifact");
-      }
-
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      const extension = format === "pdf" ? ".pdf" : ".md";
-      const baseName = artifact.filename.replace(/\.[^/.]+$/, "");
-      a.download = baseName + extension;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-
+      await downloadArtifactAsFile(artifact.id, format, artifact.filename);
       onDownload?.();
     } catch (err) {
       console.error("Download failed:", err);
@@ -261,38 +245,42 @@ export function ArtifactViewer({
   if (artifact && isFileArtifact(artifact)) {
     return (
       <div className="h-full flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-4 pb-3 border-b border-surface-700">
-          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-surface-700 text-surface-300">
-            {getContentTypeLabel(artifact.contentType)}
-          </span>
-          <div className="relative">
-            <button
-              onClick={() => setShowDownloadMenu(!showDownloadMenu)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium transition-colors"
-            >
-              <DownloadIcon />
-              Download
-              <ChevronDownIcon />
-            </button>
-            {showDownloadMenu && (
-              <div className="absolute right-0 mt-1 w-36 rounded-md bg-surface-800 border border-surface-700 shadow-lg z-10">
-                <button
-                  onClick={() => handleDownload("markdown")}
-                  className="flex items-center gap-2 w-full px-3 py-2 text-sm text-surface-200 hover:bg-surface-700 transition-colors"
-                >
-                  Markdown
-                </button>
-                <button
-                  onClick={() => handleDownload("pdf")}
-                  className="flex items-center gap-2 w-full px-3 py-2 text-sm text-surface-200 hover:bg-surface-700 transition-colors"
-                >
-                  PDF
-                </button>
-              </div>
-            )}
+        {!hideToolbar ? (
+          <div className="flex items-center justify-between mb-4 pb-3 border-b border-surface-700">
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-surface-700 text-surface-300">
+              {getContentTypeLabel(artifact.contentType)}
+            </span>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowDownloadMenu(!showDownloadMenu)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium transition-colors"
+              >
+                <DownloadIcon />
+                Download
+                <ChevronDownIcon />
+              </button>
+              {showDownloadMenu ? (
+                <div className="absolute right-0 mt-1 w-36 rounded-md bg-surface-800 border border-surface-700 shadow-lg z-10">
+                  <button
+                    type="button"
+                    onClick={() => void handleDownload("markdown")}
+                    className="flex items-center gap-2 w-full px-3 py-2 text-sm text-surface-200 hover:bg-surface-700 transition-colors"
+                  >
+                    Markdown
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleDownload("pdf")}
+                    className="flex items-center gap-2 w-full px-3 py-2 text-sm text-surface-200 hover:bg-surface-700 transition-colors"
+                  >
+                    PDF
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
+        ) : null}
 
         {/* Content area */}
         <div className="flex-1 overflow-auto">

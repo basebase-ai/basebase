@@ -19,7 +19,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from pydantic import BaseModel
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 
 from api.auth_middleware import AuthContext, require_organization
 from config import settings
@@ -236,9 +236,10 @@ async def execute_app_query(
 @router.get("", response_model=AppListResponse)
 async def list_apps(
     archived: bool = Query(False),
+    search: Optional[str] = Query(None),
     auth: AuthContext = Depends(require_organization),
 ) -> AppListResponse:
-    """List all apps for the current organization."""
+    """List all apps for the current organization. Optional search on title and description."""
     assert auth.organization_id_str is not None
     async with get_session(
         organization_id=auth.organization_id_str,
@@ -249,6 +250,14 @@ async def list_apps(
             stmt = stmt.where(App.archived_at.isnot(None))
         else:
             stmt = stmt.where(App.archived_at.is_(None))
+        if search and search.strip():
+            term: str = f"%{search.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    App.title.ilike(term),
+                    App.description.ilike(term),
+                )
+            )
         result = await session.execute(stmt)
         apps: list[App] = list(result.scalars().all())
 
