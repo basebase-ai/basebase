@@ -9,11 +9,13 @@
  * - Delete workflows
  */
 
-import { useState, useEffect, useRef, useCallback, type KeyboardEvent } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, type KeyboardEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAppStore } from '../store';
 import { apiRequest } from '../lib/api';
 import { useTeamMembers } from '../hooks/useOrganization';
+import { GallerySearchInput } from './shared/GallerySearchInput';
+import { useViewMode } from '../hooks/useViewMode';
 
 // Types
 interface WorkflowStep {
@@ -1199,9 +1201,26 @@ export function Workflows(): JSX.Element {
     };
   }, [refetch, queryClient]);
 
+  const [searchInput, setSearchInput] = useState<string>("");
+  const [viewMode, setViewMode] = useViewMode();
+
+  const filteredWorkflows = useMemo(() => {
+    const term = searchInput.trim().toLowerCase();
+    if (!term) return workflows;
+    return workflows.filter(
+      (w) =>
+        (w.name ?? "").toLowerCase().includes(term) ||
+        (w.description ?? "").toLowerCase().includes(term),
+    );
+  }, [workflows, searchInput]);
+
   // Filter to user's workflows
-  const userWorkflows = workflows.filter((w) => w.created_by_user_id === user?.id);
-  const otherWorkflows = workflows.filter((w) => w.created_by_user_id !== user?.id);
+  const userWorkflows = filteredWorkflows.filter((w) => w.created_by_user_id === user?.id);
+  const otherWorkflows = filteredWorkflows.filter((w) => w.created_by_user_id !== user?.id);
+  const allSorted = useMemo(
+    () => [...filteredWorkflows].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+    [filteredWorkflows],
+  );
 
   // Navigation
   const setCurrentView = useAppStore((state) => state.setCurrentView);
@@ -1367,49 +1386,160 @@ export function Workflows(): JSX.Element {
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <header className="px-6 py-4 border-b border-surface-800 flex items-start justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-surface-100">Workflows</h1>
-          <p className="text-sm text-surface-400 mt-1">
-            Automated tasks that run on schedule or manually
-          </p>
+      <div className="flex-shrink-0 px-6 pt-6 pb-0">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h1 className="text-xl font-bold text-surface-100">Workflows</h1>
+            <p className="text-sm text-surface-400 mt-1">
+              Automated tasks that run on schedule or manually
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-surface-500">
+              {filteredWorkflows.length} workflow{filteredWorkflows.length !== 1 ? "s" : ""}
+            </span>
+            <button
+              type="button"
+              onClick={openCreateModal}
+              className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Create Workflow
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={openCreateModal}
-            className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            Create Workflow
-          </button>
+
+        {/* Search + view toggle */}
+        <div className="flex items-center gap-3 mb-4">
+          <GallerySearchInput
+            value={searchInput}
+            onChange={setSearchInput}
+            placeholder="Search workflows..."
+            aria-label="Search workflows"
+          />
+          <div className="flex items-center border border-surface-700 rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setViewMode("grid")}
+              className={`p-2 transition-colors ${viewMode === "grid" ? "bg-surface-700 text-surface-100" : "text-surface-500 hover:text-surface-300"}`}
+              title="Grid view"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("list")}
+              className={`p-2 transition-colors ${viewMode === "list" ? "bg-surface-700 text-surface-100" : "text-surface-500 hover:text-surface-300"}`}
+              title="List view"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+          </div>
         </div>
-      </header>
+      </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
-        {workflows.length === 0 && archivedWorkflows.length === 0 ? (
-          <div className="text-center py-12">
-            <div className="w-16 h-16 rounded-full bg-surface-800 flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-surface-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </div>
-            <h2 className="text-lg font-medium text-surface-200 mb-2">No workflows yet</h2>
-            <p className="text-surface-400 max-w-md mx-auto mb-4">
-              Create automated tasks that run on schedule or manually. For example: "Every morning, send me a summary of stale deals to Slack."
+      {workflows.length === 0 && archivedWorkflows.length === 0 ? (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <svg className="w-12 h-12 text-surface-600 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <p className="text-surface-400 mb-2">No workflows yet</p>
+            <p className="text-surface-500 text-sm max-w-md mx-auto mb-4">
+              Create automated tasks that run on schedule or manually.
             </p>
             <button
+              type="button"
               onClick={openCreateModal}
               className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-medium transition-colors"
             >
               Create Your First Workflow
             </button>
           </div>
-        ) : (
+        </div>
+      ) : filteredWorkflows.length === 0 ? (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <svg className="w-12 h-12 text-surface-600 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <p className="text-surface-400 mb-2">No workflows found</p>
+            <p className="text-surface-500 text-sm">Try a different search term</p>
+          </div>
+        </div>
+      ) : viewMode === "list" ? (
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <div className="grid grid-cols-[1fr_140px_120px_120px] gap-4 px-4 py-2.5 bg-surface-800/50 border-b border-surface-700 flex-shrink-0">
+            <span className="text-left text-xs font-medium uppercase tracking-wider text-surface-500">Name</span>
+            <span className="text-left text-xs font-medium uppercase tracking-wider text-surface-500">Creator</span>
+            <span className="text-left text-xs font-medium uppercase tracking-wider text-surface-500">Trigger</span>
+            <span className="text-left text-xs font-medium uppercase tracking-wider text-surface-500">Last Run</span>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {allSorted.map((workflow) => {
+              const isActive: boolean = workflow.latest_run_status === 'running' || workflow.latest_run_status === 'pending';
+              return (
+                <div
+                  key={workflow.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedWorkflow(workflow)}
+                  onKeyDown={(e) => { if (e.key === "Enter") setSelectedWorkflow(workflow); }}
+                  className="grid grid-cols-[1fr_140px_120px_120px] gap-4 px-4 py-3 border-b border-surface-800 cursor-pointer transition-colors group hover:bg-surface-800/60"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-3">
+                      <div className="text-primary-400 flex-shrink-0">
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm text-surface-100 group-hover:text-primary-300 truncate block transition-colors">
+                            {workflow.name}
+                          </span>
+                          {isActive ? (
+                            <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500" />
+                            </span>
+                          ) : (
+                            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${workflow.is_enabled ? 'bg-green-500' : 'bg-surface-600'}`} />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center">
+                    <span className="text-sm text-surface-400 truncate">
+                      {workflowCreatorNames[workflow.created_by_user_id] ?? "—"}
+                    </span>
+                  </div>
+                  <div className="flex items-center">
+                    <span className="text-xs text-surface-500 truncate">{getTriggerDescription(workflow)}</span>
+                  </div>
+                  <div className="flex items-center">
+                    <span className="text-sm text-surface-500">
+                      {workflow.last_run_at ? formatRelativeTime(workflow.last_run_at) : "—"}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 overflow-y-auto px-6 pb-6">
           <div className="space-y-8">
             {/* My Workflows */}
             {userWorkflows.length > 0 && (
@@ -1451,10 +1581,20 @@ export function Workflows(): JSX.Element {
 
             <div>
               <button
+                type="button"
                 onClick={() => setShowArchived((prev) => !prev)}
-                className="text-sm text-surface-400 hover:text-surface-200"
+                className="flex items-center gap-2 text-sm text-surface-400 hover:text-surface-200 transition-colors"
               >
-                {showArchived ? 'Hide' : 'Show'} archived workflows {showArchived ? `(${archivedWorkflows.length})` : ''}
+                <svg
+                  className={`w-4 h-4 transition-transform ${showArchived ? "rotate-90" : ""}`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+                Archived
+                {showArchived ? ` (${archivedWorkflows.length})` : ''}
               </button>
               {showArchived && (
                 <div className="mt-4 space-y-2">
@@ -1464,6 +1604,7 @@ export function Workflows(): JSX.Element {
                     <div key={workflow.id} className="flex items-center justify-between rounded-lg border border-surface-800 px-3 py-2">
                       <span className="text-sm text-surface-300">{workflow.name}</span>
                       <button
+                        type="button"
                         onClick={() => unarchiveMutation.mutate({ workflowId: workflow.id })}
                         className="text-xs px-2 py-1 rounded bg-surface-700 hover:bg-surface-600 text-surface-200"
                       >
@@ -1475,11 +1616,10 @@ export function Workflows(): JSX.Element {
               )}
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Detail Panel */}
-      {selectedWorkflow && (
+      {selectedWorkflow != null && (
         <WorkflowDetail
           workflow={selectedWorkflow}
           onClose={() => setSelectedWorkflow(null)}

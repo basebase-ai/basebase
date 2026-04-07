@@ -506,8 +506,8 @@ async def get_app_screenshot(
         app: App | None = result.scalar_one_or_none()
         if app is None:
             raise HTTPException(status_code=404, detail="App not found")
+        screenshot: str | None = (app.widget_config or {}).get("screenshot")
 
-    screenshot = (app.widget_config or {}).get("screenshot")
     return {"screenshot": screenshot}
 
 
