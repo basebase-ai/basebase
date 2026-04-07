@@ -1,13 +1,13 @@
 /**
  * Documents gallery – lists all artifacts (reports, charts, files) created by the agent.
- * Supports grid, list, and list+preview views with sortable columns.
+ * Supports grid and list views with sortable columns; opening an item uses full-screen detail.
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { apiRequest } from "../../lib/api";
 import { useAppStore, useUIStore } from "../../store";
-import { ArtifactViewer } from "../ArtifactViewer";
 import { VisibilityBadge } from "../VisibilitySelector";
+import { GallerySearchInput } from "../shared/GallerySearchInput";
 
 interface ArtifactItem {
   id: string;
@@ -30,15 +30,6 @@ interface ArtifactItem {
 interface ArtifactsListResponse {
   artifacts: ArtifactItem[];
   total: number;
-}
-
-interface PreviewArtifact {
-  id: string;
-  title: string;
-  filename: string;
-  contentType: "text" | "markdown" | "pdf" | "chart";
-  mimeType: string;
-  content?: string;
 }
 
 type SortField = "title" | "creator_name" | "content_type" | "created_at";
@@ -108,20 +99,6 @@ function SortHeader({ label, field, sortField, sortDir, onSort }: {
   );
 }
 
-function MatchInfo({ doc }: { doc: ArtifactItem }): JSX.Element | null {
-  if (!doc.match_count && !doc.match_snippet) return null;
-  return (
-    <>
-      {doc.match_count > 0 && (
-        <span className="text-primary-400 text-xs">{doc.match_count} match{doc.match_count !== 1 ? "es" : ""}</span>
-      )}
-      {doc.match_snippet && (
-        <p className="text-xs text-surface-500 mt-1 line-clamp-2 italic">{doc.match_snippet}</p>
-      )}
-    </>
-  );
-}
-
 export function DocumentsGallery(): JSX.Element {
   const [artifacts, setArtifacts] = useState<ArtifactItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -130,9 +107,6 @@ export function DocumentsGallery(): JSX.Element {
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [sortField, setSortField] = useState<SortField>("created_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
-  const [previewId, setPreviewId] = useState<string | null>(null);
-  const [previewArtifact, setPreviewArtifact] = useState<PreviewArtifact | null>(null);
-  const [previewLoading, setPreviewLoading] = useState<boolean>(false);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const openArtifact = useUIStore((s) => s.openArtifact);
@@ -167,29 +141,6 @@ export function DocumentsGallery(): JSX.Element {
     return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
   }, [searchInput, fetchArtifacts]);
 
-  // Fetch preview content when previewId changes
-  useEffect(() => {
-    if (!previewId) { setPreviewArtifact(null); return; }
-    let cancelled = false;
-    setPreviewLoading(true);
-    apiRequest<{
-      id: string; title: string | null; filename: string | null;
-      content_type: string | null; mime_type: string | null; content: string | null;
-    }>(`/artifacts/${previewId}`).then(({ data }) => {
-      if (cancelled || !data) return;
-      setPreviewArtifact({
-        id: data.id,
-        title: data.title ?? "Untitled",
-        filename: data.filename ?? "artifact.txt",
-        contentType: (data.content_type as PreviewArtifact["contentType"]) ?? "text",
-        mimeType: data.mime_type ?? "text/plain",
-        content: data.content ?? undefined,
-      });
-      setPreviewLoading(false);
-    });
-    return () => { cancelled = true; };
-  }, [previewId]);
-
   const handleOpen = (artifactId: string): void => {
     openArtifact(artifactId, searchInput.trim() || undefined);
     window.history.pushState({}, "", `${pathPrefix}/artifacts/${artifactId}`);
@@ -201,14 +152,6 @@ export function DocumentsGallery(): JSX.Element {
     } else {
       setSortField(field);
       setSortDir(field === "created_at" ? "desc" : "asc");
-    }
-  };
-
-  const handleRowClick = (doc: ArtifactItem): void => {
-    if (viewMode === "list") {
-      setPreviewId((prev) => prev === doc.id ? null : doc.id);
-    } else {
-      handleOpen(doc.id);
     }
   };
 
@@ -262,18 +205,16 @@ export function DocumentsGallery(): JSX.Element {
 
         {/* Search + view toggle */}
         <div className="flex items-center gap-3 mb-4">
-          <input
-            type="search"
-            placeholder="Search documents..."
+          <GallerySearchInput
             value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            className="flex-1 max-w-md px-3 py-2 rounded-lg bg-surface-800 border border-surface-700 text-surface-100 placeholder-surface-500 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
+            onChange={setSearchInput}
+            placeholder="Search documents..."
             aria-label="Search documents"
           />
           <div className="flex items-center border border-surface-700 rounded-lg overflow-hidden">
             <button
               type="button"
-              onClick={() => { setViewMode("grid"); setPreviewId(null); }}
+              onClick={() => setViewMode("grid")}
               className={`p-2 transition-colors ${viewMode === "grid" ? "bg-surface-700 text-surface-100" : "text-surface-500 hover:text-surface-300"}`}
               title="Grid view"
             >
@@ -309,7 +250,6 @@ export function DocumentsGallery(): JSX.Element {
           </div>
         </div>
       ) : viewMode === "grid" ? (
-        /* ── Grid view ── */
         <div className="flex-1 overflow-y-auto px-6 pb-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {sorted.map((doc) => (
@@ -341,7 +281,6 @@ export function DocumentsGallery(): JSX.Element {
                         </>
                       )}
                     </div>
-                    <MatchInfo doc={doc} />
                   </div>
                 </div>
               </div>
@@ -349,113 +288,52 @@ export function DocumentsGallery(): JSX.Element {
           </div>
         </div>
       ) : (
-        /* ── List view with optional preview pane ── */
-        <div className="flex-1 flex min-h-0">
-          {/* File list */}
-          <div className={`${previewId ? "w-2/5 border-r border-surface-700" : "flex-1"} flex flex-col min-h-0 overflow-hidden`}>
-            {/* Column headers */}
-            <div className={`grid ${previewId ? "grid-cols-[1fr_100px]" : "grid-cols-[1fr_140px_100px_120px]"} gap-4 px-4 py-2.5 bg-surface-800/50 border-b border-surface-700 flex-shrink-0`}>
-              <SortHeader label="Name" field="title" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-              {!previewId && <SortHeader label="Creator" field="creator_name" sortField={sortField} sortDir={sortDir} onSort={handleSort} />}
-              {!previewId && <SortHeader label="Type" field="content_type" sortField={sortField} sortDir={sortDir} onSort={handleSort} />}
-              <SortHeader label="Date" field="created_at" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-            </div>
-            {/* Rows */}
-            <div className="flex-1 overflow-y-auto">
-              {sorted.map((doc) => (
-                <div
-                  key={doc.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => handleRowClick(doc)}
-                  onDoubleClick={() => handleOpen(doc.id)}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleOpen(doc.id); }}
-                  className={`grid ${previewId ? "grid-cols-[1fr_100px]" : "grid-cols-[1fr_140px_100px_120px]"} gap-4 px-4 py-3 border-b border-surface-800 cursor-pointer transition-colors group ${
-                    previewId === doc.id ? "bg-primary-500/10 border-l-2 border-l-primary-500" : "hover:bg-surface-800/60"
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-3">
-                      <div className="text-primary-400 flex-shrink-0">
-                        {contentTypeIcon(doc.content_type)}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-sm text-surface-100 group-hover:text-primary-300 truncate block transition-colors">
-                            {doc.title ?? doc.filename ?? "Untitled"}
-                          </span>
-                          <VisibilityBadge visibility={doc.visibility ?? "team"} />
-                        </div>
-                        {doc.match_snippet && (
-                          <p className="text-xs text-surface-500 truncate italic mt-0.5">{doc.match_snippet}</p>
-                        )}
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <div className="grid grid-cols-[1fr_140px_100px_120px] gap-4 px-4 py-2.5 bg-surface-800/50 border-b border-surface-700 flex-shrink-0">
+            <SortHeader label="Name" field="title" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+            <SortHeader label="Creator" field="creator_name" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+            <SortHeader label="Type" field="content_type" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+            <SortHeader label="Date" field="created_at" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {sorted.map((doc) => (
+              <div
+                key={doc.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => handleOpen(doc.id)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleOpen(doc.id); }}
+                className="grid grid-cols-[1fr_140px_100px_120px] gap-4 px-4 py-3 border-b border-surface-800 cursor-pointer transition-colors group hover:bg-surface-800/60"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-3">
+                    <div className="text-primary-400 flex-shrink-0">
+                      {contentTypeIcon(doc.content_type)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-sm text-surface-100 group-hover:text-primary-300 truncate block transition-colors">
+                          {doc.title ?? doc.filename ?? "Untitled"}
+                        </span>
+                        <VisibilityBadge visibility={doc.visibility ?? "team"} />
                       </div>
                     </div>
-                    {doc.match_count > 0 && (
-                      <span className="text-[10px] text-primary-400 ml-8 mt-0.5 block">{doc.match_count} match{doc.match_count !== 1 ? "es" : ""}</span>
-                    )}
-                  </div>
-                  {!previewId && (
-                    <div className="flex items-center">
-                      <span className="text-sm text-surface-400 truncate">{doc.creator_name ?? "—"}</span>
-                    </div>
-                  )}
-                  {!previewId && (
-                    <div className="flex items-center">
-                      <span className="text-xs text-surface-500">{contentTypeLabel(doc.content_type)}</span>
-                    </div>
-                  )}
-                  <div className="flex items-center">
-                    <span className="text-sm text-surface-500">
-                      {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : "—"}
-                    </span>
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Preview pane */}
-          {previewId && (
-            <div className="w-3/5 flex flex-col min-h-0 overflow-hidden">
-              {/* Preview header */}
-              <div className="flex items-center justify-between px-4 py-2.5 bg-surface-800/50 border-b border-surface-700 flex-shrink-0">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-sm font-medium text-surface-100 truncate">
-                    {previewArtifact?.title ?? "Loading..."}
+                <div className="flex items-center">
+                  <span className="text-sm text-surface-400 truncate">{doc.creator_name ?? "—"}</span>
+                </div>
+                <div className="flex items-center">
+                  <span className="text-xs text-surface-500">{contentTypeLabel(doc.content_type)}</span>
+                </div>
+                <div className="flex items-center">
+                  <span className="text-sm text-surface-500">
+                    {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : "—"}
                   </span>
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => handleOpen(previewId)}
-                    className="px-2.5 py-1 text-xs font-medium bg-primary-600 hover:bg-primary-500 text-white rounded transition-colors"
-                  >
-                    Open
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPreviewId(null)}
-                    className="p-1 text-surface-400 hover:text-surface-200 transition-colors"
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
               </div>
-              {/* Preview content */}
-              <div className="flex-1 overflow-y-auto p-4">
-                {previewLoading ? (
-                  <div className="flex items-center justify-center h-32">
-                    <div className="animate-spin w-6 h-6 border-2 border-surface-500 border-t-primary-500 rounded-full" />
-                  </div>
-                ) : previewArtifact ? (
-                  <ArtifactViewer artifact={previewArtifact} />
-                ) : null}
-              </div>
-            </div>
-          )}
+            ))}
+          </div>
         </div>
       )}
     </div>
