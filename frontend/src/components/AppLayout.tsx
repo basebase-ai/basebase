@@ -435,7 +435,12 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
       }
 
       const subPath: string = orgPrefixMatch?.[2] ?? "";
-      if (subPath === "" || subPath === "chat") {
+      if (subPath === "") {
+        setCurrentChatId(null);
+        setCurrentView("home");
+        return;
+      }
+      if (subPath === "chat") {
         setCurrentChatId(null);
         setCurrentView("chat");
         return;
