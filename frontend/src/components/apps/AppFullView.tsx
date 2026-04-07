@@ -8,14 +8,11 @@
  * - Back to gallery button
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { SandpackAppRenderer } from "./SandpackAppRenderer";
 import { apiRequest } from "../../lib/api";
 import { useAppStore } from "../../store";
-import {
-  VisibilitySelector,
-  type VisibilityLevel,
-} from "../VisibilitySelector";
+import type { VisibilityLevel } from "../VisibilitySelector";
 
 interface AppDetail {
   id: string;
@@ -51,7 +48,8 @@ export function AppFullView({ appId }: AppFullViewProps): JSX.Element {
   const [previewMode, setPreviewMode] = useState<string>("auto");
   const [detailLevel, setDetailLevel] = useState<string>("standard");
   const [visBusy, setVisBusy] = useState<boolean>(false);
-  const [publicUrlCopied, setPublicUrlCopied] = useState<boolean>(false);
+  const [menuOpen, setMenuOpen] = useState<boolean>(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   const setCurrentView = useAppStore((s) => s.setCurrentView);
   const user = useAppStore((s) => s.user);
@@ -104,6 +102,17 @@ export function AppFullView({ appId }: AppFullViewProps): JSX.Element {
     });
   };
 
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onClickOutside = (e: MouseEvent): void => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [menuOpen]);
+
   const organization = useAppStore((s) => s.organization);
   const organizations = useAppStore((s) => s.organizations);
   const orgHandle: string | null =
@@ -116,7 +125,10 @@ export function AppFullView({ appId }: AppFullViewProps): JSX.Element {
     Boolean(user?.id) && Boolean(app?.user_id) && user?.id === app?.user_id;
 
   const handleCopyLink = async (): Promise<void> => {
-    const url: string = `${window.location.origin}${prefix}/apps/${appId}`;
+    const isPublic: boolean = app?.visibility === "public";
+    const url: string = isPublic
+      ? `${window.location.origin}/public/apps/${appId}`
+      : `${window.location.origin}${prefix}/apps/${appId}`;
     await navigator.clipboard.writeText(url);
     setLinkCopied(true);
     setTimeout(() => setLinkCopied(false), 2000);
@@ -129,22 +141,16 @@ export function AppFullView({ appId }: AppFullViewProps): JSX.Element {
       );
       if (!ok) return;
     }
+    if (app) setApp({ ...app, visibility: next });
     setVisBusy(true);
     const resp = await apiRequest<{ visibility: string }>(`/apps/${appId}/visibility`, {
       method: "PATCH",
       body: JSON.stringify({ visibility: next }),
     });
     setVisBusy(false);
-    if (!resp.error && resp.data && app) {
-      setApp({ ...app, visibility: resp.data.visibility });
+    if (resp.error && app) {
+      setApp({ ...app, visibility: app.visibility });
     }
-  };
-
-  const handleCopyPublicUrl = async (): Promise<void> => {
-    const url: string = `${window.location.origin}/public/apps/${appId}`;
-    await navigator.clipboard.writeText(url);
-    setPublicUrlCopied(true);
-    setTimeout(() => setPublicUrlCopied(false), 2000);
   };
 
   const handleEmbed = async (): Promise<void> => {
@@ -194,91 +200,162 @@ export function AppFullView({ appId }: AppFullViewProps): JSX.Element {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header bar */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-surface-700 bg-surface-900 flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={goBack}
-            className="text-surface-400 hover:text-surface-200 transition-colors"
-            title="Back to Apps"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </button>
-          <div>
-            <h1 className="text-base font-semibold text-surface-100">
-              {app.title ?? "Untitled App"}
-            </h1>
-            {app.description && (
-              <p className="text-xs text-surface-400 mt-0.5 truncate max-w-md">
-                {app.description}
-              </p>
-            )}
-          </div>
+      {/* Header bar – single row */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-surface-700 bg-surface-900 flex-shrink-0">
+        <button
+          onClick={goBack}
+          className="text-surface-400 hover:text-surface-200 transition-colors shrink-0"
+          title="Back to Apps"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-base font-semibold text-surface-100 truncate">
+            {app.title ?? "Untitled App"}
+          </h1>
+          {app.description && (
+            <p className="text-xs text-surface-400 mt-0.5 truncate max-w-md">
+              {app.description}
+            </p>
+          )}
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          {isOwner && app.visibility && (
-            <VisibilitySelector
-              value={app.visibility as VisibilityLevel}
-              onChange={(v) => void handleVisibilityChange(v)}
-              busy={visBusy}
-            />
-          )}
-          {isOwner && app.visibility === "public" && (
-            <button
-              type="button"
-              onClick={() => void handleCopyPublicUrl()}
-              className="flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-surface-700 hover:bg-surface-600 text-surface-300 text-xs font-medium"
-            >
-              {publicUrlCopied ? "Public link copied!" : "Copy public link"}
-            </button>
-          )}
-          {/* Preview mode selector */}
-          <select
-            value={previewMode}
-            onChange={(e) => void handlePreviewSettingsChange(e.target.value, undefined)}
-            className="bg-surface-700 border border-surface-600 rounded-md px-2 py-1 text-xs text-surface-200"
-          >
-            <option value="auto">Auto</option>
-            <option value="screenshot">Screenshot</option>
-            <option value="widget">Widget</option>
-            <option value="mini_app">Mini App</option>
-            <option value="icon">Icon</option>
-          </select>
-
-          {/* Detail level selector (only visible for widget mode) */}
-          {previewMode === "widget" && (
-            <select
-              value={detailLevel}
-              onChange={(e) => void handlePreviewSettingsChange(undefined, e.target.value)}
-              className="bg-surface-700 border border-surface-600 rounded-md px-2 py-1 text-xs text-surface-200"
-            >
-              <option value="minimal">Minimal</option>
-              <option value="standard">Standard</option>
-              <option value="detailed">Detailed</option>
-            </select>
-          )}
-
+        {/* Three-dot menu */}
+        <div ref={menuRef} className="relative shrink-0">
           <button
-            onClick={() => void handleCopyLink()}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-surface-700 hover:bg-surface-600 text-surface-300 text-xs font-medium transition-colors"
+            onClick={() => setMenuOpen((p) => !p)}
+            className="flex items-center justify-center w-8 h-8 rounded-md hover:bg-surface-700 text-surface-400 hover:text-surface-200 transition-colors"
+            title="Options"
           >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+              <circle cx="10" cy="4" r="1.5" />
+              <circle cx="10" cy="10" r="1.5" />
+              <circle cx="10" cy="16" r="1.5" />
             </svg>
-            {linkCopied ? "Copied!" : "Copy link"}
           </button>
-          <button
-            onClick={() => void handleEmbed()}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium transition-colors"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-            </svg>
-            {embedCopied ? "Copied!" : "Embed"}
-          </button>
+
+          {menuOpen && (
+            <div className="absolute right-0 top-full mt-1 w-56 rounded-lg bg-surface-800 border border-surface-600 shadow-xl z-50 py-1 text-xs">
+              {/* Visibility */}
+              {isOwner && (
+                <>
+                  <div className="px-3 py-1.5 text-[10px] font-semibold text-surface-500 uppercase tracking-wider">
+                    Visibility
+                  </div>
+                  {(["private", "team", "public"] as const).map((lvl) => {
+                    const label: string =
+                      lvl === "private" ? "Only me" : lvl === "team" ? "Team" : "Public";
+                    const active: boolean = (app.visibility as VisibilityLevel) === lvl;
+                    return (
+                      <button
+                        key={lvl}
+                        type="button"
+                        disabled={visBusy}
+                        onClick={() => void handleVisibilityChange(lvl)}
+                        className={`w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors ${
+                          active
+                            ? "text-primary-400"
+                            : "text-surface-300 hover:bg-surface-700"
+                        } disabled:opacity-50`}
+                      >
+                        <span className="w-4 text-center">
+                          {active ? "✓" : ""}
+                        </span>
+                        {label}
+                      </button>
+                    );
+                  })}
+                  <div className="my-1 border-t border-surface-700" />
+                </>
+              )}
+
+              {/* Preview mode */}
+              <div className="px-3 py-1.5 text-[10px] font-semibold text-surface-500 uppercase tracking-wider">
+                Preview
+              </div>
+              {([
+                ["auto", "Auto"],
+                ["screenshot", "Screenshot"],
+                ["widget", "Widget"],
+                ["mini_app", "Mini App"],
+                ["icon", "Icon"],
+              ] as const).map(([val, label]) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => void handlePreviewSettingsChange(val, undefined)}
+                  className={`w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors ${
+                    previewMode === val
+                      ? "text-primary-400"
+                      : "text-surface-300 hover:bg-surface-700"
+                  }`}
+                >
+                  <span className="w-4 text-center">
+                    {previewMode === val ? "✓" : ""}
+                  </span>
+                  {label}
+                </button>
+              ))}
+
+              {previewMode === "widget" && (
+                <>
+                  <div className="my-1 border-t border-surface-700" />
+                  <div className="px-3 py-1.5 text-[10px] font-semibold text-surface-500 uppercase tracking-wider">
+                    Detail level
+                  </div>
+                  {([
+                    ["minimal", "Minimal"],
+                    ["standard", "Standard"],
+                    ["detailed", "Detailed"],
+                  ] as const).map(([val, label]) => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => void handlePreviewSettingsChange(undefined, val)}
+                      className={`w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors ${
+                        detailLevel === val
+                          ? "text-primary-400"
+                          : "text-surface-300 hover:bg-surface-700"
+                      }`}
+                    >
+                      <span className="w-4 text-center">
+                        {detailLevel === val ? "✓" : ""}
+                      </span>
+                      {label}
+                    </button>
+                  ))}
+                </>
+              )}
+
+              <div className="my-1 border-t border-surface-700" />
+
+              {/* Actions */}
+              <button
+                type="button"
+                onClick={() => { void handleCopyLink(); setMenuOpen(false); }}
+                className="w-full text-left px-3 py-1.5 text-surface-300 hover:bg-surface-700 transition-colors flex items-center gap-2"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                </svg>
+                {linkCopied
+                  ? (app.visibility === "public" ? "Public link copied!" : "Link copied!")
+                  : "Copy link"}
+              </button>
+              <button
+                type="button"
+                onClick={() => { void handleEmbed(); setMenuOpen(false); }}
+                className="w-full text-left px-3 py-1.5 text-surface-300 hover:bg-surface-700 transition-colors flex items-center gap-2"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                </svg>
+                {embedCopied ? "Embed code copied!" : "Copy embed code"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

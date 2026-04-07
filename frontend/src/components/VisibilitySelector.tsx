@@ -43,6 +43,10 @@ export function VisibilityBadge({
   );
 }
 
+/** Shared height with header selects / buttons (AppFullView, ArtifactFullView). */
+const CONTROL_ROW_CLASS =
+  "inline-flex h-8 shrink-0 rounded-md border border-surface-600 overflow-hidden bg-surface-800/80";
+
 export function VisibilitySelector({
   value,
   onChange,
@@ -50,18 +54,22 @@ export function VisibilitySelector({
   busy = false,
 }: VisibilitySelectorProps): JSX.Element {
   return (
-    <div role="group" aria-label="Visibility" className="flex flex-col gap-1">
-      <span className="text-[10px] uppercase tracking-wide text-surface-500">
+    <div
+      role="group"
+      aria-label="Visibility"
+      className="flex items-center gap-2 shrink-0"
+    >
+      <span className="text-xs text-surface-500 whitespace-nowrap max-sm:hidden">
         Visibility
       </span>
-      <div className="inline-flex rounded-md border border-surface-600 overflow-hidden bg-surface-800/80">
+      <div className={CONTROL_ROW_CLASS}>
         {LEVELS.map((lvl) => (
           <button
             key={lvl.id}
             type="button"
             disabled={disabled || busy}
             onClick={() => onChange(lvl.id)}
-            className={`px-2 py-1 text-xs font-medium transition-colors ${
+            className={`px-2.5 text-xs font-medium transition-colors flex items-center justify-center min-w-0 ${
               value === lvl.id
                 ? "bg-primary-600 text-white"
                 : "text-surface-300 hover:bg-surface-700"
