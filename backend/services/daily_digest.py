@@ -51,7 +51,7 @@ _SYSTEM_PROMPT_TEMPLATE: str = (
     "Ignore automated emails, third-party digests, recharge notifications, newsletters, "
     "and other passive/automated items that don't reflect real work. "
     "If after filtering out noise there is NO meaningful activity, the narrative MUST be "
-    "something like \"{first_name} didn't have any Basebase-related activity on {date_human}.\" "
+    "something like \"{first_name} didn't have any {org_name}-related activity on {date_human}.\" "
     "and highlights should be an empty array. Do not fabricate a summary from noise.\n"
     "No markdown fences."
 )
@@ -143,9 +143,15 @@ async def collect_member_raw_data(
     user_row: User | None = u_result.scalar_one_or_none()
     member_name: str = (user_row.name or "").strip() if user_row else ""
 
+    org_result = await session.execute(
+        select(Organization.name).where(Organization.id == organization_id)
+    )
+    org_name: str = (org_result.scalar_one_or_none() or "").strip()
+
     raw: dict[str, Any] = {
         "digest_date": digest_date.isoformat(),
         "member_name": member_name,
+        "org_name": org_name,
         "slack_user_ids": slack_ids,
         "github_logins": github_logins,
         "emails": email_list,
@@ -386,13 +392,14 @@ def _is_raw_effectively_empty(raw: dict[str, Any]) -> bool:
     return True
 
 
-def _empty_summary(member_name: str = "", digest_date: date | None = None) -> dict[str, Any]:
+def _empty_summary(member_name: str = "", digest_date: date | None = None, org_name: str = "") -> dict[str, Any]:
     first: str = member_name.split()[0] if member_name.strip() else "This person"
+    label: str = org_name if org_name else "synced"
     if digest_date is not None:
         date_str: str = digest_date.strftime("%B %-d, %Y")
-        narrative: str = f"{first} didn't have any Basebase-related activity on {date_str}."
+        narrative: str = f"{first} didn't have any {label}-related activity on {date_str}."
     else:
-        narrative = f"{first} didn't have any synced activity for this day."
+        narrative = f"{first} didn't have any {label}-related activity for this day."
     return {
         "narrative": narrative,
         "highlights": [],
@@ -419,11 +426,13 @@ async def _call_llm_for_summary(raw: dict[str, Any]) -> dict[str, Any]:
         date_human: str = parsed_date.strftime("%B %-d, %Y")
     except ValueError:
         date_human = digest_date_str
+    org_name: str = str(raw.get("org_name", "")).strip() or "Basebase"
     system_prompt: str = _SYSTEM_PROMPT_TEMPLATE.format(
         date=digest_date_str,
         date_human=date_human,
         name_possessive=name_possessive,
         first_name=first_name,
+        org_name=org_name,
     )
     client: AsyncAnthropic = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
     payload: str = json.dumps(raw, default=str)[:120_000]
@@ -439,7 +448,7 @@ async def _call_llm_for_summary(raw: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         await report_anthropic_call_failure(exc=exc, source="daily_digest")
         logger.exception("daily_digest LLM failed: %s", exc)
-        return _empty_summary(member_name, parsed_date)
+        return _empty_summary(member_name, parsed_date, org_name)
 
     text_parts: list[str] = []
     for block in resp.content:
@@ -454,7 +463,7 @@ async def _call_llm_for_summary(raw: dict[str, Any]) -> dict[str, Any]:
             combined = combined[: -3]
         combined = combined.strip()
 
-    fallback: dict[str, Any] = _empty_summary(member_name, parsed_date)
+    fallback: dict[str, Any] = _empty_summary(member_name, parsed_date, org_name)
     try:
         parsed: Any = json.loads(combined)
     except json.JSONDecodeError:
@@ -487,8 +496,9 @@ async def generate_member_digest(
         session, organization_id, user_id, digest_date
     )
     raw_member_name: str = str(raw.get("member_name", ""))
+    raw_org_name: str = str(raw.get("org_name", ""))
     if _is_raw_effectively_empty(raw):
-        summary: dict[str, Any] = _empty_summary(raw_member_name, digest_date)
+        summary: dict[str, Any] = _empty_summary(raw_member_name, digest_date, raw_org_name)
     else:
         summary = await _call_llm_for_summary(raw)
 
