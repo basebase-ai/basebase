@@ -3,6 +3,9 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import type { Components } from "react-markdown";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   fetchDailyDigests,
   generateDailyDigests,
@@ -119,6 +122,43 @@ function renderSummary(summary: DigestSummaryJson | null): JSX.Element {
         <p className="text-surface-500">No activity data available for this day.</p>
       ) : null}
     </div>
+  );
+}
+
+const TEAM_SUMMARY_MD_COMPONENTS: Components = {
+  h1({ children }) {
+    return (
+      <h3 className="text-sm font-semibold text-surface-100 mt-3 first:mt-0 mb-1">
+        {children}
+      </h3>
+    );
+  },
+  h2({ children }) {
+    return (
+      <h4 className="text-sm font-medium text-surface-200 mt-2 first:mt-0 mb-1">
+        {children}
+      </h4>
+    );
+  },
+  p({ children }) {
+    return (
+      <p className="text-surface-300 text-sm leading-relaxed mb-1.5 last:mb-0">
+        {children}
+      </p>
+    );
+  },
+};
+
+function TeamSummaryCard({ summary }: { summary: string }): JSX.Element {
+  return (
+    <article className="rounded-xl border border-primary-500/30 bg-surface-900/60 p-4 md:p-5">
+      <div className="text-xs font-medium text-primary-400 uppercase tracking-wide mb-2">
+        Team Summary
+      </div>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={TEAM_SUMMARY_MD_COMPONENTS}>
+        {summary}
+      </ReactMarkdown>
+    </article>
   );
 }
 
@@ -267,11 +307,14 @@ export function DailyDigestGrid({ digestDate, onDigestDateChange }: DailyDigestG
       ) : data && data.members.length === 0 ? (
         <p className="text-surface-500 text-sm">No active team members in this organization.</p>
       ) : data && data.members.length > 0 ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pb-4">
-          {data.members.map((m) => (
-            <MemberCard key={m.user_id} member={m} />
-          ))}
-        </div>
+        <>
+          {data.team_summary ? <TeamSummaryCard summary={data.team_summary} /> : null}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pb-4">
+            {data.members.map((m) => (
+              <MemberCard key={m.user_id} member={m} />
+            ))}
+          </div>
+        </>
       ) : null}
     </div>
   );
