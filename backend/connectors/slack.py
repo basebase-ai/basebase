@@ -669,6 +669,36 @@ Returns normalized messages for one channel since a cutoff (does not write to th
 
         return users
 
+    async def list_external_users(self) -> list[dict[str, Any]]:
+        """
+        List real workspace members for identity mapping wizard.
+
+        Filters out bots, app users, and deactivated accounts.
+        """
+        raw_users: list[dict[str, Any]] = await self.get_users()
+        result: list[dict[str, Any]] = []
+        for u in raw_users:
+            if u.get("is_bot") or u.get("id") == "USLACKBOT":
+                continue
+            if u.get("deleted"):
+                continue
+            profile: dict[str, Any] = u.get("profile", {})
+            display_name: str = (
+                profile.get("real_name")
+                or profile.get("display_name")
+                or u.get("name", "")
+            )
+            if not display_name:
+                continue
+            result.append({
+                "external_id": u["id"],
+                "display_name": display_name,
+                "email": profile.get("email"),
+                "avatar_url": profile.get("image_72") or profile.get("image_48"),
+                "source": "slack",
+            })
+        return result
+
     async def get_user_info(self, slack_user_id: str) -> dict[str, Any]:
         """Get details for a specific Slack user via users.info."""
         data = await self._make_request(

@@ -672,6 +672,76 @@ Use `run_sql_query` on `github_repositories`, `github_commits`, `github_pull_req
         logger.info("Backfilled user_id on %d commit/PR rows", updated)
         return updated
 
+    # ── External user listing (for identity mapping wizard) ─────────────
+
+    async def list_external_users(self) -> list[dict[str, Any]]:
+        """
+        List collaborators across all tracked repos.
+
+        Returns deduplicated users with login, display name, email, and avatar.
+        Used by the identity mapping wizard during connector setup.
+        """
+        org_uuid: UUID = UUID(self.organization_id)
+        tracked_repos: list[str] = []
+        async with get_session(organization_id=self.organization_id) as session:
+            result = await session.execute(
+                select(GitHubRepository.full_name).where(
+                    GitHubRepository.organization_id == org_uuid,
+                    GitHubRepository.is_tracked == True,  # noqa: E712
+                )
+            )
+            tracked_repos = [r[0] for r in result.all()]
+
+        if not tracked_repos:
+            return []
+
+        seen_logins: set[str] = set()
+        users: list[dict[str, Any]] = []
+
+        for repo_full_name in tracked_repos:
+            try:
+                collabs: list[dict[str, Any]] = await self._gh_get_paginated(
+                    f"/repos/{repo_full_name}/collaborators",
+                    params={"affiliation": "all"},
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to list collaborators for %s, skipping",
+                    repo_full_name,
+                    exc_info=True,
+                )
+                continue
+
+            for c in collabs:
+                login: str = c.get("login", "")
+                if not login or login in seen_logins:
+                    continue
+                if login.endswith("[bot]"):
+                    continue
+                seen_logins.add(login)
+                users.append({
+                    "external_id": login,
+                    "display_name": login,
+                    "email": None,
+                    "avatar_url": c.get("avatar_url"),
+                    "source": "github",
+                })
+
+        # Enrich with actual names/emails from /users/{login} for each user
+        for user_entry in users:
+            try:
+                profile: dict[str, Any] = await self._gh_get(
+                    f"/users/{user_entry['external_id']}"
+                )
+                user_entry["display_name"] = (
+                    profile.get("name") or user_entry["external_id"]
+                )
+                user_entry["email"] = profile.get("email")
+            except Exception:
+                pass
+
+        return users
+
     # ── Repo listing (for UI to pick repos) ──────────────────────────────
 
     async def list_available_repos(self) -> list[dict[str, Any]]:

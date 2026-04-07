@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import ast
 import logging
+import uuid as uuid_mod
 from typing import Any, Optional
 from uuid import UUID
 
@@ -22,6 +23,7 @@ from sqlalchemy import select
 
 from connectors.github import GitHubConnector
 from connectors.hubspot import HubSpotConnector
+from connectors.slack import SlackConnector
 from connectors.registry import Capability, discover_connectors
 from api.auth_middleware import AuthContext, get_current_auth, require_global_admin
 from api.routes.auth import _can_administer_org
@@ -29,6 +31,8 @@ from models.database import get_admin_session, get_session
 from models.user import User
 from models.integration import Integration
 from models.organization import Organization
+from models.org_member import OrgMember
+from models.external_identity_mapping import ExternalIdentityMapping
 from models.agent_task import AgentTask
 from models.conversation import Conversation
 from models.workflow import Workflow, WorkflowRun
@@ -1180,6 +1184,210 @@ async def match_github_users(
         "backfilled_rows": backfilled,
         "details": match_results,
     }
+
+
+# ── Identity mapping wizard endpoints ────────────────────────────────
+
+
+class ExternalUserRow(BaseModel):
+    external_id: str
+    display_name: str
+    email: str | None = None
+    avatar_url: str | None = None
+    source: str
+    suggested_user_id: str | None = None
+    match_confidence: str | None = None
+
+
+class TeamMemberRow(BaseModel):
+    user_id: str
+    name: str | None = None
+    email: str | None = None
+    avatar_url: str | None = None
+
+
+class ListExternalUsersResponse(BaseModel):
+    external_users: list[ExternalUserRow]
+    team_members: list[TeamMemberRow]
+
+
+class IdentityMappingEntry(BaseModel):
+    external_id: str
+    user_id: str
+    source: str
+
+
+class SaveIdentityMappingsRequest(BaseModel):
+    mappings: list[IdentityMappingEntry]
+
+
+class SaveIdentityMappingsResponse(BaseModel):
+    saved: int
+
+
+def _auto_match_users(
+    external_users: list[dict[str, Any]],
+    team_members: list[TeamMemberRow],
+) -> list[ExternalUserRow]:
+    """Match external users to team members by email and name."""
+    email_to_member: dict[str, TeamMemberRow] = {
+        m.email.strip().lower(): m for m in team_members if m.email
+    }
+    name_to_member: dict[str, TeamMemberRow] = {
+        m.name.strip().lower(): m for m in team_members if m.name
+    }
+
+    rows: list[ExternalUserRow] = []
+    for ext in external_users:
+        suggested_id: str | None = None
+        confidence: str | None = None
+
+        ext_email: str | None = ext.get("email")
+        if ext_email:
+            matched: TeamMemberRow | None = email_to_member.get(ext_email.strip().lower())
+            if matched:
+                suggested_id = matched.user_id
+                confidence = "email"
+
+        if suggested_id is None:
+            ext_name: str = (ext.get("display_name") or "").strip().lower()
+            if ext_name:
+                name_matched: TeamMemberRow | None = name_to_member.get(ext_name)
+                if name_matched:
+                    suggested_id = name_matched.user_id
+                    confidence = "name"
+
+        rows.append(ExternalUserRow(
+            external_id=ext["external_id"],
+            display_name=ext.get("display_name", ext["external_id"]),
+            email=ext.get("email"),
+            avatar_url=ext.get("avatar_url"),
+            source=ext.get("source", ""),
+            suggested_user_id=suggested_id,
+            match_confidence=confidence,
+        ))
+    return rows
+
+
+@router.post("/{organization_id}/{provider}/list-external-users")
+async def list_external_users(
+    organization_id: str,
+    provider: str,
+    auth: AuthContext = Depends(get_current_auth),
+) -> ListExternalUsersResponse:
+    """
+    Fetch external users from a provider and auto-match to team members.
+
+    Used by the identity mapping wizard during connector setup.
+    """
+    _ensure_org_path_matches_auth(organization_id, auth)
+    org_uuid: UUID
+    try:
+        org_uuid = UUID(organization_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid organization ID")
+
+    user_id_str: str = str(auth.user_id) if auth.user_id else ""
+
+    # Fetch external users from provider
+    external_users: list[dict[str, Any]]
+    if provider == "github":
+        connector: GitHubConnector = GitHubConnector(organization_id, user_id_str)
+        external_users = await connector.list_external_users()
+    elif provider == "slack":
+        slack_connector: SlackConnector = SlackConnector(organization_id, user_id_str)
+        external_users = await slack_connector.list_external_users()
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Identity mapping not supported for provider: {provider}",
+        )
+
+    # Load team members for matching — extract scalars inside session
+    team_member_rows: list[TeamMemberRow] = []
+    async with get_session(organization_id=organization_id) as session:
+        member_sub = select(OrgMember.user_id).where(
+            OrgMember.organization_id == org_uuid,
+            OrgMember.status.in_(("active", "onboarding")),
+        )
+        result = await session.execute(
+            select(User).where(
+                User.id.in_(member_sub),
+                User.is_guest.is_(False),
+            )
+        )
+        for u in result.scalars().all():
+            team_member_rows.append(TeamMemberRow(
+                user_id=str(u.id),
+                name=u.name,
+                email=u.email,
+                avatar_url=u.avatar_url,
+            ))
+
+    matched_rows: list[ExternalUserRow] = _auto_match_users(external_users, team_member_rows)
+
+    return ListExternalUsersResponse(
+        external_users=matched_rows,
+        team_members=team_member_rows,
+    )
+
+
+@router.post("/{organization_id}/{provider}/save-identity-mappings")
+async def save_identity_mappings(
+    organization_id: str,
+    provider: str,
+    body: SaveIdentityMappingsRequest,
+    auth: AuthContext = Depends(get_current_auth),
+) -> SaveIdentityMappingsResponse:
+    """
+    Save user-confirmed identity mappings from the setup wizard.
+
+    Bulk-upserts into user_mappings_for_identity with match_source='setup_wizard'.
+    """
+    _ensure_org_path_matches_auth(organization_id, auth)
+    org_uuid: UUID
+    try:
+        org_uuid = UUID(organization_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid organization ID")
+
+    saved_count: int = 0
+
+    async with get_session(organization_id=organization_id) as session:
+        for entry in body.mappings:
+            user_uuid: UUID
+            try:
+                user_uuid = UUID(entry.user_id)
+            except ValueError:
+                continue
+
+            # Check if mapping already exists for this (org, external_id, source)
+            existing = await session.execute(
+                select(ExternalIdentityMapping).where(
+                    ExternalIdentityMapping.organization_id == org_uuid,
+                    ExternalIdentityMapping.external_userid == entry.external_id,
+                    ExternalIdentityMapping.source == entry.source,
+                ).limit(1)
+            )
+            mapping: ExternalIdentityMapping | None = existing.scalar_one_or_none()
+
+            if mapping:
+                mapping.user_id = user_uuid
+                mapping.match_source = "setup_wizard"
+            else:
+                session.add(ExternalIdentityMapping(
+                    id=uuid_mod.uuid4(),
+                    organization_id=org_uuid,
+                    user_id=user_uuid,
+                    external_userid=entry.external_id,
+                    source=entry.source,
+                    match_source="setup_wizard",
+                ))
+            saved_count += 1
+
+        await session.commit()
+
+    return SaveIdentityMappingsResponse(saved=saved_count)
 
 
 # Legacy endpoint for backwards compatibility

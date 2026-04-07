@@ -2796,6 +2796,7 @@ class ConfirmConnectionRequest(BaseModel):
     connection_id: str
     organization_id: str
     user_id: str  # Required - all integrations are user-scoped
+    skip_initial_sync: bool = False
 
 
 @router.post("/integrations/confirm")
@@ -3000,8 +3001,9 @@ async def confirm_integration(
         await session.commit()
 
     # Trigger initial sync in background (we use defaults, no sharing modal)
+    # skip_initial_sync allows setup wizards (e.g. identity mapping) to defer
     user_id_str = str(user_uuid) if user_uuid else ""
-    if user_id_str:
+    if user_id_str and not request.skip_initial_sync:
         background_tasks.add_task(
             run_initial_sync,
             str(org_uuid),

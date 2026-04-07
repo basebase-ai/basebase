@@ -39,6 +39,7 @@ const ApolloIcon: IconType = ({ className, ...props }) => (
 import { API_BASE, apiRequest, getAuthenticatedRequestHeaders } from '../lib/api';
 import { useAppStore, useIntegrations, useIntegrationsLoading, type Integration, type SyncStats } from '../store';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { IdentityMappingWizard } from './IdentityMappingWizard';
 
 // Icon map for integration providers
 const ICON_MAP: Record<string, IconType> = {
@@ -407,6 +408,7 @@ export function DataSources(): JSX.Element {
   const [slackVerifyCodeLoading, setSlackVerifyCodeLoading] = useState<boolean>(false);
   const [showSlackVerificationModal, setShowSlackVerificationModal] = useState(false);
   const [showConnectModal, setShowConnectModal] = useState(false);
+  const [identityMappingProvider, setIdentityMappingProvider] = useState<string | null>(null);
   const [connectSearch, setConnectSearch] = useState('');
   const [showCodeSandboxWarning, setShowCodeSandboxWarning] = useState(false);
 
@@ -759,6 +761,7 @@ export function DataSources(): JSX.Element {
       await fetchGitHubTrackedRepos();
       void fetchIntegrations();
       setGithubReposExpanded(false);
+      setIdentityMappingProvider("github");
     } catch (e) {
       setGithubReposError(e instanceof Error ? e.message : 'Failed to save');
     } finally {
@@ -928,6 +931,7 @@ export function DataSources(): JSX.Element {
             const eventData = event as { type: string; connectionId?: string; connection_id?: string; payload?: { connectionId?: string } };
             const nangoConnectionId = eventData.connectionId || eventData.connection_id || eventData.payload?.connectionId || connection_id;
 
+            const shouldDeferSync: boolean = provider === "slack" || provider === "github";
             try {
               const confirmResponse = await fetch(`${API_BASE}/auth/integrations/confirm`, {
                 method: 'POST',
@@ -937,6 +941,7 @@ export function DataSources(): JSX.Element {
                   connection_id: nangoConnectionId,
                   organization_id: organizationId,
                   user_id: userId,
+                  skip_initial_sync: shouldDeferSync,
                 }),
               });
 
@@ -949,6 +954,10 @@ export function DataSources(): JSX.Element {
 
               await confirmResponse.json();
               await fetchIntegrations();
+
+              if (provider === "slack") {
+                setIdentityMappingProvider("slack");
+              }
             } catch (confirmError) {
               console.error('Error confirming integration:', confirmError);
             }
@@ -2854,6 +2863,38 @@ export function DataSources(): JSX.Element {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Identity Mapping Wizard */}
+      {identityMappingProvider && organizationId && (
+        <IdentityMappingWizard
+          organizationId={organizationId}
+          provider={identityMappingProvider}
+          onComplete={async () => {
+            const provider: string = identityMappingProvider;
+            setIdentityMappingProvider(null);
+            if (organizationId) {
+              const authHeaders = await getAuthenticatedRequestHeaders();
+              void fetch(`${API_BASE}/sync/${organizationId}/${provider}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders },
+              });
+            }
+            void fetchIntegrations();
+          }}
+          onSkip={async () => {
+            const provider: string = identityMappingProvider;
+            setIdentityMappingProvider(null);
+            if (organizationId) {
+              const authHeaders = await getAuthenticatedRequestHeaders();
+              void fetch(`${API_BASE}/sync/${organizationId}/${provider}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders },
+              });
+            }
+            void fetchIntegrations();
+          }}
+        />
       )}
 
     </div>
