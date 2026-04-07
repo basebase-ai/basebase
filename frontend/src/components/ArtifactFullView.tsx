@@ -10,6 +10,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { apiRequest } from "../lib/api";
 import { useAppStore, useUIStore } from "../store";
 import { ArtifactViewer } from "./ArtifactViewer";
+import type { VisibilityLevel } from "./VisibilitySelector";
 
 interface ArtifactApiResponse {
   id: string;
@@ -24,6 +25,7 @@ interface ArtifactApiResponse {
   message_id: string | null;
   created_at: string | null;
   user_id: string | null;
+  visibility?: string;
 }
 
 // Map API snake_case to ArtifactViewer camelCase
@@ -110,6 +112,11 @@ export function ArtifactFullView({
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState<boolean>(false);
+  const [visibility, setVisibility] = useState<VisibilityLevel>("team");
+  const [ownerUserId, setOwnerUserId] = useState<string | null>(null);
+  const [visBusy, setVisBusy] = useState<boolean>(false);
+  const [menuOpen, setMenuOpen] = useState<boolean>(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // Search highlighting
   const documentSearchTerm = useUIStore((s) => s.documentSearchTerm);
@@ -118,6 +125,7 @@ export function ArtifactFullView({
   const contentRef = useRef<HTMLDivElement>(null);
 
   const setCurrentView = useAppStore((s) => s.setCurrentView);
+  const user = useAppStore((s) => s.user);
 
   const fetchArtifact = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -130,6 +138,8 @@ export function ArtifactFullView({
       setArtifact(null);
     } else {
       setArtifact(toFileArtifact(resp.data));
+      setVisibility((resp.data.visibility as VisibilityLevel) ?? "team");
+      setOwnerUserId(resp.data.user_id);
     }
     setLoading(false);
   }, [artifactId]);
@@ -187,6 +197,17 @@ export function ArtifactFullView({
     marks[clamped]?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, []);
 
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onClickOutside = (e: MouseEvent): void => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [menuOpen]);
+
   const organization = useAppStore((s) => s.organization);
   const organizations = useAppStore((s) => s.organizations);
   const orgHandle: string | null =
@@ -196,10 +217,39 @@ export function ArtifactFullView({
   const prefix: string = orgHandle ? `/${orgHandle}` : "";
 
   const handleCopyLink = async (): Promise<void> => {
-    const url: string = `${window.location.origin}${prefix}/artifacts/${artifactId}`;
+    const isPublic: boolean = visibility === "public";
+    const url: string = isPublic
+      ? `${window.location.origin}/public/artifacts/${artifactId}`
+      : `${window.location.origin}${prefix}/artifacts/${artifactId}`;
     await navigator.clipboard.writeText(url);
     setLinkCopied(true);
     setTimeout(() => setLinkCopied(false), 2000);
+  };
+
+  const isOwner: boolean =
+    Boolean(user?.id) && Boolean(ownerUserId) && user?.id === ownerUserId;
+
+  const handleVisibilityChange = async (next: VisibilityLevel): Promise<void> => {
+    if (next === "public") {
+      const ok: boolean = window.confirm(
+        "Anyone on the internet can view this document without signing in. Continue?",
+      );
+      if (!ok) return;
+    }
+    const prev: VisibilityLevel = visibility;
+    setVisibility(next);
+    setVisBusy(true);
+    const resp = await apiRequest<{ visibility: string }>(
+      `/artifacts/${artifactId}/visibility`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ visibility: next }),
+      },
+    );
+    setVisBusy(false);
+    if (resp.error) {
+      setVisibility(prev);
+    }
   };
 
   const goBack = (): void => {
@@ -227,65 +277,115 @@ export function ArtifactFullView({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-surface-700 bg-surface-900 flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={goBack}
-            className="text-surface-400 hover:text-surface-200 transition-colors"
-            title="Back to Documents"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </button>
-          <div>
-            <h1 className="text-base font-semibold text-surface-100">
-              {artifact.title}
-            </h1>
-            <p className="text-xs text-surface-400 mt-0.5 truncate max-w-md">
-              {artifact.filename}
-            </p>
-          </div>
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-surface-700 bg-surface-900 flex-shrink-0">
+        <button
+          onClick={goBack}
+          className="text-surface-400 hover:text-surface-200 transition-colors shrink-0"
+          title="Back to Documents"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-base font-semibold text-surface-100 truncate">
+            {artifact.title}
+          </h1>
+          <p className="text-xs text-surface-400 mt-0.5 truncate max-w-md">
+            {artifact.filename}
+          </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          {/* Search match navigator */}
-          {documentSearchTerm && matchTotal > 0 && (
-            <div className="flex items-center gap-1.5 text-xs text-surface-300">
-              <span>{matchIndex + 1} of {matchTotal}</span>
+        {/* Search match navigator */}
+        {documentSearchTerm && matchTotal > 0 && (
+          <div className="flex items-center gap-1.5 text-xs text-surface-300 shrink-0">
+            <span>{matchIndex + 1} of {matchTotal}</span>
+            <button
+              onClick={() => scrollToMatch(matchIndex - 1)}
+              disabled={matchIndex <= 0}
+              className="p-1 rounded hover:bg-surface-700 disabled:opacity-30 transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+              </svg>
+            </button>
+            <button
+              onClick={() => scrollToMatch(matchIndex + 1)}
+              disabled={matchIndex >= matchTotal - 1}
+              className="p-1 rounded hover:bg-surface-700 disabled:opacity-30 transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+          </div>
+        )}
+        {documentSearchTerm && matchTotal === 0 && (
+          <span className="text-xs text-surface-500 shrink-0">No matches</span>
+        )}
+
+        {/* Three-dot menu */}
+        <div ref={menuRef} className="relative shrink-0">
+          <button
+            onClick={() => setMenuOpen((p) => !p)}
+            className="flex items-center justify-center w-8 h-8 rounded-md hover:bg-surface-700 text-surface-400 hover:text-surface-200 transition-colors"
+            title="Options"
+          >
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+              <circle cx="10" cy="4" r="1.5" />
+              <circle cx="10" cy="10" r="1.5" />
+              <circle cx="10" cy="16" r="1.5" />
+            </svg>
+          </button>
+
+          {menuOpen && (
+            <div className="absolute right-0 top-full mt-1 w-56 rounded-lg bg-surface-800 border border-surface-600 shadow-xl z-50 py-1 text-xs">
+              {isOwner && (
+                <>
+                  <div className="px-3 py-1.5 text-[10px] font-semibold text-surface-500 uppercase tracking-wider">
+                    Visibility
+                  </div>
+                  {(["private", "team", "public"] as const).map((lvl) => {
+                    const label: string =
+                      lvl === "private" ? "Only me" : lvl === "team" ? "Team" : "Public";
+                    const active: boolean = visibility === lvl;
+                    return (
+                      <button
+                        key={lvl}
+                        type="button"
+                        disabled={visBusy}
+                        onClick={() => void handleVisibilityChange(lvl)}
+                        className={`w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors ${
+                          active
+                            ? "text-primary-400"
+                            : "text-surface-300 hover:bg-surface-700"
+                        } disabled:opacity-50`}
+                      >
+                        <span className="w-4 text-center">
+                          {active ? "✓" : ""}
+                        </span>
+                        {label}
+                      </button>
+                    );
+                  })}
+                  <div className="my-1 border-t border-surface-700" />
+                </>
+              )}
+
               <button
-                onClick={() => scrollToMatch(matchIndex - 1)}
-                disabled={matchIndex <= 0}
-                className="p-1 rounded hover:bg-surface-700 disabled:opacity-30 transition-colors"
+                type="button"
+                onClick={() => { void handleCopyLink(); setMenuOpen(false); }}
+                className="w-full text-left px-3 py-1.5 text-surface-300 hover:bg-surface-700 transition-colors flex items-center gap-2"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                 </svg>
-              </button>
-              <button
-                onClick={() => scrollToMatch(matchIndex + 1)}
-                disabled={matchIndex >= matchTotal - 1}
-                className="p-1 rounded hover:bg-surface-700 disabled:opacity-30 transition-colors"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
+                {linkCopied
+                  ? (visibility === "public" ? "Public link copied!" : "Link copied!")
+                  : "Copy link"}
               </button>
             </div>
           )}
-          {documentSearchTerm && matchTotal === 0 && (
-            <span className="text-xs text-surface-500">No matches</span>
-          )}
-
-          <button
-            onClick={() => void handleCopyLink()}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-surface-700 hover:bg-surface-600 text-surface-300 text-xs font-medium transition-colors"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-            </svg>
-            {linkCopied ? "Copied!" : "Copy link"}
-          </button>
         </div>
       </div>
 
