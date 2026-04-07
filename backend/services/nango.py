@@ -469,7 +469,16 @@ class NangoClient:
             payload: dict[str, Any] = {
                 "allowed_integrations": [integration_id],
             }
-            
+
+            if integration_id == "slack":
+                from connectors.slack_scopes import SLACK_USER_SCOPES
+
+                payload["integrations_config_defaults"] = {
+                    "slack": {
+                        "user_scopes": SLACK_USER_SCOPES,
+                    },
+                }
+
             # Set organization context (required for all connections)
             org_id = organization_id
             if not org_id and ":user:" in connection_id:
