@@ -528,11 +528,12 @@ export function AdminPanel(): JSX.Element {
   const [topConversationsLoading, setTopConversationsLoading] = useState<boolean>(true);
   const [topConversationsError, setTopConversationsError] = useState<string | null>(null);
   const [PlotComponent, setPlotComponent] = useState<typeof import('react-plotly.js').default | null>(null);
+  const [chartLoadError, setChartLoadError] = useState<boolean>(false);
 
   useEffect(() => {
     import('react-plotly.js')
       .then((mod) => setPlotComponent(() => mod.default))
-      .catch(() => console.error('Failed to load chart library'));
+      .catch(() => setChartLoadError(true));
   }, []);
 
   const fetchCreditUsage = useCallback(async (): Promise<void> => {
@@ -1234,6 +1235,9 @@ export function AdminPanel(): JSX.Element {
               )}
               {creditUsageError && (
                 <div className="text-center py-16 text-red-400">{creditUsageError}</div>
+              )}
+              {!creditUsageLoading && !creditUsageError && chartLoadError && (
+                <div className="text-center py-16 text-red-400">Failed to load chart library. Try refreshing the page.</div>
               )}
               {!creditUsageLoading && !creditUsageError && creditUsage && PlotComponent && (
                 <CreditUsageChart PlotComponent={PlotComponent} data={creditUsage} />
