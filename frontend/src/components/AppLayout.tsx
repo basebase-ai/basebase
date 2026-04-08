@@ -609,6 +609,24 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
   const adminPanelTab = useAppStore((state) => state.adminPanelTab);
   useEffect(() => {
     if (!urlInitialized || isSyncingFromUrlRef.current) return;
+    // Don't clobber URL while showing org-access error (path may still be /otherOrg/apps/...)
+    if (orgAccessError) return;
+    // Public app/artifact pages are outside org-prefixed routing
+    if (window.location.pathname.startsWith("/public/")) return;
+    // Failed org switch leaves active org unchanged; pathname may still be /otherHandle/apps|artifacts/id.
+    // Rewriting to the active org's home was overwriting the bar before public redirect or error UI.
+    if (orgHandle) {
+      const crossOrgAppArtifact = window.location.pathname.match(
+        /^\/([a-z0-9-]+)\/(apps|artifacts)\/([a-f0-9-]+)$/i,
+      );
+      const pathOrgSeg: string | undefined = crossOrgAppArtifact?.[1];
+      if (
+        pathOrgSeg !== undefined &&
+        pathOrgSeg.toLowerCase() !== orgHandle.toLowerCase()
+      ) {
+        return;
+      }
+    }
 
     let newPath: string;
     if (currentView === "admin") {
@@ -647,7 +665,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
     if (window.location.pathname !== newPath) {
       window.history.pushState({}, "", newPath);
     }
-  }, [currentChatId, currentAppId, currentArtifactId, currentView, adminPanelTab, urlInitialized, orgHandle, organization?.id, organization?.handle, organizations]);
+  }, [currentChatId, currentAppId, currentArtifactId, currentView, adminPanelTab, urlInitialized, orgHandle, organization?.id, organization?.handle, organizations, orgAccessError]);
   
   // Panels
   const [showOrgPanel, setShowOrgPanel] = useState(false);
