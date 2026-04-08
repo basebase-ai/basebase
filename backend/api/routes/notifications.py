@@ -3,6 +3,7 @@ Notification endpoints for in-app mention badges and unread indicators.
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
 from uuid import UUID
 
@@ -15,6 +16,7 @@ from models.database import get_session
 from models.notification import Notification
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class NotificationResponse(BaseModel):
@@ -57,21 +59,33 @@ async def list_notifications(
         query = query.order_by(Notification.created_at.desc()).limit(100)
         result = await session.execute(query)
         notifications = list(result.scalars().all())
+        # IMPORTANT: Build response payload inside the active session.
+        # get_session() always rolls back during cleanup to reset RLS context, and
+        # rollback expires ORM instances. Accessing notification fields after the
+        # context exits can trigger DetachedInstanceError / "not bound to a Session".
+        response_payload = [
+            NotificationResponse(
+                id=str(n.id),
+                type=n.type,
+                conversation_id=str(n.conversation_id),
+                actor_user_id=str(n.actor_user_id) if n.actor_user_id else None,
+                actor_name=None,
+                read=n.read,
+                created_at=n.created_at.isoformat() if n.created_at else "",
+            )
+            for n in notifications
+        ]
+        logger.debug(
+            "Listed %d notifications for user=%s org=%s unread_only=%s",
+            len(response_payload),
+            user_id,
+            org_id,
+            unread_only,
+        )
 
     # Resolve actor names (simplified: we don't join User here; actor_name stored at create time)
     # For now return without actor_name from DB - we'd need a join. Plan stores it in WS push.
-    return [
-        NotificationResponse(
-            id=str(n.id),
-            type=n.type,
-            conversation_id=str(n.conversation_id),
-            actor_user_id=str(n.actor_user_id) if n.actor_user_id else None,
-            actor_name=None,
-            read=n.read,
-            created_at=n.created_at.isoformat() if n.created_at else "",
-        )
-        for n in notifications
-    ]
+    return response_payload
 
 
 @router.post("/read")
