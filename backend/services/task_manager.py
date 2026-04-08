@@ -35,6 +35,33 @@ FANOUT_SEND_TIMEOUT_SECONDS = 1.5
 BroadcastCallback = Callable[[str], Coroutine[Any, Any, None]]
 
 
+async def _record_websocket_query_outcome(
+    *,
+    was_success: bool,
+    failure_reason: str | None,
+    conversation_id: str,
+    user_id: str,
+) -> None:
+    """Best-effort rolling success metric recording for web websocket turns."""
+    from services.query_outcome_metrics import normalize_failure_reason, record_query_outcome
+
+    try:
+        await record_query_outcome(
+            platform="web",
+            was_success=was_success,
+            failure_reason=normalize_failure_reason(failure_reason) if not was_success else None,
+            conversation_id=conversation_id,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to record websocket query outcome platform=web was_success=%s conversation_id=%s user_id=%s failure_reason=%s",
+            was_success,
+            conversation_id,
+            user_id,
+            failure_reason,
+        )
+
+
 class TaskManager:
     """
     Manages background agent tasks with WebSocket subscriptions.
@@ -217,6 +244,8 @@ class TaskManager:
         Streams output from the orchestrator, persists chunks to database,
         and broadcasts to subscribed WebSockets.
         """
+        was_success = False
+        failure_reason: str | None = None
         try:
             async with self._conversation_execution_lock(conversation_id):
                 orchestrator = ChatOrchestrator(
@@ -284,6 +313,7 @@ class TaskManager:
             })
             
             logger.info("Task %s completed successfully", task_id)
+            was_success = True
 
             # Broadcast final assistant message to other participants in shared conversations
             asyncio.create_task(
@@ -307,6 +337,7 @@ class TaskManager:
             
         except Exception as e:
             logger.exception("Task %s failed with error: %s", task_id, e)
+            failure_reason = str(e)
             await self._complete_task(task_id, "failed", str(e))
             await self._broadcast(task_id, {
                 "type": "task_complete",
@@ -317,6 +348,12 @@ class TaskManager:
             })
             
         finally:
+            await _record_websocket_query_outcome(
+                was_success=was_success,
+                failure_reason=failure_reason,
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
             # Clean up
             self._running_tasks.pop(task_id, None)
             self._task_org_ids.pop(task_id, None)
