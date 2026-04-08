@@ -908,6 +908,13 @@ class WorkspaceMessenger(BaseMessenger):
                 has_conversation: bool = await self._has_existing_conversation(message)
                 if not has_conversation:
                     logger.info(
+                        "[%s] no_existing_thread_conversation channel=%s thread=%s workspace=%s",
+                        self.meta.slug,
+                        message.messenger_context.get("channel_id"),
+                        message.messenger_context.get("thread_id") or message.messenger_context.get("thread_ts"),
+                        message.messenger_context.get("workspace_id"),
+                    )
+                    logger.info(
                         "[%s] Ignoring thread reply — no existing conversation for thread",
                         self.meta.slug,
                     )

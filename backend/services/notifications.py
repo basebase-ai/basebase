@@ -35,8 +35,21 @@ async def create_mention_notifications(
 
     if user_mentions:
         target_ids: list[str] = list({m["user_id"] for m in user_mentions})
+        logger.info(
+            "Creating mention notifications from explicit mentions conversation_id=%s actor_user_id=%s targets=%s",
+            conversation_id,
+            actor_user_id,
+            target_ids,
+        )
     else:
         target_ids = [uid for uid in participant_user_ids if uid != actor_user_id]
+        logger.info(
+            "Creating mention notifications from participants fallback conversation_id=%s actor_user_id=%s participants=%s targets=%s",
+            conversation_id,
+            actor_user_id,
+            participant_user_ids,
+            target_ids,
+        )
 
     if not target_ids:
         return
