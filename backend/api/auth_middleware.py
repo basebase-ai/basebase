@@ -708,6 +708,31 @@ async def require_global_admin(
     return auth
 
 
+async def require_global_admin_or_system_actor(
+    auth: AuthContext = Depends(get_current_auth),
+) -> AuthContext:
+    """
+    Require that the authenticated actor is either global admin or a system actor.
+
+    Usage:
+        @router.get("/admin-or-system-only")
+        async def route(auth: AuthContext = Depends(require_global_admin_or_system_actor)):
+            # Global admins and internal system actors can access
+    """
+    if auth.is_global_admin:
+        return auth
+
+    # Internal service actors can be represented by role/roles metadata.
+    actor_role = (auth.role or "").strip().lower()
+    if actor_role == "system":
+        return auth
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Global admin or system actor access required",
+    )
+
+
 async def verify_websocket_token(websocket: WebSocket) -> AuthContext:
     """
     Verify JWT for WebSocket connections.
