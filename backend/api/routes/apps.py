@@ -473,9 +473,8 @@ async def list_widgets(
             .order_by(App.updated_at.desc().nullslast())
         )
         apps = list(result.scalars().all())
-
-    return {
-        "widgets": [
+        # Build response inside the session context to avoid DetachedInstanceError
+        widgets = [
             {
                 "id": str(a.id),
                 "title": a.title,
@@ -483,7 +482,8 @@ async def list_widgets(
             }
             for a in apps
         ]
-    }
+
+    return {"widgets": widgets}
 
 
 @router.get("/widgets/{app_id}/screenshot")
