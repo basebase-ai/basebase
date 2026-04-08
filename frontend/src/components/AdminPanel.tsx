@@ -2227,7 +2227,7 @@ export function AdminPanel(): JSX.Element {
           <div className="space-y-6">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="rounded-xl border border-surface-800 bg-surface-900 p-4">
-                <div className="text-xs uppercase tracking-wide text-surface-500">Rolling success rate (15m)</div>
+                <div className="text-xs uppercase tracking-wide text-surface-500">Rolling success rate (30m)</div>
                 <div className="mt-2 text-2xl font-semibold text-surface-100">
                   {queryOutcomeRateLoading ? '…' : `${(queryOutcomeRate?.success_rate_pct ?? 0).toFixed(1)}%`}
                 </div>
@@ -2245,7 +2245,7 @@ export function AdminPanel(): JSX.Element {
                 </div>
               </div>
               <div className="rounded-xl border border-surface-800 bg-surface-900 p-4">
-                <div className="text-xs uppercase tracking-wide text-surface-500">Total queries (15m)</div>
+                <div className="text-xs uppercase tracking-wide text-surface-500">Total queries (30m)</div>
                 <div className="mt-2 text-2xl font-semibold text-surface-100">
                   {queryOutcomeRateLoading ? '…' : (queryOutcomeRate?.total_count ?? 0).toLocaleString()}
                 </div>
