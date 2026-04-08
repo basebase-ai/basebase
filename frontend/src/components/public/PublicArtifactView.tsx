@@ -1,5 +1,9 @@
 /**
  * Standalone public artifact page at /public/artifacts/:id (no auth).
+ *
+ * Global CSS locks html/body/#root to overflow:hidden + position:fixed
+ * for the app shell. Rather than fighting those styles, this component
+ * renders as a fixed full-screen overlay with its own scroll container.
  */
 
 import { useState, useEffect, useCallback } from "react";
@@ -50,7 +54,7 @@ export function PublicArtifactView({ artifactId }: PublicArtifactViewProps): JSX
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-surface-950">
+      <div className="fixed inset-0 flex items-center justify-center bg-surface-950">
         <div className="animate-spin w-8 h-8 border-2 border-surface-500 border-t-primary-500 rounded-full" />
       </div>
     );
@@ -58,7 +62,7 @@ export function PublicArtifactView({ artifactId }: PublicArtifactViewProps): JSX
 
   if (error || !data) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-surface-950 text-red-300 p-6">
+      <div className="fixed inset-0 flex items-center justify-center bg-surface-950 text-red-300 p-6">
         {error ?? "Not found"}
       </div>
     );
@@ -68,17 +72,19 @@ export function PublicArtifactView({ artifactId }: PublicArtifactViewProps): JSX
     (data.content_type as "text" | "markdown" | "pdf" | "chart") ?? "text";
 
   return (
-    <div className="min-h-screen bg-surface-950 p-4">
-      <ArtifactViewer
-        artifact={{
-          id: data.id,
-          title: data.title ?? "Untitled",
-          filename: data.filename ?? "artifact.txt",
-          contentType,
-          mimeType: data.mime_type ?? "text/plain",
-          content: data.content ?? undefined,
-        }}
-      />
+    <div className="fixed inset-0 bg-surface-950 overflow-auto">
+      <div className="p-4">
+        <ArtifactViewer
+          artifact={{
+            id: data.id,
+            title: data.title ?? "Untitled",
+            filename: data.filename ?? "artifact.txt",
+            contentType,
+            mimeType: data.mime_type ?? "text/plain",
+            content: data.content ?? undefined,
+          }}
+        />
+      </div>
     </div>
   );
 }
