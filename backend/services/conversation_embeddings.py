@@ -77,18 +77,31 @@ async def update_conversation_embedding(
     Returns True if the embedding was updated, False if skipped or on failure.
     """
     try:
+        conversation_title: str | None = None
+        current_count = 0
+        summary_text: str | None = None
+        recent_texts: list[str] = []
+
         async with get_session(organization_id=organization_id) as session:
             conv = await session.get(Conversation, conversation_id)
             if not conv:
                 logger.warning("Embedding: conversation %s not found", conversation_id)
                 return False
 
-            current_count: int = conv.message_count
+            conversation_title = conv.title
+            current_count = conv.message_count
             emb_count: int = conv.embedding_message_count
             if (current_count - emb_count) < _STALENESS_THRESHOLD:
+                logger.debug(
+                    "Embedding skipped for conversation %s (message_count=%d, embedding_message_count=%d, threshold=%d)",
+                    conversation_id,
+                    current_count,
+                    emb_count,
+                    _STALENESS_THRESHOLD,
+                )
                 return False
 
-            summary_text: str | None = (conv.summary or "").strip() or None
+            summary_text = (conv.summary or "").strip() or None
 
             result = await session.execute(
                 select(ChatMessageModel)
@@ -100,7 +113,6 @@ async def update_conversation_embedding(
                 .limit(_MAX_MESSAGES_FOR_RECENT)
             )
             user_messages = list(result.scalars().all())
-            recent_texts: list[str] = []
             total_chars = 0
             for msg in reversed(user_messages):
                 text = _extract_text_from_blocks(msg.content_blocks)
@@ -113,7 +125,7 @@ async def update_conversation_embedding(
                         break
 
         embedding_text = build_embedding_text(
-            title=conv.title,
+            title=conversation_title,
             summary_overall=summary_text,
             recent_user_texts=recent_texts,
         )
@@ -135,12 +147,18 @@ async def update_conversation_embedding(
             await session.commit()
 
         logger.info(
-            "Embedding updated for conversation %s (message_count=%d)",
+            "Embedding updated for conversation %s (message_count=%d, text_chars=%d, recent_messages=%d)",
             conversation_id,
             current_count,
+            len(embedding_text),
+            len(recent_texts),
         )
         return True
 
     except Exception:
-        logger.exception("Failed to update embedding for conversation %s", conversation_id)
+        logger.exception(
+            "Failed to update embedding for conversation %s in org %s",
+            conversation_id,
+            organization_id,
+        )
         return False
