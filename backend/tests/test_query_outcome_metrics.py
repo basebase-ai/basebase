@@ -42,8 +42,11 @@ def test_get_query_outcome_window_stats() -> None:
         def zcard(self, *_args, **_kwargs) -> None:
             return None
 
+        def zrangebyscore(self, *_args, **_kwargs) -> None:
+            return None
+
         async def execute(self) -> list[int]:
-            return [0, 0, 9, 1]
+            return [0, 0, 0, 9, 1, []]
 
     class _FakeRedis:
         def pipeline(self) -> _FakePipeline:
@@ -67,6 +70,7 @@ def test_get_query_outcome_window_stats() -> None:
     assert stats["failure_count"] == 1
     assert stats["total_count"] == 10
     assert stats["success_rate_pct"] == 90.0
+    assert stats["top_failure_reasons"] == []
 
 
 def test_get_query_outcome_window_stats_defaults_to_full_success_for_empty_window() -> None:
@@ -77,8 +81,11 @@ def test_get_query_outcome_window_stats_defaults_to_full_success_for_empty_windo
         def zcard(self, *_args, **_kwargs) -> None:
             return None
 
+        def zrangebyscore(self, *_args, **_kwargs) -> None:
+            return None
+
         async def execute(self) -> list[int]:
-            return [0, 0, 0, 0]
+            return [0, 0, 0, 0, 0, []]
 
     class _FakeRedis:
         def pipeline(self) -> _FakePipeline:
@@ -102,6 +109,7 @@ def test_get_query_outcome_window_stats_defaults_to_full_success_for_empty_windo
     assert stats["failure_count"] == 0
     assert stats["total_count"] == 0
     assert stats["success_rate_pct"] == 100.0
+    assert stats["top_failure_reasons"] == []
 
 
 def test_record_query_outcome_raises_incident_when_success_rate_at_or_below_25(
@@ -123,9 +131,12 @@ def test_record_query_outcome_raises_incident_when_success_rate_at_or_below_25(
         def zcard(self, *_args, **_kwargs) -> None:
             return None
 
+        def zrangebyscore(self, *_args, **_kwargs) -> None:
+            return None
+
         async def execute(self):
             if self._zcard_results:
-                return [0, 0, self._zcard_results.pop(0), self._zcard_results.pop(0)]
+                return [0, 0, 0, self._zcard_results.pop(0), self._zcard_results.pop(0), []]
             return [1, True]
 
     class _FakeRedis:
@@ -183,9 +194,12 @@ def test_record_query_outcome_clears_throttle_when_success_rate_recovers(monkeyp
         def zcard(self, *_args, **_kwargs) -> None:
             return None
 
+        def zrangebyscore(self, *_args, **_kwargs) -> None:
+            return None
+
         async def execute(self):
             if self._zcard_results:
-                return [0, 0, self._zcard_results.pop(0), self._zcard_results.pop(0)]
+                return [0, 0, 0, self._zcard_results.pop(0), self._zcard_results.pop(0), []]
             return [1, True]
 
     class _FakeRedis:
@@ -223,3 +237,8 @@ def test_record_query_outcome_clears_throttle_when_success_rate_recovers(monkeyp
     assert evaluate_calls == []
     assert incident_calls == []
     assert clear_calls == ["Rolling Query Success"]
+
+
+def test_normalize_failure_reason() -> None:
+    assert query_outcome_metrics.normalize_failure_reason(None) == "unknown_error"
+    assert query_outcome_metrics.normalize_failure_reason("  Timeout while calling provider: request id 123  ") == "timeout while calling provider"

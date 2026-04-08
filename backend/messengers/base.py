@@ -396,17 +396,23 @@ class BaseMessenger(ABC):
         error: Exception | None,
     ) -> None:
         """Persist query success/failure for rolling monitoring windows."""
-        from services.query_outcome_metrics import record_query_outcome
+        from services.query_outcome_metrics import normalize_failure_reason, record_query_outcome
 
         was_success = self._is_successful_query_outcome(result=result, error=error)
+        failure_reason = self._derive_failed_query_reason(result=result, error=error)
         try:
-            await record_query_outcome(platform=self.meta.slug, was_success=was_success)
+            await record_query_outcome(
+                platform=self.meta.slug,
+                was_success=was_success,
+                failure_reason=normalize_failure_reason(failure_reason) if not was_success else None,
+            )
         except Exception:
             logger.exception(
-                "[%s] Failed to record query outcome was_success=%s result=%s",
+                "[%s] Failed to record query outcome was_success=%s result=%s failure_reason=%s",
                 self.meta.slug,
                 was_success,
                 result,
+                failure_reason,
             )
 
     @staticmethod
@@ -428,6 +434,26 @@ class BaseMessenger(ABC):
         if status == "error" and result.get("error") == "insufficient_credits":
             return True
         return False
+
+    @staticmethod
+    def _derive_failed_query_reason(
+        *,
+        result: dict[str, Any] | None,
+        error: Exception | None,
+    ) -> str | None:
+        """Extract a short reason describing why a query failed."""
+        if error is not None:
+            return str(error)
+        if not result:
+            return "empty_result"
+
+        if isinstance(result.get("error"), str) and result.get("error"):
+            return str(result["error"])
+        if isinstance(result.get("reason"), str) and result.get("reason"):
+            return str(result["reason"])
+        if isinstance(result.get("status"), str) and result.get("status"):
+            return str(result["status"])
+        return "unknown_error"
 
     # ------------------------------------------------------------------
     # Helpers

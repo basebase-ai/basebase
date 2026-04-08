@@ -107,21 +107,27 @@ async def _get_slack_user_ids(
 async def _record_web_query_outcome(
     *,
     was_success: bool,
+    failure_reason: str | None,
     conversation_id: str | None,
     user_id: str,
 ) -> None:
     """Best-effort metric recording for web-app turns."""
-    from services.query_outcome_metrics import record_query_outcome
+    from services.query_outcome_metrics import normalize_failure_reason, record_query_outcome
 
     try:
-        await record_query_outcome(platform=_WEB_PLATFORM_SLUG, was_success=was_success)
+        await record_query_outcome(
+            platform=_WEB_PLATFORM_SLUG,
+            was_success=was_success,
+            failure_reason=normalize_failure_reason(failure_reason) if not was_success else None,
+        )
     except Exception:
         logger.exception(
-            "[chat] Failed to record query outcome platform=%s was_success=%s conversation_id=%s user_id=%s",
+            "[chat] Failed to record query outcome platform=%s was_success=%s conversation_id=%s user_id=%s failure_reason=%s",
             _WEB_PLATFORM_SLUG,
             was_success,
             conversation_id,
             user_id,
+            failure_reason,
         )
 
 
@@ -1143,11 +1149,13 @@ async def send_message(
         # Collect all chunks into a single response
         response_content = ""
         was_success = False
+        failure_reason: str | None = None
         try:
             async for chunk in orchestrator.process_message(request.content):
                 response_content += chunk
             was_success = True
         except Exception as exc:
+            failure_reason = str(exc)
             logger.exception(
                 "send_message turn processing failed conversation_id=%s user_id=%s",
                 conv_uuid,
@@ -1160,6 +1168,7 @@ async def send_message(
         finally:
             await _record_web_query_outcome(
                 was_success=was_success,
+                failure_reason=failure_reason,
                 conversation_id=str(conv_uuid) if conv_uuid else None,
                 user_id=auth.user_id_str,
             )
