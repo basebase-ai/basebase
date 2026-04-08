@@ -41,7 +41,6 @@ function SourceBadges({ sources }: { sources: string[] }): JSX.Element | null {
   if (sources.length === 0) return null;
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      <span className="text-xs text-surface-500 mr-0.5">Sources:</span>
       {sources.map((s) => {
         const display = CONNECTOR_DISPLAY[s];
         const label: string = display?.label ?? s;
@@ -242,7 +241,7 @@ export function DailyDigestGrid({ digestDate, onDigestDateChange }: DailyDigestG
   };
 
   return (
-    <div className="flex flex-col gap-4 min-h-[400px]">
+    <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <button
