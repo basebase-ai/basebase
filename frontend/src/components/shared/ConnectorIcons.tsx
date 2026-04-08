@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 /**
  * Shared connector icon + color config used by DataSources and DailyDigestGrid.
  */
