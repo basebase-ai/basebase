@@ -130,6 +130,7 @@ async def update_tool_result(
     result: dict[str, Any],
     status: str = "running",
     organization_id: str | None = None,
+    user_id: str | None = None,
 ) -> bool:
     """
     Update a tool call's result in an existing conversation message.
@@ -143,6 +144,7 @@ async def update_tool_result(
         result: The new result dict (can be partial progress or final)
         status: "running" for progress updates, "complete" when done
         organization_id: Organization ID for RLS context
+        user_id: User ID for RLS visibility context
         
     Returns:
         True if update succeeded, False otherwise
@@ -154,7 +156,7 @@ async def update_tool_result(
         status,
     )
     try:
-        async with get_session(organization_id=organization_id) as session:
+        async with get_session(organization_id=organization_id, user_id=user_id) as session:
             # Find the latest assistant message in this conversation
             query = (
                 select(ChatMessage)
@@ -538,7 +540,7 @@ class ChatOrchestrator:
         from models.user import User
 
         try:
-            async with get_session(organization_id=self.organization_id) as session:
+            async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
                 if self.user_id and (not self.user_name or not self.user_email):
                     result = await session.execute(
                         select(
@@ -584,7 +586,7 @@ class ChatOrchestrator:
         from models.integration import Integration
 
         try:
-            async with get_session(organization_id=self.organization_id) as session:
+            async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
                 result = await session.execute(
                     select(
                         Integration.connector,
@@ -710,7 +712,7 @@ class ChatOrchestrator:
         }
 
         try:
-            async with get_session(organization_id=self.organization_id) as session:
+            async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
                 # Load all memories for this org in one query, then split by entity_type
                 result = await session.execute(
                     select(Memory)
@@ -852,7 +854,7 @@ class ChatOrchestrator:
         from models.workflow import WorkflowRun
 
         try:
-            async with get_session(organization_id=self.organization_id) as session:
+            async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
                 result = await session.execute(
                     select(WorkflowRun.workflow_notes)
                     .where(WorkflowRun.workflow_id == UUID(workflow_id))
@@ -894,7 +896,7 @@ class ChatOrchestrator:
             return []
 
         try:
-            async with get_session(organization_id=self.organization_id) as session:
+            async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
                 query = (
                     select(Conversation)
                     .where(Conversation.organization_id == UUID(self.organization_id))
@@ -996,7 +998,7 @@ class ChatOrchestrator:
             conv_uuid = UUID(self.conversation_id) if self.conversation_id else None
             org_uuid = UUID(self.organization_id) if self.organization_id else None
             if conv_uuid and org_uuid:
-                async with get_session(organization_id=self.organization_id) as session:
+                async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
                     for aid in attachment_ids:
                         sf: StoredFile | None = retrieve_file(aid)
                         if sf is not None:
@@ -1613,6 +1615,8 @@ class ChatOrchestrator:
                     per_tool_ctx.update(self.workflow_context)
                 if self.conversation_id:
                     per_tool_ctx["conversation_id"] = self.conversation_id
+                if self.user_id:
+                    per_tool_ctx["user_id"] = self.user_id
                 if self._current_message_id:
                     per_tool_ctx["message_id"] = str(self._current_message_id)
                 per_tool_ctx["tool_id"] = tool_use["id"]
@@ -1802,7 +1806,7 @@ class ChatOrchestrator:
             user_uuid: UUID | None = UUID(self.user_id) if self.user_id else None
             org_uuid: UUID | None = UUID(self.organization_id) if self.organization_id else None
 
-            async with get_session(organization_id=self.organization_id) as session:
+            async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
                 session.add(
                     ChatMessage(
                         id=message_id,
@@ -1823,14 +1827,21 @@ class ChatOrchestrator:
     ) -> None:
         """Fire-and-forget wrapper for update_tool_result. Logs errors instead of raising."""
         try:
-            await update_tool_result(conversation_id, tool_id, result, "complete", org_id)
+            await update_tool_result(
+                conversation_id=conversation_id,
+                tool_id=tool_id,
+                result=result,
+                status="complete",
+                organization_id=org_id,
+                user_id=self.user_id,
+            )
         except Exception as e:
             logger.warning("[Orchestrator] Background tool result save failed: %s", e)
 
     async def _create_conversation(self) -> str:
         """Create a new conversation and return its ID."""
         user_uuid = UUID(self.user_id) if self.user_id else None
-        async with get_session(organization_id=self.organization_id) as session:
+        async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
             conversation = Conversation(
                 user_id=user_uuid,
                 organization_id=UUID(self.organization_id) if self.organization_id else None,
@@ -1853,7 +1864,7 @@ class ChatOrchestrator:
         if not self.conversation_id:
             return []
 
-        async with get_session(organization_id=self.organization_id) as session:
+        async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
             result = await session.execute(
                 select(ChatMessage)
                 .where(ChatMessage.conversation_id == UUID(self.conversation_id))
@@ -2060,7 +2071,7 @@ class ChatOrchestrator:
         blocks.append({"type": "text", "text": user_msg})
 
         message_id: UUID = pre_generated_message_id if pre_generated_message_id is not None else uuid4()
-        async with get_session(organization_id=self.organization_id) as session:
+        async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
             message = ChatMessage(
                 id=message_id,
                 conversation_id=conv_uuid,
@@ -2158,7 +2169,7 @@ class ChatOrchestrator:
             conv_uuid,
         )
 
-        async with get_session(organization_id=self.organization_id) as session:
+        async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
             if self._assistant_message_saved and self._current_message_id is not None:
                 # UPDATE the specific message we inserted during the early save.
                 # Using the exact ID avoids the old bug where "find latest assistant
@@ -2235,7 +2246,7 @@ class ChatOrchestrator:
         if not self.conversation_id:
             return
 
-        async with get_session(organization_id=self.organization_id) as session:
+        async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
             await session.execute(
                 update(Conversation)
                 .where(Conversation.id == UUID(self.conversation_id))
