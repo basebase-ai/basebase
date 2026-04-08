@@ -1419,6 +1419,7 @@ interface CreditDetailsModalProps {
 
 function CreditDetailsModal({ organizationHandle, details, loading, onClose }: CreditDetailsModalProps): JSX.Element {
   const [PlotComponent, setPlotComponent] = useState<typeof import('react-plotly.js').default | null>(null);
+  const [chartLoadError, setChartLoadError] = useState<boolean>(false);
   /** Filter "Usage by Chat" to conversations where this user consumed credits */
   const [chatFilterUserId, setChatFilterUserId] = useState<string | null>(null);
   /** Sort order for Usage by Chat */
@@ -1430,7 +1431,7 @@ function CreditDetailsModal({ organizationHandle, details, loading, onClose }: C
   useEffect(() => {
     import('react-plotly.js')
       .then((mod) => setPlotComponent(() => mod.default))
-      .catch(() => console.error('Failed to load chart library'));
+      .catch(() => setChartLoadError(true));
   }, []);
 
   const burndownData = useMemo(() => {
@@ -1658,6 +1659,10 @@ function CreditDetailsModal({ organizationHandle, details, loading, onClose }: C
                       }}
                       style={{ width: '100%' }}
                     />
+                  </div>
+                ) : chartLoadError ? (
+                  <div className="bg-surface-800/50 rounded-lg p-8 text-center text-red-400">
+                    Failed to load chart library. Try refreshing the page.
                   </div>
                 ) : burndownData ? (
                   <div className="bg-surface-800/50 rounded-lg p-8 text-center text-surface-400">

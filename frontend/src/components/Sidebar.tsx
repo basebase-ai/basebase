@@ -260,6 +260,9 @@ function OrgSwitcherSection({
 
   const handleEnterGlobalAdmin = (): void => {
     setShowDropdown(false);
+    useAuthStore.setState({
+      organizations: organizations.map((o) => ({ ...o, isActive: false })),
+    });
     onViewChange('admin');
   };
 
