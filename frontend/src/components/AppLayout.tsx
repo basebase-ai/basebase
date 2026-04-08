@@ -234,6 +234,10 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
     }))
   );
 
+  // Read directly from uiStore (not the merged facade) so subscription is reliable.
+  const orgAccessError = useUIStore((s) => s.orgAccessError);
+  const clearOrgAccessError = useUIStore((s) => s.clearOrgAccessError);
+
   const isSwitchingOrg: boolean = useIsSwitchingOrg();
 
   // Zustand: Get integrations for connected count badge
@@ -401,6 +405,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
   const syncStateFromUrl = useCallback(async (): Promise<void> => {
     isSyncingFromUrlRef.current = true;
     try {
+      useUIStore.setState({ orgAccessError: null });
       const path = window.location.pathname;
 
       const orgPrefixMatch = path.match(/^\/([a-z0-9-]+)(?:\/(.*))?$/);
@@ -426,15 +431,52 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
           await fetchUserOrganizations();
         }
       }
+      const subPath: string = orgPrefixMatch?.[2] ?? "";
+
+      // Helper: try public fallback then show org-access error.
+      const handleOrgAccessDenied = async (
+        handle: string,
+        orgName: string,
+      ): Promise<void> => {
+        const appMatchFail = subPath.match(/^apps\/([a-f0-9-]+)$/i);
+        const artifactMatchFail = subPath.match(/^artifacts?\/([a-f0-9-]+)$/i);
+        if (appMatchFail?.[1] || artifactMatchFail?.[1]) {
+          const appIdFail: string | undefined = appMatchFail?.[1];
+          const artifactIdFail: string | undefined = artifactMatchFail?.[1];
+          const endpoint: string = appIdFail
+            ? `/public/apps/${appIdFail}`
+            : `/public/artifacts/${artifactIdFail!}`;
+          const { data: publicData } = await apiRequest<Record<string, unknown>>(endpoint, {
+            method: "GET",
+          });
+          if (publicData) {
+            const fePath: string = appIdFail
+              ? `/public/apps/${appIdFail}`
+              : `/public/artifacts/${artifactIdFail!}`;
+            window.location.replace(fePath);
+            return;
+          }
+        }
+        useUIStore.setState({
+          orgAccessError: { handle, orgName },
+        });
+      };
+
       if (!targetOrg) {
+        await handleOrgAccessDenied(orgHandleFromPath, orgHandleFromPath);
         return;
       }
+
       const currentOrg = useAppStore.getState().organization;
+      let switchSucceeded: boolean = true;
       if (!currentOrg || currentOrg.id !== targetOrg.id) {
-        await switchActiveOrganization(targetOrg.id);
+        switchSucceeded = await switchActiveOrganization(targetOrg.id);
+      }
+      if (!switchSucceeded) {
+        await handleOrgAccessDenied(orgHandleFromPath, targetOrg.name);
+        return;
       }
 
-      const subPath: string = orgPrefixMatch?.[2] ?? "";
       if (subPath === "") {
         setCurrentChatId(null);
         setCurrentView("home");
@@ -575,6 +617,24 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
   const adminPanelTab = useAppStore((state) => state.adminPanelTab);
   useEffect(() => {
     if (!urlInitialized || isSyncingFromUrlRef.current) return;
+    // Don't clobber URL while showing org-access error (path may still be /otherOrg/apps/...)
+    if (orgAccessError) return;
+    // Public app/artifact pages are outside org-prefixed routing
+    if (window.location.pathname.startsWith("/public/")) return;
+    // Failed org switch leaves active org unchanged; pathname may still be /otherHandle/apps|artifacts/id.
+    // Rewriting to the active org's home was overwriting the bar before public redirect or error UI.
+    if (orgHandle) {
+      const crossOrgAppArtifact = window.location.pathname.match(
+        /^\/([a-z0-9-]+)\/(apps|artifacts)\/([a-f0-9-]+)$/i,
+      );
+      const pathOrgSeg: string | undefined = crossOrgAppArtifact?.[1];
+      if (
+        pathOrgSeg !== undefined &&
+        pathOrgSeg.toLowerCase() !== orgHandle.toLowerCase()
+      ) {
+        return;
+      }
+    }
 
     let newPath: string;
     if (currentView === "admin") {
@@ -613,7 +673,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
     if (window.location.pathname !== newPath) {
       window.history.pushState({}, "", newPath);
     }
-  }, [currentChatId, currentAppId, currentArtifactId, currentView, adminPanelTab, urlInitialized, orgHandle, organization?.id, organization?.handle, organizations]);
+  }, [currentChatId, currentAppId, currentArtifactId, currentView, adminPanelTab, urlInitialized, orgHandle, organization?.id, organization?.handle, organizations, orgAccessError]);
   
   // Panels
   const [showOrgPanel, setShowOrgPanel] = useState(false);
@@ -1666,6 +1726,21 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
     setCurrentChatId(null);
   }, [setCurrentChatId]);
 
+  const handleDismissOrgAccessError = useCallback((): void => {
+    clearOrgAccessError();
+    const state = useAppStore.getState();
+    const org = state.organization;
+    const handle: string | null =
+      org?.handle ??
+      state.organizations.find((o) => o.id === org?.id)?.handle ??
+      null;
+    const newPath: string = handle ? `/${handle}/` : "/";
+    window.history.pushState({}, "", newPath);
+    state.setCurrentView("home");
+    state.setCurrentAppId(null);
+    state.setCurrentChatId(null);
+  }, [clearOrgAccessError]);
+
   const isGlobalAdmin: boolean = useIsGlobalAdmin();
   const isOrgAdmin: boolean = useIsOrgAdmin();
 
@@ -1822,6 +1897,30 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
+        {orgAccessError ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+            <div className="max-w-md rounded-lg border border-surface-600 bg-surface-900/80 p-6 shadow-lg">
+              <h2 className="text-lg font-semibold text-surface-100">
+                You don&apos;t have access to this organization
+              </h2>
+              <p className="mt-3 text-sm text-surface-400 leading-relaxed">
+                This link points to{" "}
+                <span className="font-medium text-surface-200">{orgAccessError.orgName}</span>
+                {" "}
+                (<span className="text-surface-300">@{orgAccessError.handle}</span>). You need to be a
+                member of that team to open it here.
+              </p>
+              <button
+                type="button"
+                onClick={handleDismissOrgAccessError}
+                className="mt-6 inline-flex items-center justify-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-500 transition-colors"
+              >
+                Go to {organization.name}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
         {/* Release Stage Banner */}
         {RELEASE_STAGE.stage && showReleaseBanner && (
           <div className="flex-shrink-0 px-4 md:px-6 py-3 bg-primary-500/10 border-b border-primary-500/20">
@@ -1907,6 +2006,8 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
         )}
         {currentView === 'activity-log' && isOrgAdmin && (
           <ActivityLog />
+        )}
+          </>
         )}
       </main>
 
