@@ -398,6 +398,17 @@ class BaseMessenger(ABC):
         """Persist query success/failure for rolling monitoring windows."""
         from services.query_outcome_metrics import normalize_failure_reason, record_query_outcome
 
+        if (
+            result
+            and result.get("status") == "ignored"
+            and result.get("reason") == "no_existing_thread_conversation"
+        ):
+            logger.info(
+                "[%s] Skipping query outcome metrics for ignored no_existing_thread_conversation",
+                self.meta.slug,
+            )
+            return
+
         was_success = self._is_successful_query_outcome(result=result, error=error)
         failure_reason = self._derive_failed_query_reason(result=result, error=error)
         try:
