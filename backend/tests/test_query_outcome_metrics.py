@@ -62,8 +62,43 @@ def test_get_query_outcome_window_stats() -> None:
     finally:
         query_outcome_metrics.aioredis.from_url = original_from_url
 
-    assert stats["window_seconds"] == 900
+    assert stats["window_seconds"] == 1800
     assert stats["success_count"] == 9
     assert stats["failure_count"] == 1
     assert stats["total_count"] == 10
     assert stats["success_rate_pct"] == 90.0
+
+
+def test_get_query_outcome_window_stats_defaults_to_full_success_for_empty_window() -> None:
+    class _FakePipeline:
+        def zremrangebyscore(self, *_args, **_kwargs) -> None:
+            return None
+
+        def zcard(self, *_args, **_kwargs) -> None:
+            return None
+
+        async def execute(self) -> list[int]:
+            return [0, 0, 0, 0]
+
+    class _FakeRedis:
+        def pipeline(self) -> _FakePipeline:
+            return _FakePipeline()
+
+        async def __aenter__(self) -> "_FakeRedis":
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    original_from_url = query_outcome_metrics.aioredis.from_url
+    query_outcome_metrics.aioredis.from_url = lambda *_args, **_kwargs: _FakeRedis()
+    try:
+        stats = asyncio.run(query_outcome_metrics.get_query_outcome_window_stats())
+    finally:
+        query_outcome_metrics.aioredis.from_url = original_from_url
+
+    assert stats["window_seconds"] == 1800
+    assert stats["success_count"] == 0
+    assert stats["failure_count"] == 0
+    assert stats["total_count"] == 0
+    assert stats["success_rate_pct"] == 100.0

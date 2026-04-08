@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 async def get_query_outcome_rate(
     auth: AuthContext = Depends(require_global_admin),
 ) -> dict[str, float | int]:
-    """Return rolling query success/failure counts for the last 15 minutes."""
+    """Return rolling query success/failure counts for the last 30 minutes."""
     return await get_query_outcome_window_stats()
 
 

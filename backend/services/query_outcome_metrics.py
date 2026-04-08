@@ -10,13 +10,13 @@ from config import get_redis_connection_kwargs, settings
 
 logger = logging.getLogger(__name__)
 
-_WINDOW_SECONDS = 15 * 60
+_WINDOW_SECONDS = 30 * 60
 _SUCCESS_KEY = "monitoring:query_outcomes:success"
 _FAILURE_KEY = "monitoring:query_outcomes:failure"
 
 
 async def get_query_outcome_window_stats() -> dict[str, float | int]:
-    """Return rolling 15-minute query outcome stats from Redis."""
+    """Return rolling 30-minute query outcome stats from Redis."""
     timestamp = int(time.time())
     window_start = timestamp - _WINDOW_SECONDS
     redis_client = aioredis.from_url(
@@ -35,7 +35,7 @@ async def get_query_outcome_window_stats() -> dict[str, float | int]:
     success_total = int(success_count or 0)
     failure_total = int(failure_count or 0)
     total = success_total + failure_total
-    success_pct = ((success_total / total) * 100.0) if total else 0.0
+    success_pct = ((success_total / total) * 100.0) if total else 100.0
     return {
         "window_seconds": _WINDOW_SECONDS,
         "success_count": success_total,
@@ -46,7 +46,7 @@ async def get_query_outcome_window_stats() -> dict[str, float | int]:
 
 
 async def record_query_outcome(*, platform: str, was_success: bool) -> None:
-    """Record one query outcome and maintain a rolling 15-minute success pct."""
+    """Record one query outcome and maintain a rolling 30-minute success pct."""
     timestamp = int(time.time())
     score = float(timestamp)
     bucket_key = _SUCCESS_KEY if was_success else _FAILURE_KEY
