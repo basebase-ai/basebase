@@ -56,6 +56,27 @@ _SUDO_BLOCK_MESSAGE: str = (
     "Run commands without elevated privileges."
 )
 
+_MAX_EGRESS_BYTES: int = 1_000_000
+_NETWORK_EGRESS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"(^|[;&|()\s])curl\b", re.IGNORECASE), "curl"),
+    (re.compile(r"(^|[;&|()\s])wget\b", re.IGNORECASE), "wget"),
+    (re.compile(r"(^|[;&|()\s])ftp\b", re.IGNORECASE), "ftp"),
+    (re.compile(r"(^|[;&|()\s])sftp\b", re.IGNORECASE), "sftp"),
+    (re.compile(r"(^|[;&|()\s])scp\b", re.IGNORECASE), "scp"),
+    (re.compile(r"(^|[;&|()\s])rsync\b", re.IGNORECASE), "rsync"),
+    (re.compile(r"(^|[;&|()\s])nc\b", re.IGNORECASE), "nc"),
+    (re.compile(r"(^|[;&|()\s])ncat\b", re.IGNORECASE), "ncat"),
+    (re.compile(r"(^|[;&|()\s])netcat\b", re.IGNORECASE), "netcat"),
+    (re.compile(r"(^|[;&|()\s])socat\b", re.IGNORECASE), "socat"),
+    (re.compile(r"(^|[;&|()\s])ssh\b", re.IGNORECASE), "ssh"),
+    (re.compile(r"/dev/tcp/", re.IGNORECASE), "/dev/tcp"),
+)
+_NETWORK_EGRESS_BLOCK_MESSAGE: str = (
+    "Outbound network transfer commands are disabled in the code sandbox to enforce "
+    f"a strict <= {_MAX_EGRESS_BYTES:,} bytes external egress policy. "
+    "FTP/tunneling and similar exfiltration channels are blocked."
+)
+
 
 def get_blocked_package_install_reason(command: str) -> str | None:
     """Return a user-facing reason when a sandbox command violates command policy."""
@@ -71,6 +92,11 @@ def get_blocked_package_install_reason(command: str) -> str | None:
         if pattern.search(normalized_command):
             logger.info("[Sandbox] Blocked package installation attempt via %s", label)
             return f"{_PACKAGE_INSTALL_BLOCK_MESSAGE} Blocked command pattern: {label}."
+
+    for pattern, label in _NETWORK_EGRESS_PATTERNS:
+        if pattern.search(normalized_command):
+            logger.info("[Sandbox] Blocked outbound network command attempt via %s", label)
+            return f"{_NETWORK_EGRESS_BLOCK_MESSAGE} Blocked command pattern: {label}."
 
     return None
 
