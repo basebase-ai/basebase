@@ -68,7 +68,7 @@ export function PublicArtifactView({ artifactId }: PublicArtifactViewProps): JSX
     (data.content_type as "text" | "markdown" | "pdf" | "chart") ?? "text";
 
   return (
-    <div className="min-h-screen bg-surface-950 p-4">
+    <div className="min-h-screen bg-surface-950 p-4 overflow-auto">
       <ArtifactViewer
         artifact={{
           id: data.id,
