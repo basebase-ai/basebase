@@ -54,6 +54,10 @@ interface QueryOutcomeRateResponse {
   failure_count: number;
   total_count: number;
   success_rate_pct: number;
+  top_failure_reasons: Array<{
+    reason: string;
+    count: number;
+  }>;
 }
 
 function formatRelativeTime(iso: string): string {
@@ -500,6 +504,7 @@ export function AdminPanel(): JSX.Element {
   const [queryOutcomeRate, setQueryOutcomeRate] = useState<QueryOutcomeRateResponse | null>(null);
   const [queryOutcomeRateLoading, setQueryOutcomeRateLoading] = useState<boolean>(true);
   const [queryOutcomeRateError, setQueryOutcomeRateError] = useState<string | null>(null);
+  const [showFailureReasons, setShowFailureReasons] = useState<boolean>(false);
 
   // Global sync state
   const [syncing, setSyncing] = useState<boolean>(false);
@@ -2256,6 +2261,43 @@ export function AdminPanel(): JSX.Element {
                 {queryOutcomeRateError}
               </div>
             )}
+            <div className="rounded-xl border border-surface-800 bg-surface-900 p-4">
+              <button
+                type="button"
+                onClick={() => setShowFailureReasons((prev) => !prev)}
+                className="flex w-full items-center justify-between text-left"
+              >
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-surface-500">Failed query reasons (30m)</div>
+                  <div className="mt-1 text-sm text-surface-300">
+                    {queryOutcomeRateLoading
+                      ? 'Loading…'
+                      : `${queryOutcomeRate?.top_failure_reasons?.length ?? 0} reason${(queryOutcomeRate?.top_failure_reasons?.length ?? 0) === 1 ? '' : 's'} captured`}
+                  </div>
+                </div>
+                <svg className={`h-4 w-4 text-surface-400 transition-transform ${showFailureReasons ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {showFailureReasons && (
+                <div className="mt-4 rounded-lg border border-surface-800 bg-surface-950/60">
+                  {queryOutcomeRateLoading ? (
+                    <div className="p-3 text-sm text-surface-400">Loading failure reasons…</div>
+                  ) : (queryOutcomeRate?.top_failure_reasons?.length ?? 0) === 0 ? (
+                    <div className="p-3 text-sm text-surface-400">No failed query reasons in the last 30 minutes.</div>
+                  ) : (
+                    <ul className="divide-y divide-surface-800">
+                      {(queryOutcomeRate?.top_failure_reasons ?? []).map((entry) => (
+                        <li key={entry.reason} className="flex items-center justify-between gap-4 p-3 text-sm">
+                          <span className="truncate text-surface-200" title={entry.reason}>{entry.reason}</span>
+                          <span className="rounded bg-surface-800 px-2 py-0.5 text-xs text-surface-300">{entry.count.toLocaleString()}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
             {/* Search & Actions */}
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="relative w-full flex-1 sm:max-w-md">
