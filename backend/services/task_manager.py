@@ -59,6 +59,7 @@ class TaskManager:
         
         # Organization ID per task (for RLS context)
         self._task_org_ids: dict[str, str] = {}
+        self._task_user_ids: dict[str, str] = {}
         
         # WebSocket subscriptions: task_id -> set of websockets
         self._subscriptions: dict[str, set[WebSocket]] = {}
@@ -157,7 +158,7 @@ class TaskManager:
         task_id = str(uuid4())
         
         # Create database record (with RLS context)
-        async with get_session(organization_id=organization_id) as session:
+        async with get_session(organization_id=organization_id, user_id=user_id) as session:
             agent_task = AgentTask(
                 id=UUID(task_id),
                 conversation_id=UUID(conversation_id),
@@ -193,6 +194,7 @@ class TaskManager:
         
         self._running_tasks[task_id] = asyncio_task
         self._task_org_ids[task_id] = organization_id
+        self._task_user_ids[task_id] = user_id
         
         return task_id
     
@@ -318,6 +320,7 @@ class TaskManager:
             # Clean up
             self._running_tasks.pop(task_id, None)
             self._task_org_ids.pop(task_id, None)
+            self._task_user_ids.pop(task_id, None)
     
     async def _append_chunk_safe(self, task_id: str, chunk: dict[str, Any]) -> None:
         """Fire-and-forget wrapper for _append_chunk that logs errors instead of raising."""
@@ -329,7 +332,8 @@ class TaskManager:
     async def _append_chunk(self, task_id: str, chunk: dict[str, Any]) -> None:
         """Append a chunk to the task's output_chunks in the database."""
         org_id = self._task_org_ids.get(task_id)
-        async with get_session(organization_id=org_id) as session:
+        user_id = self._task_user_ids.get(task_id)
+        async with get_session(organization_id=org_id, user_id=user_id) as session:
             # Use raw SQL for atomic append to JSONB array
             await session.execute(
                 update(AgentTask)
@@ -349,7 +353,8 @@ class TaskManager:
     ) -> None:
         """Mark a task as completed/failed/cancelled in the database."""
         org_id = self._task_org_ids.get(task_id)
-        async with get_session(organization_id=org_id) as session:
+        user_id = self._task_user_ids.get(task_id)
+        async with get_session(organization_id=org_id, user_id=user_id) as session:
             values: dict[str, Any] = {
                 "status": status,
                 "completed_at": datetime.utcnow(),
@@ -375,7 +380,7 @@ class TaskManager:
         try:
             from api.websockets import broadcast_conversation_message
 
-            async with get_session(organization_id=organization_id) as session:
+            async with get_session(organization_id=organization_id, user_id=exclude_user_id) as session:
                 conv_row = await session.execute(
                     select(Conversation.scope, Conversation.participating_user_ids).where(
                         Conversation.id == UUID(conversation_id)
@@ -387,7 +392,7 @@ class TaskManager:
             scope: str = row[0]
             participant_ids: list[str] = [str(uid) for uid in row[1]]
 
-            async with get_session(organization_id=organization_id) as session:
+            async with get_session(organization_id=organization_id, user_id=exclude_user_id) as session:
                 msg_result = await session.execute(
                     select(ChatMessage)
                     .where(
@@ -526,7 +531,7 @@ class TaskManager:
         Returns:
             List of task state dictionaries
         """
-        async with get_session(organization_id=organization_id) as session:
+        async with get_session(organization_id=organization_id, user_id=user_id) as session:
             result = await session.execute(
                 select(AgentTask)
                 .join(Conversation, AgentTask.conversation_id == Conversation.id)
@@ -558,7 +563,8 @@ class TaskManager:
         """
         # Use cached org_id if not provided
         org_id = organization_id or self._task_org_ids.get(task_id)
-        async with get_session(organization_id=org_id) as session:
+        user_id = self._task_user_ids.get(task_id)
+        async with get_session(organization_id=org_id, user_id=user_id) as session:
             task = await session.get(AgentTask, UUID(task_id))
             if task:
                 return task.to_state_dict()
@@ -585,7 +591,8 @@ class TaskManager:
         """
         # Use cached org_id if not provided
         org_id = organization_id or self._task_org_ids.get(task_id)
-        async with get_session(organization_id=org_id) as session:
+        user_id = self._task_user_ids.get(task_id)
+        async with get_session(organization_id=org_id, user_id=user_id) as session:
             task = await session.get(AgentTask, UUID(task_id))
             if not task or not task.output_chunks:
                 return []
@@ -634,6 +641,7 @@ class TaskManager:
                         asyncio_task.cancel()
                     self._running_tasks.pop(task_id_str, None)
                     self._task_org_ids.pop(task_id_str, None)
+                    self._task_user_ids.pop(task_id_str, None)
                     await self._broadcast(
                         task_id_str,
                         {

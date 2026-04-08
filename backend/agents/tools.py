@@ -150,6 +150,7 @@ class ToolProgressUpdater:
     ) -> None:
         self.conversation_id: str | None = context.get("conversation_id") if context else None
         self.tool_id: str | None = context.get("tool_id") if context else None
+        self.user_id: str | None = context.get("user_id") if context else None
         self.organization_id = organization_id
         
     @property
@@ -180,6 +181,7 @@ class ToolProgressUpdater:
             result,
             status,
             self.organization_id,
+            self.user_id,
         )
 
 
