@@ -34,6 +34,16 @@ def _make_anthropic_response(text: str):
     return response
 
 
+def _make_completed_message(text: str):
+    """Build a mock CompletedMessage for the adapter layer."""
+    from services.llm_adapter import CompletedMessage, ContentBlock
+    return CompletedMessage(
+        content_blocks=[ContentBlock(type="text", text=text)],
+        input_tokens=10,
+        output_tokens=20,
+    )
+
+
 class TestWidgetInferenceValidation:
     """Test the parsing/validation logic in generate_widget_config."""
 
@@ -267,19 +277,21 @@ class TestDetailLevelPrompts:
         """Full integration: detail_level should appear in the returned config."""
         from services.widget_inference import generate_widget_config
         app = _make_mock_app()
-        mock_response = _make_anthropic_response(
+        mock_completed = _make_completed_message(
             '{"layout":"big_number","title":"Count","slots":{"value":"42","label":"Items"}}'
         )
-        with patch("services.widget_inference.AsyncAnthropic") as MockClient:
-            instance = MockClient.return_value
-            instance.messages.create = AsyncMock(return_value=mock_response)
-            with patch("services.widget_inference.report_anthropic_call_success", new_callable=AsyncMock):
-                result = await generate_widget_config(
-                    app=app,
-                    organization_id="test-org",
-                    query_results={},
-                    detail_level="detailed",
-                )
+        mock_adapter = AsyncMock()
+        mock_adapter.complete = AsyncMock(return_value=mock_completed)
+        with patch("services.widget_inference.resolve_llm_config", new_callable=AsyncMock) as mock_resolve:
+            mock_resolve.return_value = MagicMock(cheap_model="test-model")
+            with patch("services.widget_inference.get_adapter", return_value=mock_adapter):
+                with patch("services.widget_inference.report_anthropic_call_success", new_callable=AsyncMock):
+                    result = await generate_widget_config(
+                        app=app,
+                        organization_id="test-org",
+                        query_results={},
+                        detail_level="detailed",
+                    )
         assert result["detail_level"] == "detailed"
 
 
@@ -295,24 +307,25 @@ class TestWidgetRegeneration:
         """When detail_level changes and mode is widget, generate_widget_config should be called."""
         from services.widget_inference import generate_widget_config
         app = _make_mock_app()
-        mock_response = _make_anthropic_response(
+        mock_completed = _make_completed_message(
             '{"layout":"mini_list","title":"Top Items","slots":{"rows":[{"label":"A","value":"1"},{"label":"B","value":"2"},{"label":"C","value":"3"}]}}'
         )
-        with patch("services.widget_inference.AsyncAnthropic") as MockClient:
-            instance = MockClient.return_value
-            instance.messages.create = AsyncMock(return_value=mock_response)
-            with patch("services.widget_inference.report_anthropic_call_success", new_callable=AsyncMock):
-                result = await generate_widget_config(
-                    app=app,
-                    organization_id="test-org",
-                    query_results={"items": [{"name": "A", "val": 1}]},
-                    detail_level="detailed",
-                )
+        mock_adapter = AsyncMock()
+        mock_adapter.complete = AsyncMock(return_value=mock_completed)
+        with patch("services.widget_inference.resolve_llm_config", new_callable=AsyncMock) as mock_resolve:
+            mock_resolve.return_value = MagicMock(cheap_model="test-model")
+            with patch("services.widget_inference.get_adapter", return_value=mock_adapter):
+                with patch("services.widget_inference.report_anthropic_call_success", new_callable=AsyncMock):
+                    result = await generate_widget_config(
+                        app=app,
+                        organization_id="test-org",
+                        query_results={"items": [{"name": "A", "val": 1}]},
+                        detail_level="detailed",
+                    )
         assert result["detail_level"] == "detailed"
         assert result["layout"] == "mini_list"
-        # Verify the create call used the detailed system prompt
-        call_kwargs = instance.messages.create.call_args
-        system_text = call_kwargs.kwargs.get("system", "") if call_kwargs.kwargs else ""
+        call_kwargs = mock_adapter.complete.call_args
+        system_text: str = call_kwargs.kwargs.get("system", "") if call_kwargs.kwargs else ""
         assert "multi-metric" in system_text
 
     @pytest.mark.asyncio
@@ -320,21 +333,23 @@ class TestWidgetRegeneration:
         """minimal detail_level should add big_number preference to system prompt."""
         from services.widget_inference import generate_widget_config
         app = _make_mock_app()
-        mock_response = _make_anthropic_response(
+        mock_completed = _make_completed_message(
             '{"layout":"big_number","title":"Total","slots":{"value":"100","label":"Count"}}'
         )
-        with patch("services.widget_inference.AsyncAnthropic") as MockClient:
-            instance = MockClient.return_value
-            instance.messages.create = AsyncMock(return_value=mock_response)
-            with patch("services.widget_inference.report_anthropic_call_success", new_callable=AsyncMock):
-                result = await generate_widget_config(
-                    app=app,
-                    organization_id="test-org",
-                    query_results={},
-                    detail_level="minimal",
-                )
+        mock_adapter = AsyncMock()
+        mock_adapter.complete = AsyncMock(return_value=mock_completed)
+        with patch("services.widget_inference.resolve_llm_config", new_callable=AsyncMock) as mock_resolve:
+            mock_resolve.return_value = MagicMock(cheap_model="test-model")
+            with patch("services.widget_inference.get_adapter", return_value=mock_adapter):
+                with patch("services.widget_inference.report_anthropic_call_success", new_callable=AsyncMock):
+                    result = await generate_widget_config(
+                        app=app,
+                        organization_id="test-org",
+                        query_results={},
+                        detail_level="minimal",
+                    )
         assert result["detail_level"] == "minimal"
-        call_kwargs = instance.messages.create.call_args
-        system_text = call_kwargs.kwargs.get("system", "") if call_kwargs.kwargs else ""
+        call_kwargs = mock_adapter.complete.call_args
+        system_text: str = call_kwargs.kwargs.get("system", "") if call_kwargs.kwargs else ""
         assert "single key metric" in system_text
         assert "big_number" in system_text

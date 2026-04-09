@@ -1436,32 +1436,35 @@ async def _action_llm(
     context: dict[str, Any],
 ) -> dict[str, Any]:
     """Call an LLM for processing."""
-    import anthropic
     from access_control import RightsContext, check_external_api
     from config import settings
+    from services.llm_provider import resolve_llm_config, get_adapter
 
     prompt = params.get("prompt", "")
-    model = params.get("model", settings.ANTHROPIC_PRIMARY_MODEL)
+    org_id: str = context.get("organization_id") or ""
 
     # Substitute context variables in prompt
     for key, value in context.items():
         prompt = prompt.replace(f"{{{key}}}", str(value))
 
-    if not settings.ANTHROPIC_API_KEY:
+    llm_config = await resolve_llm_config(org_id or None)
+    model: str = params.get("model", llm_config.primary_model)
+
+    if not llm_config.api_key:
         return {
             "status": "failed",
-            "error": "ANTHROPIC_API_KEY not configured",
+            "error": f"No API key configured for provider {llm_config.provider}",
         }
 
     rights_ctx = RightsContext(
-        organization_id=context.get("organization_id") or "",
+        organization_id=org_id,
         user_id=context.get("user_id"),
         conversation_id=None,
         is_workflow=True,
     )
     rights_result = await check_external_api(
         rights_ctx,
-        "anthropic",
+        llm_config.provider,
         {"model": model, "prompt_length": len(prompt)},
     )
     if not rights_result.allowed:
@@ -1470,12 +1473,13 @@ async def _action_llm(
             "error": rights_result.deny_reason or "External API call not allowed",
         }
 
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    adapter = get_adapter(llm_config)
     try:
-        response = client.messages.create(
+        completed = await adapter.complete(
             model=model,
-            max_tokens=1024,
+            system="You are a helpful assistant.",
             messages=[{"role": "user", "content": prompt}],
+            max_tokens=1024,
         )
         await report_anthropic_call_success(source="workers.tasks.workflows._action_llm")
     except Exception as exc:
@@ -1485,7 +1489,7 @@ async def _action_llm(
         )
         raise
 
-    output = response.content[0].text if response.content else ""
+    output: str = (completed.content_blocks[0].text or "") if completed.content_blocks else ""
     
     return {
         "status": "completed",

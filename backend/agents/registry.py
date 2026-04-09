@@ -754,13 +754,28 @@ def get_all_tools() -> list[ToolDefinition]:
 
 
 def get_tools_for_claude(in_workflow: bool = False) -> list[dict[str, Any]]:
-    """Get tool definitions formatted for Claude's API."""
+    """Get tool definitions formatted for Claude's API (legacy, use get_tool_defs for provider-agnostic)."""
     return [
         {
             "name": tool.name,
             "description": tool.description,
             "input_schema": tool.input_schema,
         }
+        for tool in TOOL_DEFINITIONS.values()
+        if in_workflow or not tool.workflow_only
+    ]
+
+
+def get_tool_defs(in_workflow: bool = False) -> list["ToolDef"]:
+    """Get provider-agnostic tool definitions. Adapters translate to vendor-specific format."""
+    from services.llm_adapter import ToolDef
+
+    return [
+        ToolDef(
+            name=tool.name,
+            description=tool.description,
+            input_schema=tool.input_schema,
+        )
         for tool in TOOL_DEFINITIONS.values()
         if in_workflow or not tool.workflow_only
     ]

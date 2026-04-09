@@ -309,6 +309,9 @@ export const useAuthStore = create<AuthState>()(
               name: string;
               logo_url: string | null;
               handle?: string | null;
+              llm_provider?: string | null;
+              llm_primary_model?: string | null;
+              llm_cheap_model?: string | null;
             } | null;
           };
           const newRoles = data.roles ?? [];
@@ -347,6 +350,9 @@ export const useAuthStore = create<AuthState>()(
               name: data.organization.name,
               logoUrl: data.organization.logo_url,
               handle: data.organization.handle ?? null,
+              llmProvider: data.organization.llm_provider ?? null,
+              llmPrimaryModel: data.organization.llm_primary_model ?? null,
+              llmCheapModel: data.organization.llm_cheap_model ?? null,
             });
           }
 

@@ -18,12 +18,21 @@ from datetime import UTC, datetime
 from typing import Any, AsyncGenerator, Sequence
 from uuid import UUID, uuid4
 
-from anthropic import APIStatusError, AsyncAnthropic
+from anthropic import APIStatusError as AnthropicAPIStatusError
+from openai import APIStatusError as OpenAIAPIStatusError
 from sqlalchemy import select, update
 
 from agents.registry import format_tool_status
-from agents.tools import execute_tool, get_tools
+from agents.tools import execute_tool, get_tools, get_tool_defs_for_context
 from config import settings
+from services.llm_adapter import (
+    AnthropicAdapter,
+    LLMConfig,
+    OpenAIAdapter,
+    StreamEvent,
+    get_adapter,
+)
+from services.llm_provider import resolve_llm_config
 from models.chat_attachment import ChatAttachment
 from models.chat_message import ChatMessage
 from models.conversation import Conversation
@@ -502,7 +511,8 @@ class ChatOrchestrator:
         self.source_user_email = source_user_email
         self.workflow_context = workflow_context
         self.source: str = source
-        self.client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        self._llm_config: LLMConfig | None = None
+        self._adapter: AnthropicAdapter | OpenAIAdapter | None = None
         # Track if we've saved the assistant message (for early save during tool execution)
         self._assistant_message_saved: bool = False
         # Deterministic UUID for the current turn's assistant message.
@@ -1054,11 +1064,15 @@ class ChatOrchestrator:
         ]
         cross_conversation_context_message: str | None = None
 
-        selected_model: str = settings.ANTHROPIC_PRIMARY_MODEL
+        # Resolve per-org LLM provider/model/key
+        self._llm_config = await resolve_llm_config(self.organization_id)
+        self._adapter = get_adapter(self._llm_config)
+        selected_model: str = self._llm_config.primary_model
 
         logger.info(
-            "[Orchestrator] conversation_id=%s selected_model=%s",
+            "[Orchestrator] conversation_id=%s provider=%s selected_model=%s",
             self.conversation_id,
+            self._llm_config.provider,
             selected_model,
         )
 
@@ -1303,22 +1317,28 @@ class ChatOrchestrator:
         model_name: str,
     ) -> AsyncGenerator[str, None]:
         """
-        Stream Claude's response, handling tool calls in a loop.
+        Stream the LLM response via the provider-agnostic adapter, handling tool calls in a loop.
         
         Uses true streaming - text is yielded immediately as tokens arrive.
         Tool calls are accumulated and executed when complete.
         Includes retry logic for transient API errors (overloaded, rate limits).
         """
+        assert self._adapter is not None, "Adapter must be resolved before streaming"
+        assert self._llm_config is not None, "LLM config must be resolved before streaming"
+
+        adapter = self._adapter
+
         # Retry configuration
         max_retries = 3
         base_delay = 1.0  # seconds
         
         max_context_retries = 3
         context_retries = 0
-        # Number of leading messages that are trimmable history (everything before
-        # the current user message).  Messages appended during the tool loop
-        # (assistant + tool_result pairs) are NOT trimmable.
-        trimmable_history = len(messages) - 1  # last element is the current user msg
+        trimmable_history = len(messages) - 1
+
+        # Prepare messages for the target provider's API format
+        tool_defs = get_tool_defs_for_context(self.workflow_context)
+        is_anthropic_family: bool = self._llm_config.provider in ("anthropic", "minimax")
 
         while True:
             # Track state for this streaming response
@@ -1327,138 +1347,147 @@ class ChatOrchestrator:
             current_tool: dict[str, Any] | None = None
             current_tool_input_json = ""
             is_thinking_block: bool = False
-            final_message = None
+            final_message_received: bool = False
             context_retry_needed = False
+
+            # Translate messages for OpenAI-family providers
+            api_messages: list[dict[str, Any]] = (
+                messages if is_anthropic_family
+                else adapter.format_messages_for_api(messages)  # type: ignore[union-attr]
+            )
 
             # Retry loop for transient API errors
             last_error: Exception | None = None
             for attempt in range(max_retries):
                 try:
-                    # Reset state on retry (in case partial data was received)
+                    # Reset state on retry
                     current_text = ""
                     tool_uses = []
                     current_tool = None
                     current_tool_input_json = ""
                     is_thinking_block = False
                     
-                    # Stream the response
                     logger.info(
-                        "[Orchestrator] Sending message batch to Anthropic conversation_id=%s model=%s message_count=%d attempt=%d",
+                        "[Orchestrator] Sending message batch to %s conversation_id=%s model=%s message_count=%d attempt=%d",
+                        self._llm_config.provider,
                         self.conversation_id,
                         model_name,
                         len(messages),
                         attempt + 1,
                     )
-                    async with self.client.messages.stream(
-                        model=model_name,
-                        max_tokens=32768,
-                        system=system_prompt,
-                        tools=get_tools(self.workflow_context),
-                        messages=messages,
-                        thinking={"type": "adaptive"},
-                    ) as stream:
-                        async for event in stream:
-                            # Handle different event types
-                            if event.type == "content_block_start":
-                                if event.content_block.type == "thinking":
-                                    is_thinking_block = True
-                                    yield _json_dumps({"type": "thinking_start"})
-                                elif event.content_block.type == "text":
-                                    pass
-                                elif event.content_block.type == "tool_use":
-                                    current_tool = {
-                                        "id": event.content_block.id,
-                                        "name": event.content_block.name,
-                                        "input": {},
-                                    }
-                                    current_tool_input_json = ""
-                                    yield _json_dumps({
-                                        "type": "tool_call_start",
-                                        "tool_name": event.content_block.name,
-                                        "tool_id": event.content_block.id,
-                                    })
-                            
-                            elif event.type == "content_block_delta":
-                                if event.delta.type == "thinking_delta":
-                                    yield _json_dumps({
-                                        "type": "thinking_delta",
-                                        "text": event.delta.thinking,
-                                    })
-                                elif event.delta.type == "signature_delta":
-                                    pass
-                                elif event.delta.type == "text_delta":
-                                    text: str = event.delta.text
-                                    current_text += text
-                                    yield text
-                                elif event.delta.type == "input_json_delta":
-                                    current_tool_input_json += event.delta.partial_json
-                                    token_len: int = len(current_tool_input_json)
-                                    if token_len % 200 < len(event.delta.partial_json):
-                                        yield _json_dumps({
-                                            "type": "tool_input_progress",
-                                            "tool_id": current_tool["id"] if current_tool else "",
-                                            "tool_name": current_tool["name"] if current_tool else "",
-                                            "chars": token_len,
-                                        })
-                            
-                            elif event.type == "content_block_stop":
-                                if is_thinking_block:
-                                    is_thinking_block = False
-                                    yield _json_dumps({"type": "thinking_stop"})
-                                elif current_tool is not None:
-                                    try:
-                                        current_tool["input"] = json.loads(current_tool_input_json) if current_tool_input_json else {}
-                                    except json.JSONDecodeError:
-                                        logger.warning("[Orchestrator] Failed to parse tool input JSON: %s", current_tool_input_json)
-                                        current_tool["input"] = {}
-                                    
-                                    tool_uses.append(current_tool)
-                                    _running_input: dict[str, Any] = current_tool["input"]
-                                    yield _json_dumps({
-                                        "type": "tool_call",
-                                        "tool_name": current_tool["name"],
-                                        "tool_input": _running_input,
-                                        "tool_id": current_tool["id"],
-                                        "status": "running",
-                                        "status_text": format_tool_status(current_tool["name"], _running_input, "running"),
-                                    })
-                                    current_tool = None
-                                    current_tool_input_json = ""
-                        
-                        # Get the final message for conversation history
-                        final_message = await stream.get_final_message()
 
-                        # Emit context usage for frontend progress bar
-                        if final_message and hasattr(final_message, 'usage'):
+                    async for event in adapter.stream(
+                        model=model_name,
+                        system=system_prompt,
+                        messages=api_messages,
+                        tools=tool_defs,
+                        thinking=True,
+                        max_tokens=32768,
+                    ):
+                        if event.type == "thinking_start":
+                            is_thinking_block = True
+                            yield _json_dumps({"type": "thinking_start"})
+
+                        elif event.type == "thinking_delta":
+                            yield _json_dumps({
+                                "type": "thinking_delta",
+                                "text": event.text,
+                            })
+
+                        elif event.type == "thinking_stop":
+                            is_thinking_block = False
+                            yield _json_dumps({"type": "thinking_stop"})
+
+                        elif event.type == "text_start":
+                            pass
+
+                        elif event.type == "text_delta":
+                            text_chunk: str = event.text or ""
+                            current_text += text_chunk
+                            yield text_chunk
+
+                        elif event.type == "text_stop":
+                            if is_thinking_block:
+                                is_thinking_block = False
+                                yield _json_dumps({"type": "thinking_stop"})
+
+                        elif event.type == "tool_use_start":
+                            current_tool = {
+                                "id": event.tool_id or "",
+                                "name": event.tool_name or "",
+                                "input": {},
+                            }
+                            current_tool_input_json = ""
+                            yield _json_dumps({
+                                "type": "tool_call_start",
+                                "tool_name": event.tool_name,
+                                "tool_id": event.tool_id,
+                            })
+
+                        elif event.type == "tool_input_delta":
+                            partial: str = event.tool_input_json or ""
+                            current_tool_input_json += partial
+                            token_len: int = len(current_tool_input_json)
+                            if token_len % 200 < len(partial):
+                                yield _json_dumps({
+                                    "type": "tool_input_progress",
+                                    "tool_id": current_tool["id"] if current_tool else "",
+                                    "tool_name": current_tool["name"] if current_tool else "",
+                                    "chars": token_len,
+                                })
+
+                        elif event.type == "tool_use_stop":
+                            if current_tool is not None:
+                                try:
+                                    current_tool["input"] = json.loads(current_tool_input_json) if current_tool_input_json else {}
+                                except json.JSONDecodeError:
+                                    logger.warning("[Orchestrator] Failed to parse tool input JSON: %s", current_tool_input_json)
+                                    current_tool["input"] = {}
+                                
+                                tool_uses.append(current_tool)
+                                _running_input: dict[str, Any] = current_tool["input"]
+                                yield _json_dumps({
+                                    "type": "tool_call",
+                                    "tool_name": current_tool["name"],
+                                    "tool_input": _running_input,
+                                    "tool_id": current_tool["id"],
+                                    "status": "running",
+                                    "status_text": format_tool_status(current_tool["name"], _running_input, "running"),
+                                })
+                                current_tool = None
+                                current_tool_input_json = ""
+
+                        elif event.type == "usage":
                             yield _json_dumps({
                                 "type": "context_usage",
-                                "input_tokens": final_message.usage.input_tokens,
-                                "output_tokens": final_message.usage.output_tokens,
+                                "input_tokens": event.input_tokens,
+                                "output_tokens": event.output_tokens,
                             })
-                    
-                    # Success - break out of retry loop
+
+                    final_message_received = True
                     await report_anthropic_call_success(source="agents.orchestrator._stream_with_tools")
                     break
                     
-                except APIStatusError as e:
+                except (AnthropicAPIStatusError, OpenAIAPIStatusError) as e:
                     await report_anthropic_call_failure(
                         exc=e,
                         source="agents.orchestrator._stream_with_tools",
                     )
                     last_error = e
-                    error_type = getattr(e, "body", {}).get("error", {}).get("type", "") if isinstance(getattr(e, "body", None), dict) else ""
+                    status_code: int = getattr(e, "status_code", 0)
 
-                    # Extract error message for context window detection
-                    error_message = ""
-                    if isinstance(getattr(e, "body", None), dict):
-                        error_message = e.body.get("error", {}).get("message", "")
+                    error_type: str = ""
+                    error_message: str = ""
+                    body = getattr(e, "body", None)
+                    if isinstance(body, dict):
+                        error_type = body.get("error", {}).get("type", "")
+                        error_message = body.get("error", {}).get("message", "")
 
-                    # Context window overflow — retry with fewer history messages
-                    is_context_overflow = (
-                        e.status_code == 400
-                        and error_type == "invalid_request_error"
+                    is_context_overflow: bool = (
+                        status_code == 400
                         and ("prompt is too long" in error_message.lower()
-                             or "context window" in error_message.lower())
+                             or "context window" in error_message.lower()
+                             or "maximum context length" in error_message.lower())
                     )
 
                     if is_context_overflow and context_retries < max_context_retries:
@@ -1474,21 +1503,22 @@ class ChatOrchestrator:
                             trimmed["description"], len(messages), context_retries, max_context_retries,
                         )
                         context_retry_needed = True
-                        break  # break inner retry loop, continue outer while True
+                        break
 
-                    # Check if this is a retryable error (includes 500 Internal Server Error)
-                    is_retryable = error_type in ("overloaded_error", "rate_limit_error", "api_error") or e.status_code in (429, 500, 502, 503, 529)
+                    is_retryable: bool = (
+                        error_type in ("overloaded_error", "rate_limit_error", "api_error")
+                        or status_code in (429, 500, 502, 503, 529)
+                    )
 
                     if is_retryable and attempt < max_retries - 1:
-                        delay = base_delay * (2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
+                        delay: float = base_delay * (2 ** attempt)
                         logger.warning(
                             "[Orchestrator] Retryable API error (attempt %d/%d): %s. Retrying in %.1fs...",
-                            attempt + 1, max_retries, error_type or e.status_code, delay
+                            attempt + 1, max_retries, error_type or status_code, delay
                         )
                         await asyncio.sleep(delay)
                         continue
                     else:
-                        # Non-retryable error or max retries exceeded
                         logger.error("[Orchestrator] API error after %d attempts: %s", attempt + 1, e)
                         raise
             
@@ -1497,7 +1527,7 @@ class ChatOrchestrator:
                 continue
 
             # If we exhausted retries without success, raise the last error
-            if final_message is None and last_error is not None:
+            if not final_message_received and last_error is not None:
                 raise last_error
             
             # If no tool calls, we're done
@@ -1701,25 +1731,19 @@ class ChatOrchestrator:
                 yield out_of_credits_message
                 break
 
-            # Add assistant message with all tool uses, then user message with all results.
-            # Thinking blocks must be preserved for the API to maintain reasoning continuity.
+            # Build assistant history from tracked state (provider-agnostic).
+            # For Anthropic-family: thinking blocks are preserved for reasoning continuity.
+            # For OpenAI-family: only text + tool_use blocks.
             assistant_content: list[dict[str, Any]] = []
-            for block in final_message.content:
-                if block.type == "thinking":
-                    assistant_content.append({
-                        "type": "thinking",
-                        "thinking": block.thinking,
-                        "signature": block.signature,
-                    })
-                elif block.type == "text":
-                    assistant_content.append({"type": "text", "text": block.text})
-                elif block.type == "tool_use":
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": block.id,
-                        "name": block.name,
-                        "input": block.input,
-                    })
+            if current_text.strip():
+                assistant_content.append({"type": "text", "text": current_text})
+            for tu in tool_uses:
+                assistant_content.append({
+                    "type": "tool_use",
+                    "id": tu["id"],
+                    "name": tu["name"],
+                    "input": tu["input"],
+                })
             messages.append({"role": "assistant", "content": assistant_content})
             messages.append({"role": "user", "content": tool_results})
 

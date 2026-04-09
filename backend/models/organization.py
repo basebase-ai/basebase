@@ -84,6 +84,11 @@ class Organization(Base):
     credits_balance: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     credits_included: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # LLM provider/model overrides (NULL = use global defaults from env vars)
+    llm_provider: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    llm_primary_model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    llm_cheap_model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+
     # Relationships
     guest_users: Mapped[list["User"]] = relationship(
         "User",

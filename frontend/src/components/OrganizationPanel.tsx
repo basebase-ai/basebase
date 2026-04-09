@@ -184,6 +184,9 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
   const [isInvitingMissingFromSlack, setIsInvitingMissingFromSlack] = useState(false);
   const [orgName, setOrgName] = useState(organization.name);
   const [logoUrl, setLogoUrl] = useState(organization.logoUrl);
+  const [llmPrimaryModel, setLlmPrimaryModel] = useState<string>(organization.llmPrimaryModel ?? '');
+  const [llmCheapModel, setLlmCheapModel] = useState<string>(organization.llmCheapModel ?? '');
+  const [llmModelMap, setLlmModelMap] = useState<Record<string, string>>({});
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -196,10 +199,21 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
   useEffect(() => {
     setOrgName(organization.name);
     setLogoUrl(organization.logoUrl);
+    setLlmPrimaryModel(organization.llmPrimaryModel ?? '');
+    setLlmCheapModel(organization.llmCheapModel ?? '');
     setSettingsSaved(false);
     setExpandedMemberId(null);
     setMenuOpenMemberId(null);
-  }, [organization.id, organization.name, organization.logoUrl]);
+  }, [organization.id, organization.name, organization.logoUrl, organization.llmPrimaryModel, organization.llmCheapModel]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await apiRequest<{ models: Record<string, string> }>('/auth/llm-options');
+      if (!cancelled && data?.models) setLlmModelMap(data.models);
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!menuOpenMemberId) return;
@@ -491,18 +505,26 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
   };
 
   const handleSaveSettings = async (): Promise<void> => {
-    if (!orgName.trim() || orgName === organization.name) return;
+    if (!hasUnsavedChanges) return;
 
     try {
-      await updateOrgMutation.mutateAsync({
+      const params: Record<string, string | null | undefined> & { orgId: string; userId: string } = {
         orgId: organization.id,
         userId: currentUser.id,
-        name: orgName,
-      });
+      };
+      if (orgName !== organization.name) params.name = orgName;
+      if (llmPrimaryModel !== (organization.llmPrimaryModel ?? '')) params.llmPrimaryModel = llmPrimaryModel || null;
+      if (llmCheapModel !== (organization.llmCheapModel ?? '')) params.llmCheapModel = llmCheapModel || null;
+
+      await updateOrgMutation.mutateAsync(params);
       
       setSettingsSaved(true);
-      // Update Zustand store so sidebar reflects the change immediately
-      setOrganization({ ...organization, name: orgName });
+      setOrganization({
+        ...organization,
+        name: orgName,
+        llmPrimaryModel: llmPrimaryModel || null,
+        llmCheapModel: llmCheapModel || null,
+      });
       setTimeout(() => setSettingsSaved(false), 2000);
     } catch (error) {
       alert(`Failed to save: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -588,7 +610,11 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
     }
   };
 
-  const hasUnsavedChanges = orgName !== organization.name;
+  const hasUnsavedChanges: boolean = (
+    orgName !== organization.name
+    || llmPrimaryModel !== (organization.llmPrimaryModel ?? '')
+    || llmCheapModel !== (organization.llmCheapModel ?? '')
+  );
 
   const handleLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = event.target.files?.[0];
@@ -1315,6 +1341,47 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                   >
                     {isUploadingLogo ? 'Uploading...' : 'Upload logo'}
                   </button>
+                </div>
+              </div>
+
+              {/* AI Model Settings */}
+              <div className="pt-6 border-t border-surface-800">
+                <h3 className="text-sm font-medium text-surface-200 mb-3">AI Model</h3>
+                <div className="space-y-4">
+                  {Object.keys(llmModelMap).length > 0 ? (
+                    <>
+                      <div>
+                        <label className="block text-sm text-surface-400 mb-1.5">Primary model</label>
+                        <select
+                          value={llmPrimaryModel}
+                          onChange={(e) => setLlmPrimaryModel(e.target.value)}
+                          className="input-field"
+                        >
+                          <option value="">Default</option>
+                          {Object.entries(llmModelMap).map(([model, provider]) => (
+                            <option key={model} value={model}>{model} ({provider})</option>
+                          ))}
+                        </select>
+                        <p className="text-xs text-surface-500 mt-1">Leave blank for provider default</p>
+                      </div>
+                      <div>
+                        <label className="block text-sm text-surface-400 mb-1.5">Fast model</label>
+                        <select
+                          value={llmCheapModel}
+                          onChange={(e) => setLlmCheapModel(e.target.value)}
+                          className="input-field"
+                        >
+                          <option value="">Default</option>
+                          {Object.entries(llmModelMap).map(([model, provider]) => (
+                            <option key={model} value={model}>{model} ({provider})</option>
+                          ))}
+                        </select>
+                        <p className="text-xs text-surface-500 mt-1">Used for summaries, titles, and background tasks</p>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-sm text-surface-500">No models configured. Set <code className="text-surface-400">ALL_MODEL_STRINGS</code> to enable model selection.</p>
+                  )}
                 </div>
               </div>
 

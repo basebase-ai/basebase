@@ -14,6 +14,9 @@ export interface Organization {
   name: string;
   logoUrl: string | null;
   emailDomain: string | null;
+  llmProvider?: string | null;
+  llmPrimaryModel?: string | null;
+  llmCheapModel?: string | null;
 }
 
 export interface IdentityMapping {
@@ -43,6 +46,9 @@ interface OrganizationApiResponse {
   name: string;
   logo_url: string | null;
   email_domain: string | null;
+  llm_provider?: string | null;
+  llm_primary_model?: string | null;
+  llm_cheap_model?: string | null;
 }
 
 interface IdentityMappingApiResponse {
@@ -82,6 +88,8 @@ interface UpdateOrganizationParams {
   userId: string;
   name?: string;
   logoUrl?: string;
+  llmPrimaryModel?: string | null;
+  llmCheapModel?: string | null;
 }
 
 interface UpdateGuestUserParams {
@@ -153,9 +161,11 @@ async function fetchTeamMembers(orgId: string, userId: string): Promise<TeamMemb
 
 // Update organization
 async function updateOrganization(params: UpdateOrganizationParams): Promise<Organization> {
-  const body: Record<string, string> = {};
+  const body: Record<string, string | null> = {};
   if (params.name !== undefined) body.name = params.name;
   if (params.logoUrl !== undefined) body.logo_url = params.logoUrl;
+  if (params.llmPrimaryModel !== undefined) body.llm_primary_model = params.llmPrimaryModel ?? "";
+  if (params.llmCheapModel !== undefined) body.llm_cheap_model = params.llmCheapModel ?? "";
 
   const { data, error } = await apiRequest<OrganizationApiResponse>(
     `/auth/organizations/${encodeURIComponent(params.orgId)}?user_id=${encodeURIComponent(params.userId)}`,
@@ -171,6 +181,9 @@ async function updateOrganization(params: UpdateOrganizationParams): Promise<Org
     name: data.name,
     logoUrl: data.logo_url,
     emailDomain: data.email_domain,
+    llmProvider: data.llm_provider ?? null,
+    llmPrimaryModel: data.llm_primary_model ?? null,
+    llmCheapModel: data.llm_cheap_model ?? null,
   };
 }
 

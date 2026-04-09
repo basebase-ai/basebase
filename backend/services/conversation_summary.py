@@ -15,8 +15,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from anthropic import AsyncAnthropic
-
 from config import settings
 from models.chat_message import ChatMessage as ChatMessageModel
 from models.conversation import Conversation
@@ -25,6 +23,7 @@ from models.user import User
 from sqlalchemy import select, update
 
 from services.anthropic_health import report_anthropic_call_failure, report_anthropic_call_success
+from services.llm_provider import resolve_llm_config, get_adapter
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +32,6 @@ _SEMANTIC_REGEN_WORD_DELTA = 50
 _MAX_MESSAGES_FOR_PROMPT = 50
 
 _TITLE_MAX_CHARS = 80
-
-_MODEL = settings.ANTHROPIC_CHEAP_MODEL
 
 _SUMMARY_SYSTEM_PROMPT = (
     "You summarize conversations between a human user and an AI assistant called Basebase. "
@@ -190,13 +187,14 @@ async def generate_conversation_summary(
             f"Conversation transcript:\n\n{formatted}"
         )
 
-        client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        llm_config = await resolve_llm_config(organization_id)
+        adapter = get_adapter(llm_config)
         try:
-            response = await client.messages.create(
-                model=_MODEL,
-                max_tokens=500,
+            completed = await adapter.complete(
+                model=llm_config.cheap_model,
                 system=_SUMMARY_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_prompt}],
+                max_tokens=500,
             )
             await report_anthropic_call_success(
                 source="services.conversation_summary.generate_conversation_summary"
@@ -208,7 +206,7 @@ async def generate_conversation_summary(
             )
             raise
 
-        raw_text: str = response.content[0].text.strip() if response.content else ""
+        raw_text: str = (completed.content_blocks[0].text or "").strip() if completed.content_blocks else ""
         if not raw_text:
             logger.warning(
                 "Conversation summary returned empty content for conversation %s",
@@ -287,13 +285,14 @@ async def generate_conversation_title(
             f"User display name: {user_display}\n\nConversation transcript:\n\n{formatted}"
         )
 
-        client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        llm_config = await resolve_llm_config(organization_id)
+        adapter = get_adapter(llm_config)
         try:
-            response = await client.messages.create(
-                model=_MODEL,
-                max_tokens=80,
+            completed = await adapter.complete(
+                model=llm_config.cheap_model,
                 system=_TITLE_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_prompt}],
+                max_tokens=80,
             )
             await report_anthropic_call_success(
                 source="services.conversation_summary.generate_conversation_title"
@@ -305,7 +304,7 @@ async def generate_conversation_title(
             )
             raise
 
-        raw: str = response.content[0].text.strip() if response.content else ""
+        raw: str = (completed.content_blocks[0].text or "").strip() if completed.content_blocks else ""
         title: str = _sanitize_title(raw)
         if not title:
             return None
