@@ -18,7 +18,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Nango from '@nangohq/frontend';
 import { API_BASE } from '../lib/api';
 import { crossTab, subscribeCrossTab } from '../lib/crossTab';
-import { useIsMobile } from '../hooks';
+import { useIsMobile, useVisualViewport } from '../hooks';
 import { useShallow } from 'zustand/react/shallow';
 import { Sidebar } from './Sidebar';
 import { Home } from './Home';
@@ -338,6 +338,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
 
   // Mobile responsive state
   const isMobile = useIsMobile();
+  useVisualViewport();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   // Release stage banner dismissal (stored in localStorage)

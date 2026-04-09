@@ -46,7 +46,9 @@
   body {
     @apply bg-surface-950 text-surface-100 antialiased;
     position: fixed;
+    top: var(--app-offset, 0px);
     width: 100%;
+    height: var(--app-height, 100%);
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   }
 
