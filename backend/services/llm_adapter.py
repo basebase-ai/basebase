@@ -47,6 +47,7 @@ class LLMConfig:
     provider: LLMProvider
     primary_model: str
     cheap_model: str
+    workflow_model: str
     api_key: str
     base_url: str | None = None
 

@@ -37,6 +37,7 @@ export interface OrganizationInfo {
   llmProvider?: string | null;
   llmPrimaryModel?: string | null;
   llmCheapModel?: string | null;
+  llmWorkflowModel?: string | null;
 }
 
 export interface UserOrganization {

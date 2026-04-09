@@ -1067,13 +1067,15 @@ class ChatOrchestrator:
         # Resolve per-org LLM provider/model/key
         self._llm_config = await resolve_llm_config(self.organization_id)
         self._adapter = get_adapter(self._llm_config)
-        selected_model: str = self._llm_config.primary_model
+        is_workflow_run: bool = bool((self.workflow_context or {}).get("is_workflow"))
+        selected_model: str = self._llm_config.workflow_model if is_workflow_run else self._llm_config.primary_model
 
         logger.info(
-            "[Orchestrator] conversation_id=%s provider=%s selected_model=%s",
+            "[Orchestrator] conversation_id=%s provider=%s selected_model=%s is_workflow=%s",
             self.conversation_id,
             self._llm_config.provider,
             selected_model,
+            is_workflow_run,
         )
 
         # Keep track of content blocks for saving (preserves interleaving order)

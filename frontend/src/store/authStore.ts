@@ -312,6 +312,7 @@ export const useAuthStore = create<AuthState>()(
               llm_provider?: string | null;
               llm_primary_model?: string | null;
               llm_cheap_model?: string | null;
+              llm_workflow_model?: string | null;
             } | null;
           };
           const newRoles = data.roles ?? [];
@@ -353,6 +354,7 @@ export const useAuthStore = create<AuthState>()(
               llmProvider: data.organization.llm_provider ?? null,
               llmPrimaryModel: data.organization.llm_primary_model ?? null,
               llmCheapModel: data.organization.llm_cheap_model ?? null,
+              llmWorkflowModel: data.organization.llm_workflow_model ?? null,
             });
           }
 

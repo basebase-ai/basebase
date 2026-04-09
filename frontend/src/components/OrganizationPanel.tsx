@@ -187,6 +187,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
   const [logoUrl, setLogoUrl] = useState(organization.logoUrl);
   const [llmPrimaryModel, setLlmPrimaryModel] = useState<string>(organization.llmPrimaryModel ?? '');
   const [llmCheapModel, setLlmCheapModel] = useState<string>(organization.llmCheapModel ?? '');
+  const [llmWorkflowModel, setLlmWorkflowModel] = useState<string>(organization.llmWorkflowModel ?? '');
   const [llmModelMap, setLlmModelMap] = useState<Record<string, string>>({});
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
@@ -202,10 +203,11 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
     setLogoUrl(organization.logoUrl);
     setLlmPrimaryModel(organization.llmPrimaryModel ?? '');
     setLlmCheapModel(organization.llmCheapModel ?? '');
+    setLlmWorkflowModel(organization.llmWorkflowModel ?? '');
     setSettingsSaved(false);
     setExpandedMemberId(null);
     setMenuOpenMemberId(null);
-  }, [organization.id, organization.name, organization.logoUrl, organization.llmPrimaryModel, organization.llmCheapModel]);
+  }, [organization.id, organization.name, organization.logoUrl, organization.llmPrimaryModel, organization.llmCheapModel, organization.llmWorkflowModel]);
 
   useEffect(() => {
     let cancelled = false;
@@ -604,10 +606,15 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
     }
   };
 
-  const handleModelChange = async (field: 'llmPrimaryModel' | 'llmCheapModel', value: string): Promise<void> => {
-    const prev: string = field === 'llmPrimaryModel' ? llmPrimaryModel : llmCheapModel;
+  const handleModelChange = async (field: 'llmPrimaryModel' | 'llmCheapModel' | 'llmWorkflowModel', value: string): Promise<void> => {
+    const prev: string = field === 'llmPrimaryModel'
+      ? llmPrimaryModel
+      : field === 'llmCheapModel'
+        ? llmCheapModel
+        : llmWorkflowModel;
     if (field === 'llmPrimaryModel') setLlmPrimaryModel(value);
-    else setLlmCheapModel(value);
+    else if (field === 'llmCheapModel') setLlmCheapModel(value);
+    else setLlmWorkflowModel(value);
 
     try {
       await updateOrgMutation.mutateAsync({
@@ -620,7 +627,8 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
       setTimeout(() => setSettingsSaved(false), 2000);
     } catch (error) {
       if (field === 'llmPrimaryModel') setLlmPrimaryModel(prev);
-      else setLlmCheapModel(prev);
+      else if (field === 'llmCheapModel') setLlmCheapModel(prev);
+      else setLlmWorkflowModel(prev);
       alert(`Failed to save: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
@@ -1395,6 +1403,20 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                           ))}
                         </select>
                         <p className="text-xs text-surface-500 mt-1">Used for summaries, titles, and background tasks</p>
+                      </div>
+                      <div>
+                        <label className="block text-sm text-surface-400 mb-1.5">Workflow model</label>
+                        <select
+                          value={llmWorkflowModel}
+                          onChange={(e) => void handleModelChange('llmWorkflowModel', e.target.value)}
+                          className="input-field"
+                        >
+                          <option value="">Default</option>
+                          {Object.entries(llmModelMap).map(([model, provider]) => (
+                            <option key={model} value={model}>{model} ({provider})</option>
+                          ))}
+                        </select>
+                        <p className="text-xs text-surface-500 mt-1">Used only for workflow runs; regular chat turns keep using your primary model</p>
                       </div>
                     </>
                   ) : (
