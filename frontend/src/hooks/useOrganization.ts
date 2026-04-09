@@ -17,6 +17,7 @@ export interface Organization {
   llmProvider?: string | null;
   llmPrimaryModel?: string | null;
   llmCheapModel?: string | null;
+  llmWorkflowModel?: string | null;
 }
 
 export interface IdentityMapping {
@@ -49,6 +50,7 @@ interface OrganizationApiResponse {
   llm_provider?: string | null;
   llm_primary_model?: string | null;
   llm_cheap_model?: string | null;
+  llm_workflow_model?: string | null;
 }
 
 interface IdentityMappingApiResponse {
@@ -90,6 +92,7 @@ interface UpdateOrganizationParams {
   logoUrl?: string;
   llmPrimaryModel?: string | null;
   llmCheapModel?: string | null;
+  llmWorkflowModel?: string | null;
 }
 
 interface UpdateGuestUserParams {
@@ -166,6 +169,7 @@ async function updateOrganization(params: UpdateOrganizationParams): Promise<Org
   if (params.logoUrl !== undefined) body.logo_url = params.logoUrl;
   if (params.llmPrimaryModel !== undefined) body.llm_primary_model = params.llmPrimaryModel ?? "";
   if (params.llmCheapModel !== undefined) body.llm_cheap_model = params.llmCheapModel ?? "";
+  if (params.llmWorkflowModel !== undefined) body.llm_workflow_model = params.llmWorkflowModel ?? "";
 
   const { data, error } = await apiRequest<OrganizationApiResponse>(
     `/auth/organizations/${encodeURIComponent(params.orgId)}?user_id=${encodeURIComponent(params.userId)}`,
@@ -184,6 +188,7 @@ async function updateOrganization(params: UpdateOrganizationParams): Promise<Org
     llmProvider: data.llm_provider ?? null,
     llmPrimaryModel: data.llm_primary_model ?? null,
     llmCheapModel: data.llm_cheap_model ?? null,
+    llmWorkflowModel: data.llm_workflow_model ?? null,
   };
 }
 

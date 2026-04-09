@@ -674,6 +674,7 @@ class OrganizationResponse(BaseModel):
     llm_provider: Optional[str] = None
     llm_primary_model: Optional[str] = None
     llm_cheap_model: Optional[str] = None
+    llm_workflow_model: Optional[str] = None
 
 
 class OrganizationSignupLookupResponse(BaseModel):
@@ -706,6 +707,7 @@ class SyncOrganizationData(BaseModel):
     llm_provider: Optional[str] = None
     llm_primary_model: Optional[str] = None
     llm_cheap_model: Optional[str] = None
+    llm_workflow_model: Optional[str] = None
     subscription_required: bool = True
 
 
@@ -922,6 +924,7 @@ async def sync_user(request: SyncUserRequest) -> SyncUserResponse:
                         llm_provider=org.llm_provider,
                         llm_primary_model=org.llm_primary_model,
                         llm_cheap_model=org.llm_cheap_model,
+                        llm_workflow_model=org.llm_workflow_model,
                         subscription_required=not _sub_ok,
                     )
                 title_result = await session.execute(
@@ -1013,6 +1016,7 @@ async def sync_user(request: SyncUserRequest) -> SyncUserResponse:
                             llm_provider=org_retry.llm_provider,
                             llm_primary_model=org_retry.llm_primary_model,
                             llm_cheap_model=org_retry.llm_cheap_model,
+                            llm_workflow_model=org_retry.llm_workflow_model,
                             subscription_required=not _sub_ok,
                         )
                 return SyncUserResponse(
@@ -2333,6 +2337,7 @@ class UpdateOrganizationRequest(BaseModel):
     logo_url: Optional[str] = None
     llm_primary_model: Optional[str] = None
     llm_cheap_model: Optional[str] = None
+    llm_workflow_model: Optional[str] = None
 
 
 class UpdateGuestUserRequest(BaseModel):
@@ -2384,6 +2389,10 @@ async def update_organization(
             if request.llm_cheap_model and not is_model_allowed(request.llm_cheap_model):
                 raise HTTPException(status_code=400, detail=f"Model not allowed: {request.llm_cheap_model}")
             org.llm_cheap_model = request.llm_cheap_model or None
+        if request.llm_workflow_model is not None:
+            if request.llm_workflow_model and not is_model_allowed(request.llm_workflow_model):
+                raise HTTPException(status_code=400, detail=f"Model not allowed: {request.llm_workflow_model}")
+            org.llm_workflow_model = request.llm_workflow_model or None
 
         # Infer provider from primary model (or cheap model as fallback)
         inferred_model: str | None = org.llm_primary_model or org.llm_cheap_model
@@ -2394,8 +2403,8 @@ async def update_organization(
             org.llm_provider = None
 
         logger.info(
-            "update_organization org=%s primary_model=%s cheap_model=%s inferred_provider=%s",
-            org_id, org.llm_primary_model, org.llm_cheap_model, org.llm_provider,
+            "update_organization org=%s primary_model=%s cheap_model=%s workflow_model=%s inferred_provider=%s",
+            org_id, org.llm_primary_model, org.llm_cheap_model, org.llm_workflow_model, org.llm_provider,
         )
 
         await session.commit()
@@ -2410,6 +2419,7 @@ async def update_organization(
             llm_provider=org.llm_provider,
             llm_primary_model=org.llm_primary_model,
             llm_cheap_model=org.llm_cheap_model,
+            llm_workflow_model=org.llm_workflow_model,
         )
 
 
@@ -2464,6 +2474,7 @@ async def get_organization(
             llm_provider=org.llm_provider,
             llm_primary_model=org.llm_primary_model,
             llm_cheap_model=org.llm_cheap_model,
+            llm_workflow_model=org.llm_workflow_model,
         )
 
 
@@ -2681,6 +2692,7 @@ async def get_masquerade_user(
                     llm_provider=org.llm_provider,
                     llm_primary_model=org.llm_primary_model,
                     llm_cheap_model=org.llm_cheap_model,
+                    llm_workflow_model=org.llm_workflow_model,
                     subscription_required=not _sub_ok,
                 )
 

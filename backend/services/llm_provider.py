@@ -6,7 +6,7 @@ Resolution order for API keys:
 2. Global provider key (ANTHROPIC_API_KEY, MINIMAX_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY)
 
 Provider/model resolution:
-1. Organization.llm_provider / llm_primary_model / llm_cheap_model (DB)
+1. Organization.llm_provider / llm_primary_model / llm_cheap_model / llm_workflow_model (DB)
 2. Global defaults from config.settings
 """
 
@@ -48,6 +48,7 @@ async def resolve_llm_config(
     provider: LLMProvider = _DEFAULT_PROVIDER
     primary_model: str | None = None
     cheap_model: str | None = None
+    workflow_model: str | None = None
     org_handle: str | None = None
 
     if organization_id is not None:
@@ -68,6 +69,8 @@ async def resolve_llm_config(
                         primary_model = org.llm_primary_model
                     if org.llm_cheap_model:
                         cheap_model = org.llm_cheap_model
+                    if org.llm_workflow_model:
+                        workflow_model = org.llm_workflow_model
         except Exception:
             logger.warning(
                 "Failed to load org LLM config for %s; using global defaults",
@@ -91,6 +94,8 @@ async def resolve_llm_config(
         primary_model = settings.DEFAULT_PRIMARY_MODEL or provider_defaults["primary"]
     if not cheap_model:
         cheap_model = settings.DEFAULT_CHEAP_MODEL or provider_defaults["cheap"]
+    if not workflow_model:
+        workflow_model = primary_model
 
     # Resolve API key: org-specific env var → global provider key
     api_key: str = _resolve_api_key(provider, org_handle)
@@ -99,6 +104,7 @@ async def resolve_llm_config(
         provider=provider,
         primary_model=primary_model,
         cheap_model=cheap_model,
+        workflow_model=workflow_model,
         api_key=api_key,
     )
 

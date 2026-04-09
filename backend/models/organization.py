@@ -88,6 +88,7 @@ class Organization(Base):
     llm_provider: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     llm_primary_model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     llm_cheap_model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    llm_workflow_model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     # Relationships
     guest_users: Mapped[list["User"]] = relationship(
