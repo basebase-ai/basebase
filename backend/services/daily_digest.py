@@ -11,7 +11,6 @@ from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from anthropic import AsyncAnthropic
 from sqlalchemy import and_, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -29,11 +28,11 @@ from models.shared_file import SharedFile
 from models.tracker_issue import TrackerIssue
 from models.user import User
 from services.anthropic_health import report_anthropic_call_failure, report_anthropic_call_success
+from services.llm_provider import resolve_llm_config, get_adapter
 
 logger = logging.getLogger(__name__)
 
 _PT: ZoneInfo = ZoneInfo("America/Los_Angeles")
-_MODEL: str = settings.ANTHROPIC_CHEAP_MODEL
 
 _SYSTEM_PROMPT_TEMPLATE: str = (
     "You summarize {name_possessive} work for exactly one calendar day ({date}) "
@@ -416,7 +415,7 @@ def _empty_summary(member_name: str = "", digest_date: date | None = None, org_n
     }
 
 
-async def _call_llm_for_summary(raw: dict[str, Any]) -> dict[str, Any]:
+async def _call_llm_for_summary(raw: dict[str, Any], organization_id: UUID | str) -> dict[str, Any]:
     digest_date_str: str = str(raw.get("digest_date", ""))
     member_name: str = str(raw.get("member_name", "")).strip() or "This team member"
     first_name: str = member_name.split()[0] if member_name else "They"
@@ -435,15 +434,16 @@ async def _call_llm_for_summary(raw: dict[str, Any]) -> dict[str, Any]:
         first_name=first_name,
         org_name=org_name,
     )
-    client: AsyncAnthropic = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    llm_config = await resolve_llm_config(organization_id)
+    adapter = get_adapter(llm_config)
     payload: str = json.dumps(raw, default=str)[:120_000]
     user_msg: str = f"Raw activity data (JSON):\n{payload}"
     try:
-        resp = await client.messages.create(
-            model=_MODEL,
-            max_tokens=2048,
+        completed = await adapter.complete(
+            model=llm_config.cheap_model,
             system=system_prompt,
             messages=[{"role": "user", "content": user_msg}],
+            max_tokens=2048,
         )
         await report_anthropic_call_success(source="daily_digest")
     except Exception as exc:
@@ -452,9 +452,9 @@ async def _call_llm_for_summary(raw: dict[str, Any]) -> dict[str, Any]:
         return _empty_summary(member_name, parsed_date, org_name)
 
     text_parts: list[str] = []
-    for block in resp.content:
-        if hasattr(block, "text"):
-            text_parts.append(str(block.text))
+    for block in completed.content_blocks:
+        if block.text:
+            text_parts.append(block.text)
     combined: str = "".join(text_parts).strip()
     if combined.startswith("```"):
         first_newline: int = combined.find("\n")
@@ -501,7 +501,7 @@ async def generate_member_digest(
     if _is_raw_effectively_empty(raw):
         summary: dict[str, Any] = _empty_summary(raw_member_name, digest_date, raw_org_name)
     else:
-        summary = await _call_llm_for_summary(raw)
+        summary = await _call_llm_for_summary(raw, organization_id)
 
     now: datetime = datetime.now(timezone.utc)
     new_id: UUID = uuid.uuid4()
@@ -609,19 +609,20 @@ async def generate_team_summary(
         if prior_parts:
             user_msg += "Previous days' team summaries:\n\n" + "\n\n".join(prior_parts) + "\n\n---\n\n"
         user_msg += "Today's member summaries:\n\n" + "\n\n".join(narratives)
-        client: AsyncAnthropic = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        llm_config = await resolve_llm_config(organization_id)
+        adapter = get_adapter(llm_config)
         try:
-            resp = await client.messages.create(
-                model=_MODEL,
-                max_tokens=512,
+            completed = await adapter.complete(
+                model=llm_config.cheap_model,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_msg}],
+                max_tokens=512,
             )
             await report_anthropic_call_success(source="daily_team_summary")
             text_parts: list[str] = []
-            for block in resp.content:
-                if hasattr(block, "text"):
-                    text_parts.append(str(block.text))
+            for block in completed.content_blocks:
+                if block.text:
+                    text_parts.append(block.text)
             summary_text = "".join(text_parts).strip()[:2000] or "The team had a quiet day with no notable activity."
         except Exception as exc:
             await report_anthropic_call_failure(exc=exc, source="daily_team_summary")

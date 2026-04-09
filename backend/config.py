@@ -57,15 +57,24 @@ class Settings(BaseSettings):
     REDIS_SOCKET_CONNECT_TIMEOUT: float = 10.0
     REDIS_SOCKET_TIMEOUT: float = 10.0
 
+    # LLM defaults (provider-agnostic)
+    DEFAULT_PRIMARY_MODEL: str = "claude-opus-4-6"
+    DEFAULT_CHEAP_MODEL: str = "claude-haiku-4-5-20251001"
+    ALL_MODEL_STRINGS: str = ""
+
     # Anthropic
     ANTHROPIC_API_KEY: Optional[str] = None
-    ANTHROPIC_PRIMARY_MODEL: str = "claude-opus-4-6"
-    ANTHROPIC_CHEAP_MODEL: str = "claude-haiku-4-5-20251001"
-    
+
     # OpenAI (for embeddings + research fallback)
     OPENAI_API_KEY: Optional[str] = None
-    OPENAI_RESEARCH_MODEL: str = "gpt-5"  # Prefer GPT-5+ for web research synthesis
-    
+    OPENAI_RESEARCH_MODEL: str = "gpt-5"
+
+    # MiniMax (Anthropic-compatible LLM provider)
+    MINIMAX_API_KEY: Optional[str] = None
+
+    # Google Gemini (OpenAI-compatible LLM provider)
+    GEMINI_API_KEY: Optional[str] = None
+
     # Perplexity (for web search)
     PERPLEXITY_API_KEY: Optional[str] = None
 

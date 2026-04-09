@@ -671,6 +671,9 @@ class OrganizationResponse(BaseModel):
     logo_url: Optional[str] = None
     company_summary: Optional[str] = None
     handle: Optional[str] = None
+    llm_provider: Optional[str] = None
+    llm_primary_model: Optional[str] = None
+    llm_cheap_model: Optional[str] = None
 
 
 class OrganizationSignupLookupResponse(BaseModel):
@@ -2314,11 +2317,22 @@ async def remove_organization_member(
     return {"status": "removed"}
 
 
+_VALID_LLM_PROVIDERS: frozenset[str] = frozenset({"anthropic", "minimax", "openai", "gemini"})
+
+
+def _is_model_allowed(model: str) -> bool:
+    from services.llm_provider import is_model_allowed
+    return is_model_allowed(model)
+
+
 class UpdateOrganizationRequest(BaseModel):
     """Request model for updating organization settings."""
 
     name: Optional[str] = None
     logo_url: Optional[str] = None
+    llm_provider: Optional[str] = None
+    llm_primary_model: Optional[str] = None
+    llm_cheap_model: Optional[str] = None
 
 
 class UpdateGuestUserRequest(BaseModel):
@@ -2359,6 +2373,24 @@ async def update_organization(
             org.name = request.name
         if request.logo_url is not None:
             org.logo_url = request.logo_url
+        if request.llm_provider is not None:
+            if request.llm_provider == "":
+                org.llm_provider = None
+            elif request.llm_provider not in _VALID_LLM_PROVIDERS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid LLM provider. Must be one of: {', '.join(sorted(_VALID_LLM_PROVIDERS))}",
+                )
+            else:
+                org.llm_provider = request.llm_provider
+        if request.llm_primary_model is not None:
+            if request.llm_primary_model and not _is_model_allowed(request.llm_primary_model):
+                raise HTTPException(status_code=400, detail=f"Model not allowed: {request.llm_primary_model}")
+            org.llm_primary_model = request.llm_primary_model or None
+        if request.llm_cheap_model is not None:
+            if request.llm_cheap_model and not _is_model_allowed(request.llm_cheap_model):
+                raise HTTPException(status_code=400, detail=f"Model not allowed: {request.llm_cheap_model}")
+            org.llm_cheap_model = request.llm_cheap_model or None
 
         await session.commit()
         await session.refresh(org)
@@ -2369,7 +2401,20 @@ async def update_organization(
             email_domain=org.email_domain,
             logo_url=org.logo_url,
             company_summary=org.company_summary,
+            llm_provider=org.llm_provider,
+            llm_primary_model=org.llm_primary_model,
+            llm_cheap_model=org.llm_cheap_model,
         )
+
+
+@router.get("/llm-options")
+async def get_llm_options() -> dict[str, list[str]]:
+    """Return available LLM providers and allowed model strings."""
+    from services.llm_provider import get_allowed_models
+    return {
+        "providers": sorted(_VALID_LLM_PROVIDERS),
+        "models": get_allowed_models(),
+    }
 
 
 @router.get("/organizations/{org_id}", response_model=OrganizationResponse)
@@ -2413,6 +2458,9 @@ async def get_organization(
             email_domain=org.email_domain,
             logo_url=org.logo_url,
             company_summary=org.company_summary,
+            llm_provider=org.llm_provider,
+            llm_primary_model=org.llm_primary_model,
+            llm_cheap_model=org.llm_cheap_model,
         )
 
 

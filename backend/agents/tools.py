@@ -202,9 +202,18 @@ ALLOWED_TABLES: set[str] = {
 
 
 def get_tools(context: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    """Return tool definitions for Claude from the unified registry."""
+    """Return tool definitions for Claude from the unified registry (legacy Anthropic format)."""
     in_workflow = bool((context or {}).get("is_workflow"))
     return get_tools_for_claude(in_workflow=in_workflow)
+
+
+def get_tool_defs_for_context(context: dict[str, Any] | None = None) -> list["ToolDef"]:
+    """Return provider-agnostic tool definitions. Adapters translate to vendor format."""
+    from services.llm_adapter import ToolDef
+    from agents.registry import get_tool_defs
+
+    in_workflow: bool = bool((context or {}).get("is_workflow"))
+    return get_tool_defs(in_workflow=in_workflow)
 
 
 async def _should_skip_approval(

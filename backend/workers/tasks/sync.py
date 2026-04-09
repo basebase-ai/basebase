@@ -1381,7 +1381,6 @@ def generate_meeting_summary(
 # Delay before generating summary — gives time for multiple sources to arrive
 _SUMMARY_DELAY = 60
 
-_SUMMARY_MODEL = settings.ANTHROPIC_CHEAP_MODEL
 
 _SUMMARY_SYSTEM_PROMPT = (
     "You synthesize meeting notes from multiple sources into a single concise summary. "
@@ -1402,10 +1401,10 @@ async def _generate_meeting_summary(
     meeting_id: str,
     organization_id: str,
 ) -> dict[str, Any]:
-    from anthropic import AsyncAnthropic
     from config import settings
     from models.database import get_admin_session
     from models.meeting import Meeting
+    from services.llm_provider import resolve_llm_config, get_adapter
 
     async with get_admin_session() as session:
         meeting = await session.get(Meeting, UUID(meeting_id))
@@ -1429,14 +1428,14 @@ async def _generate_meeting_summary(
             + "\n\n---\n\n".join(parts)
         )
 
-    # Call Claude
-    client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    llm_config = await resolve_llm_config(organization_id)
+    adapter = get_adapter(llm_config)
     try:
-        response = await client.messages.create(
-            model=_SUMMARY_MODEL,
-            max_tokens=1024,
+        completed = await adapter.complete(
+            model=llm_config.cheap_model,
             system=_SUMMARY_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_message}],
+            max_tokens=1024,
         )
         await report_anthropic_call_success(source="workers.tasks.sync._generate_meeting_summary")
     except Exception as exc:
@@ -1445,7 +1444,7 @@ async def _generate_meeting_summary(
             source="workers.tasks.sync._generate_meeting_summary",
         )
         raise
-    summary_text = response.content[0].text.strip()
+    summary_text = (completed.content_blocks[0].text or "").strip() if completed.content_blocks else ""
 
     # Save
     async with get_admin_session() as session:

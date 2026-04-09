@@ -10,18 +10,15 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from anthropic import AsyncAnthropic
-
 from config import settings
 from models.app import App
 from services.anthropic_health import (
     report_anthropic_call_failure,
     report_anthropic_call_success,
 )
+from services.llm_provider import resolve_llm_config, get_adapter
 
 logger = logging.getLogger(__name__)
-
-_MODEL = settings.ANTHROPIC_CHEAP_MODEL
 
 _SYSTEM_PROMPT = """\
 You generate widget configs for app previews. A widget is a tiny card that shows
@@ -100,13 +97,14 @@ async def generate_widget_config(
     # Append detail-level-specific instructions to the system prompt
     system_prompt = _SYSTEM_PROMPT + _DETAIL_LEVEL_INSTRUCTIONS.get(detail_level, "")
 
-    client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    llm_config = await resolve_llm_config(organization_id)
+    adapter = get_adapter(llm_config)
     try:
-        response = await client.messages.create(
-            model=_MODEL,
-            max_tokens=300,
+        completed = await adapter.complete(
+            model=llm_config.cheap_model,
             system=system_prompt,
             messages=[{"role": "user", "content": user_message}],
+            max_tokens=300,
         )
         await report_anthropic_call_success(source="services.widget_inference.generate_widget_config")
     except Exception as exc:
@@ -116,7 +114,7 @@ async def generate_widget_config(
         )
         raise
 
-    raw_text = response.content[0].text.strip()
+    raw_text = (completed.content_blocks[0].text or "").strip() if completed.content_blocks else ""
     # Strip markdown fences if present
     if raw_text.startswith("```"):
         raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]

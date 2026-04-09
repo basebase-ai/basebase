@@ -184,6 +184,10 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
   const [isInvitingMissingFromSlack, setIsInvitingMissingFromSlack] = useState(false);
   const [orgName, setOrgName] = useState(organization.name);
   const [logoUrl, setLogoUrl] = useState(organization.logoUrl);
+  const [llmProvider, setLlmProvider] = useState<string>(organization.llmProvider ?? '');
+  const [llmPrimaryModel, setLlmPrimaryModel] = useState<string>(organization.llmPrimaryModel ?? '');
+  const [llmCheapModel, setLlmCheapModel] = useState<string>(organization.llmCheapModel ?? '');
+  const [llmAllowedModels, setLlmAllowedModels] = useState<string[]>([]);
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -196,10 +200,22 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
   useEffect(() => {
     setOrgName(organization.name);
     setLogoUrl(organization.logoUrl);
+    setLlmProvider(organization.llmProvider ?? '');
+    setLlmPrimaryModel(organization.llmPrimaryModel ?? '');
+    setLlmCheapModel(organization.llmCheapModel ?? '');
     setSettingsSaved(false);
     setExpandedMemberId(null);
     setMenuOpenMemberId(null);
-  }, [organization.id, organization.name, organization.logoUrl]);
+  }, [organization.id, organization.name, organization.logoUrl, organization.llmProvider, organization.llmPrimaryModel, organization.llmCheapModel]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await apiRequest<{ providers: string[]; models: string[] }>('/auth/llm-options');
+      if (!cancelled && data?.models?.length) setLlmAllowedModels(data.models);
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!menuOpenMemberId) return;
@@ -491,18 +507,28 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
   };
 
   const handleSaveSettings = async (): Promise<void> => {
-    if (!orgName.trim() || orgName === organization.name) return;
+    if (!hasUnsavedChanges) return;
 
     try {
-      await updateOrgMutation.mutateAsync({
+      const params: Record<string, string | null | undefined> & { orgId: string; userId: string } = {
         orgId: organization.id,
         userId: currentUser.id,
-        name: orgName,
-      });
+      };
+      if (orgName !== organization.name) params.name = orgName;
+      if (llmProvider !== (organization.llmProvider ?? '')) params.llmProvider = llmProvider || null;
+      if (llmPrimaryModel !== (organization.llmPrimaryModel ?? '')) params.llmPrimaryModel = llmPrimaryModel || null;
+      if (llmCheapModel !== (organization.llmCheapModel ?? '')) params.llmCheapModel = llmCheapModel || null;
+
+      await updateOrgMutation.mutateAsync(params);
       
       setSettingsSaved(true);
-      // Update Zustand store so sidebar reflects the change immediately
-      setOrganization({ ...organization, name: orgName });
+      setOrganization({
+        ...organization,
+        name: orgName,
+        llmProvider: llmProvider || null,
+        llmPrimaryModel: llmPrimaryModel || null,
+        llmCheapModel: llmCheapModel || null,
+      });
       setTimeout(() => setSettingsSaved(false), 2000);
     } catch (error) {
       alert(`Failed to save: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -588,7 +614,12 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
     }
   };
 
-  const hasUnsavedChanges = orgName !== organization.name;
+  const hasUnsavedChanges: boolean = (
+    orgName !== organization.name
+    || llmProvider !== (organization.llmProvider ?? '')
+    || llmPrimaryModel !== (organization.llmPrimaryModel ?? '')
+    || llmCheapModel !== (organization.llmCheapModel ?? '')
+  );
 
   const handleLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = event.target.files?.[0];
@@ -1315,6 +1346,79 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                   >
                     {isUploadingLogo ? 'Uploading...' : 'Upload logo'}
                   </button>
+                </div>
+              </div>
+
+              {/* AI Model Settings */}
+              <div className="pt-6 border-t border-surface-800">
+                <h3 className="text-sm font-medium text-surface-200 mb-3">AI Model</h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm text-surface-400 mb-1.5">Provider</label>
+                    <select
+                      value={llmProvider}
+                      onChange={(e) => {
+                        setLlmProvider(e.target.value);
+                        setLlmPrimaryModel('');
+                        setLlmCheapModel('');
+                      }}
+                      className="input-field"
+                    >
+                      <option value="">Default (Anthropic)</option>
+                      <option value="anthropic">Anthropic</option>
+                      <option value="openai">OpenAI</option>
+                      <option value="gemini">Google Gemini</option>
+                      <option value="minimax">MiniMax</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-surface-400 mb-1.5">Primary model</label>
+                    {llmAllowedModels.length > 0 ? (
+                      <select
+                        value={llmPrimaryModel}
+                        onChange={(e) => setLlmPrimaryModel(e.target.value)}
+                        className="input-field"
+                      >
+                        <option value="">Default</option>
+                        {llmAllowedModels.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={llmPrimaryModel}
+                        onChange={(e) => setLlmPrimaryModel(e.target.value)}
+                        placeholder="Default"
+                        className="input-field"
+                      />
+                    )}
+                    <p className="text-xs text-surface-500 mt-1">Leave blank for provider default</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-surface-400 mb-1.5">Fast model</label>
+                    {llmAllowedModels.length > 0 ? (
+                      <select
+                        value={llmCheapModel}
+                        onChange={(e) => setLlmCheapModel(e.target.value)}
+                        className="input-field"
+                      >
+                        <option value="">Default</option>
+                        {llmAllowedModels.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={llmCheapModel}
+                        onChange={(e) => setLlmCheapModel(e.target.value)}
+                        placeholder="Default"
+                        className="input-field"
+                      />
+                    )}
+                    <p className="text-xs text-surface-500 mt-1">Used for summaries, titles, and background tasks</p>
+                  </div>
                 </div>
               </div>
 

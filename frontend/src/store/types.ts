@@ -34,6 +34,9 @@ export interface OrganizationInfo {
   name: string;
   logoUrl: string | null;
   handle?: string | null; // Optional for backwards compat with persisted state
+  llmProvider?: string | null;
+  llmPrimaryModel?: string | null;
+  llmCheapModel?: string | null;
 }
 
 export interface UserOrganization {

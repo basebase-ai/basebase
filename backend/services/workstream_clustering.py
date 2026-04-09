@@ -13,10 +13,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import numpy as np
-from anthropic import AsyncAnthropic
 from sqlalchemy import select
 
 from config import settings
+from services.llm_provider import resolve_llm_config, get_adapter
 from models.conversation import Conversation
 from models.database import get_session
 from models.workstream import Workstream
@@ -99,7 +99,8 @@ async def _generate_cluster_labels(
     if not cluster_conversations:
         return []
 
-    client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    llm_config = await resolve_llm_config(organization_id)
+    adapter = get_adapter(llm_config)
     results: list[tuple[str, str]] = []
 
     for i, cluster in enumerate(cluster_conversations):
@@ -115,17 +116,18 @@ async def _generate_cluster_labels(
             '"label" and "description". No markdown.\n\n' + text
         )
         try:
-            response = await client.messages.create(
-                model=settings.ANTHROPIC_CHEAP_MODEL,
-                max_tokens=150,
+            completed = await adapter.complete(
+                model=llm_config.cheap_model,
+                system="You generate concise workstream labels.",
                 messages=[{"role": "user", "content": prompt}],
+                max_tokens=150,
             )
             raw: str = ""
-            for block in response.content:
-                if hasattr(block, "text") and block.text:
+            for block in completed.content_blocks:
+                if block.text:
                     raw = block.text.strip()
                     break
-            logger.info("Cluster %s raw response (%d blocks): %r", i, len(response.content), raw[:300] if raw else "(empty)")
+            logger.info("Cluster %s raw response (%d blocks): %r", i, len(completed.content_blocks), raw[:300] if raw else "(empty)")
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[-1] if "\n" in raw else raw[3:]
             if raw.endswith("```"):
