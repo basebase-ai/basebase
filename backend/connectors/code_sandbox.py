@@ -56,6 +56,37 @@ _SUDO_BLOCK_MESSAGE: str = (
     "Run commands without elevated privileges."
 )
 
+_MAX_EGRESS_BYTES: int = 1_000_000
+
+
+def _compile_command_invocation_pattern(command: str) -> re.Pattern[str]:
+    """Match command invocations including absolute-path forms (e.g. /usr/bin/curl)."""
+    return re.compile(
+        rf"(^|[;&|()\s\"'`])(?:[^\s;&|()\"'`]+/)?{re.escape(command)}(?=$|[;&|()\s\"'`])",
+        re.IGNORECASE,
+    )
+
+
+_NETWORK_EGRESS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (_compile_command_invocation_pattern("curl"), "curl"),
+    (_compile_command_invocation_pattern("wget"), "wget"),
+    (_compile_command_invocation_pattern("ftp"), "ftp"),
+    (_compile_command_invocation_pattern("sftp"), "sftp"),
+    (_compile_command_invocation_pattern("scp"), "scp"),
+    (_compile_command_invocation_pattern("rsync"), "rsync"),
+    (_compile_command_invocation_pattern("nc"), "nc"),
+    (_compile_command_invocation_pattern("ncat"), "ncat"),
+    (_compile_command_invocation_pattern("netcat"), "netcat"),
+    (_compile_command_invocation_pattern("socat"), "socat"),
+    (_compile_command_invocation_pattern("ssh"), "ssh"),
+    (re.compile(r"/dev/tcp/", re.IGNORECASE), "/dev/tcp"),
+)
+_NETWORK_EGRESS_BLOCK_MESSAGE: str = (
+    "Outbound network transfer commands are disabled in the code sandbox to enforce "
+    f"a strict <= {_MAX_EGRESS_BYTES:,} bytes external egress policy. "
+    "FTP/tunneling and similar exfiltration channels are blocked."
+)
+
 
 def get_blocked_package_install_reason(command: str) -> str | None:
     """Return a user-facing reason when a sandbox command violates command policy."""
@@ -71,6 +102,11 @@ def get_blocked_package_install_reason(command: str) -> str | None:
         if pattern.search(normalized_command):
             logger.info("[Sandbox] Blocked package installation attempt via %s", label)
             return f"{_PACKAGE_INSTALL_BLOCK_MESSAGE} Blocked command pattern: {label}."
+
+    for pattern, label in _NETWORK_EGRESS_PATTERNS:
+        if pattern.search(normalized_command):
+            logger.info("[Sandbox] Blocked outbound network command attempt via %s", label)
+            return f"{_NETWORK_EGRESS_BLOCK_MESSAGE} Blocked command pattern: {label}."
 
     return None
 

