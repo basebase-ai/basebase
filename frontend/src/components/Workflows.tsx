@@ -626,13 +626,13 @@ function WorkflowDetail({
               <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:gap-3">
                 <button
                   onClick={onArchive}
-                  className="w-full min-h-10 px-4 py-2 rounded-lg bg-surface-800 text-sm font-medium text-surface-300 hover:bg-surface-700 hover:text-surface-100 transition-colors"
+                  className="w-full min-h-10 px-4 py-2 rounded-lg bg-surface-800 text-sm font-medium text-surface-300 hover:bg-surface-700 hover:text-surface-100 transition-colors whitespace-nowrap sm:min-w-40"
                 >
                   Archive workflow
                 </button>
                 <button
                   onClick={() => setShowDeleteConfirm(true)}
-                  className="w-full min-h-10 px-4 py-2 rounded-lg bg-red-600/20 text-sm font-medium text-red-400 hover:bg-red-600/30 hover:text-red-300 transition-colors"
+                  className="w-full min-h-10 px-4 py-2 rounded-lg bg-red-600/20 text-sm font-medium text-red-400 hover:bg-red-600/30 hover:text-red-300 transition-colors whitespace-nowrap sm:min-w-40"
                 >
                   Delete workflow
                 </button>
@@ -642,14 +642,14 @@ function WorkflowDetail({
           <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:flex sm:items-center">
             <button
               onClick={onEdit}
-              className="w-full min-h-10 px-4 py-2 bg-surface-700 hover:bg-surface-600 text-surface-200 rounded-lg text-sm font-medium transition-colors"
+              className="w-full min-h-10 px-4 py-2 bg-surface-700 hover:bg-surface-600 text-surface-200 rounded-lg text-sm font-medium transition-colors whitespace-nowrap sm:min-w-40"
             >
               Edit
             </button>
             <button
               onClick={onTrigger}
               disabled={!workflow.is_enabled || isTriggering}
-              className="w-full min-h-10 px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:bg-surface-700 disabled:text-surface-500 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+              className="w-full min-h-10 px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:bg-surface-700 disabled:text-surface-500 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 whitespace-nowrap sm:min-w-40"
             >
               {isTriggering && (
                 <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
