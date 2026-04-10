@@ -184,7 +184,7 @@ async def _maybe_raise_query_success_incident(
     if not should_create:
         return
 
-    await create_pagerduty_incident(
+    incident_created = await create_pagerduty_incident(
         title="Rolling query success dropped to 25% or below",
         details=(
             f"Rolling 30-minute query success dropped to {success_rate_pct:.2f}% "
@@ -194,3 +194,12 @@ async def _maybe_raise_query_success_incident(
             f"incident_reason={reason}"
         ),
     )
+    if not incident_created:
+        logger.warning(
+            "Rolling query success incident request failed; clearing throttle for immediate retry "
+            "platform=%s success_pct=%.2f threshold_pct=%.2f",
+            platform,
+            success_rate_pct,
+            _QUERY_SUCCESS_INCIDENT_THRESHOLD_PCT,
+        )
+        await clear_incident_failure(_QUERY_SUCCESS_CHECK_NAME)
