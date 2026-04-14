@@ -317,6 +317,23 @@ class OpenAIAdapter:
             kwargs["base_url"] = base_url
         self._client: AsyncOpenAI = AsyncOpenAI(**kwargs)
 
+    def _build_token_limit_kwargs(self, *, model: str, max_tokens: int) -> dict[str, int]:
+        """Map token limit parameter name based on OpenAI model requirements."""
+        # Newer reasoning families (e.g. gpt-5 / o-series) reject `max_tokens`.
+        uses_completion_tokens: bool = model.startswith(("gpt-5", "o"))
+        token_param_name: str = (
+            "max_completion_tokens" if uses_completion_tokens else "max_tokens"
+        )
+        logger.debug(
+            "OpenAI token limit param selected",
+            extra={
+                "model": model,
+                "token_param_name": token_param_name,
+                "token_limit": max_tokens,
+            },
+        )
+        return {token_param_name: max_tokens}
+
     # -- streaming ----------------------------------------------------------
 
     async def stream(
@@ -335,10 +352,10 @@ class OpenAIAdapter:
 
         api_kwargs: dict[str, Any] = {
             "model": model,
-            "max_tokens": max_tokens,
             "messages": api_messages,
             "stream": True,
         }
+        api_kwargs.update(self._build_token_limit_kwargs(model=model, max_tokens=max_tokens))
         if tools:
             api_kwargs["tools"] = self.format_tools(tools)
 
@@ -428,8 +445,8 @@ class OpenAIAdapter:
 
         response = await self._client.chat.completions.create(
             model=model,
-            max_tokens=max_tokens,
             messages=api_messages,
+            **self._build_token_limit_kwargs(model=model, max_tokens=max_tokens),
         )
         blocks: list[ContentBlock] = self.build_completed_content(response)
         usage = response.usage
