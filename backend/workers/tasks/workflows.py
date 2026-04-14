@@ -960,9 +960,16 @@ async def _execute_workflow_via_agent(
                 user_id=conversation_user_id,
                 organization_id=workflow.organization_id,
                 type="workflow",
+                scope="private",
                 workflow_id=workflow.id,
                 title=f"Workflow: {workflow.name}",
                 parent_conversation_id=parent_conversation_id,
+            )
+            logger.info(
+                "[Workflow] Creating fallback workflow conversation with private scope "
+                "workflow_id=%s parent_conversation_id=%s",
+                workflow.id,
+                parent_conversation_id,
             )
             session.add(conversation)
             await session.flush()
@@ -972,9 +979,16 @@ async def _execute_workflow_via_agent(
             user_id=conversation_user_id,
             organization_id=workflow.organization_id,
             type="workflow",
+            scope="private",
             workflow_id=workflow.id,
             title=f"Workflow: {workflow.name}",
             parent_conversation_id=parent_conversation_id,
+        )
+        logger.info(
+            "[Workflow] Creating workflow conversation with private scope "
+            "workflow_id=%s parent_conversation_id=%s",
+            workflow.id,
+            parent_conversation_id,
         )
         session.add(conversation)
         await session.flush()
