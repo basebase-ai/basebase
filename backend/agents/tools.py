@@ -1564,6 +1564,90 @@ def _parse_sql_string_literal(raw_value: str) -> str | None:
     return None
 
 
+def _sql_literal_matches_user_id(raw_value: str, user_id: str) -> bool:
+    """Return True when a SQL literal token resolves to the provided user id."""
+    candidate = raw_value.strip()
+    match = re.match(r"^'([^']+)'\s*(::\s*uuid)?$", candidate, re.IGNORECASE)
+    if not match:
+        return False
+    return match.group(1).strip().lower() == user_id.strip().lower()
+
+
+def _scope_org_member_write_to_user(
+    *,
+    query: str,
+    operation: str,
+    user_id: str | None,
+) -> tuple[str | None, str | None]:
+    """Restrict non-admin org_members writes to the caller's own membership row."""
+    if not user_id:
+        return None, "Cannot write org_members rows without a user context."
+
+    if operation in {"UPDATE", "DELETE"}:
+        scoped = query.rstrip().rstrip(";")
+        scoped = f"{scoped} AND user_id = '{user_id}'"
+        return scoped, None
+
+    if operation == "INSERT":
+        parsed = _parse_insert_for_injection(query)
+        if parsed is None:
+            return None, "INSERT into org_members must use explicit column and value lists."
+
+        table_name, columns, values = parsed
+        column_names = [c.strip() for c in _split_sql_csv(columns)]
+        raw_values = _split_sql_csv(values)
+        if len(column_names) != len(raw_values):
+            return None, "Could not validate org_members INSERT values."
+
+        column_index = {
+            col.lower(): idx for idx, col in enumerate(column_names)
+        }
+        if "user_id" in column_index:
+            raw_user_value = raw_values[column_index["user_id"]]
+            if not _sql_literal_matches_user_id(raw_user_value, user_id):
+                return None, "Non-admin users can only write their own org_members row."
+            return query, None
+
+        scoped_columns = f"{columns}, user_id"
+        scoped_values = f"{values}, '{user_id}'"
+        scoped_query = f"INSERT INTO {table_name} ({scoped_columns}) VALUES ({scoped_values})"
+        return scoped_query, None
+
+    return None, f"Unsupported org_members operation: {operation}"
+
+
+async def _can_user_manage_other_org_members(organization_id: str, user_id: str | None) -> bool:
+    """Return True when the caller can modify other members in org_members."""
+    if not user_id:
+        return False
+
+    from models.org_member import OrgMember
+
+    try:
+        user_uuid = UUID(user_id)
+        org_uuid = UUID(organization_id)
+    except ValueError:
+        return False
+
+    async with get_admin_session() as session:
+        user: User | None = await session.get(User, user_uuid)
+        if not user:
+            return False
+
+        if user.role == "global_admin" or "global_admin" in (user.roles or []):
+            return True
+
+        membership_result = await session.execute(
+            select(OrgMember.role).where(
+                OrgMember.user_id == user_uuid,
+                OrgMember.organization_id == org_uuid,
+                OrgMember.status.in_(("active", "onboarding")),
+            )
+        )
+        membership_role: str | None = membership_result.scalar_one_or_none()
+        return membership_role == "admin"
+
+
 def _workflow_insert_would_auto_run(query: str) -> bool:
     """Return True when a workflow INSERT results in an enabled non-manual workflow."""
     parsed = _parse_insert_for_injection(query)
@@ -1710,6 +1794,30 @@ async def _run_sql_write(
                         f"Allowed columns: {', '.join(sorted(allowed_cols))}"
                     )
                 }
+
+    if table == "org_members":
+        can_manage_other_members = await _can_user_manage_other_org_members(organization_id, user_id)
+        if not can_manage_other_members:
+            scoped_query, scope_error = _scope_org_member_write_to_user(
+                query=query,
+                operation=operation or "",
+                user_id=user_id,
+            )
+            if scope_error:
+                logger.warning(
+                    "[Tools._run_sql_write] Blocked non-admin org_members write org=%s user=%s error=%s",
+                    organization_id,
+                    user_id,
+                    scope_error,
+                )
+                return {"error": scope_error}
+            if scoped_query and scoped_query != query:
+                logger.info(
+                    "[Tools._run_sql_write] Scoped non-admin org_members write to caller row org=%s user=%s",
+                    organization_id,
+                    user_id,
+                )
+                query = scoped_query
 
     # Prevent autonomous workflow fan-out: a workflow run cannot create other
     # workflows that are automatically runnable (enabled + non-manual trigger).
