@@ -641,8 +641,16 @@ async def trigger_workflow(
                 user_id=trigger_user_uuid or workflow.created_by_user_id,
                 organization_id=workflow.organization_id,
                 type="workflow",
+                scope="private",
                 workflow_id=workflow.id,
                 title=f"Workflow: {workflow.name}",
+            )
+            logger.info(
+                "[Workflows API] Creating workflow conversation with private default scope",
+                extra={
+                    "workflow_id": str(workflow.id),
+                    "conversation_scope": "private",
+                },
             )
             session.add(conversation)
             await session.commit()
