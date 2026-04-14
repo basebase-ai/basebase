@@ -811,6 +811,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                       const displayName: string = member.name ?? member.email.split('@')[0] ?? 'Unknown';
                       const isGuest: boolean = member.isGuest;
                       const isInvited: boolean = member.status === 'invited';
+                      const isOrgAdminMember: boolean = member.role === 'admin';
                       const isAdmin: boolean = member.role === 'admin'
                         || member.role === 'global_admin'
                         || member.canLoginAsAdmin;
@@ -950,13 +951,13 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                                           type="button"
                                           onClick={() => {
                                             setMenuOpenMemberId(null);
-                                            const nextRole: 'admin' | 'member' = member.role === 'admin' ? 'member' : 'admin';
+                                            const nextRole: 'admin' | 'member' = isOrgAdminMember ? 'member' : 'admin';
                                             void handleUpdateMemberRole(member.id, nextRole);
                                           }}
                                           disabled={updateMemberRoleMutation.isPending}
                                           className="w-full text-left px-3 py-2 text-sm text-surface-200 hover:bg-surface-600/60 transition-colors disabled:opacity-50"
                                         >
-                                          {member.role === 'admin' ? 'Remove admin' : 'Make admin'}
+                                          {isOrgAdminMember ? 'Demote to user' : 'Promote to admin'}
                                         </button>
                                         <button
                                           type="button"
