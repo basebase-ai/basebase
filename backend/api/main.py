@@ -157,6 +157,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 # Routes
 app.include_router(apps.router, prefix="/api/apps", tags=["apps"])
 app.include_router(public.router, prefix="/api/public", tags=["public"])
+app.include_router(public.share_router, tags=["public"])
 app.include_router(connectors.router, prefix="/api/connectors", tags=["connectors"])
 app.include_router(artifacts.router, prefix="/api/artifacts", tags=["artifacts"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])

@@ -18,11 +18,14 @@ from sqlalchemy import select
 from config import settings
 from models.app import App
 from models.artifact import Artifact
+from models.conversation import Conversation
 from models.database import get_admin_session, get_session
+from models.user import User
 from services.app_query_runner import AppQueryResponse as QueryResponse, run_named_app_query
 from services.public_previews import build_preview_html, decode_data_url_image, render_card_png
 
 router = APIRouter()
+share_router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
@@ -150,7 +153,39 @@ def _frontend_origin() -> str:
     return settings.FRONTEND_URL.rstrip("/")
 
 
+def _owner_label(user: User | None) -> str:
+    """Return a compact owner label suitable for public descriptions."""
+    if user is None:
+        return "Unknown owner"
+    if user.name:
+        return user.name
+    if user.email:
+        return user.email
+    return "Unknown owner"
+
+
+def _public_preview_description(
+    *,
+    conversation: Conversation | None,
+    app: App | None = None,
+    artifact: Artifact | None = None,
+    owner: User | None,
+) -> str:
+    """Build a concise public description for social preview unfurls."""
+    owner_label = _owner_label(owner)
+    if conversation and conversation.title:
+        return f"{conversation.title} — {owner_label}"
+    if app and app.title:
+        return f"{app.title} — {owner_label}"
+    if artifact and artifact.title:
+        return f"{artifact.title} — {owner_label}"
+    if artifact:
+        return f"Document — {owner_label}"
+    return f"Application — {owner_label}"
+
+
 @router.get("/share/apps/{app_id}", response_class=HTMLResponse)
+@share_router.get("/basebase/apps/{app_id}", response_class=HTMLResponse)
 async def get_public_app_share_preview(app_id: str, request: Request) -> HTMLResponse:
     """HTML metadata endpoint used by Slack + external scrapers for public app links."""
     try:
@@ -163,20 +198,35 @@ async def get_public_app_share_preview(app_id: str, request: Request) -> HTMLRes
             select(App).where(App.id == app_uuid, App.visibility == "public")
         )
         app: App | None = result.scalar_one_or_none()
+        conversation: Conversation | None = None
+        owner: User | None = None
+        if app is not None and app.conversation_id:
+            conversation = await session.scalar(
+                select(Conversation).where(Conversation.id == app.conversation_id)
+            )
+        if app is not None:
+            owner = await session.scalar(select(User).where(User.id == app.user_id))
     if app is None:
         raise HTTPException(status_code=404, detail="App not found")
 
     logger.info("[public_preview] rendering app preview app_id=%s", app_id)
-    canonical_url = f"{_frontend_origin()}/public/apps/{app_id}"
+    canonical_url = f"{_frontend_origin()}/basebase/apps/{app_id}"
+    redirect_url = f"{_frontend_origin()}/public/apps/{app_id}"
     image_url = f"{request.base_url}api/public/share/apps/{app_id}/snapshot.png"
-    title = app.title or "Basebase App"
-    description = app.description or "Interactive app shared from Basebase."
+    title = "base base"
+    description = _public_preview_description(conversation=conversation, app=app, owner=owner)
+    logger.info(
+        "[public_preview] app metadata app_id=%s title=%s description=%s",
+        app_id,
+        title,
+        description,
+    )
     html = build_preview_html(
         page_title=title,
         description=description,
         canonical_url=canonical_url,
         image_url=image_url,
-        redirect_url=canonical_url,
+        redirect_url=redirect_url,
     )
     return HTMLResponse(content=html, headers={"Cache-Control": "public, max-age=300"})
 
@@ -215,6 +265,8 @@ async def get_public_app_share_snapshot(app_id: str) -> Response:
 
 
 @router.get("/share/artifacts/{artifact_id}", response_class=HTMLResponse)
+@share_router.get("/basebase/documents/{artifact_id}", response_class=HTMLResponse)
+@share_router.get("/basebase/artifacts/{artifact_id}", response_class=HTMLResponse)
 async def get_public_artifact_share_preview(artifact_id: str, request: Request) -> HTMLResponse:
     """HTML metadata endpoint used by Slack + external scrapers for public artifact links."""
     try:
@@ -227,20 +279,35 @@ async def get_public_artifact_share_preview(artifact_id: str, request: Request) 
             select(Artifact).where(Artifact.id == artifact_uuid, Artifact.visibility == "public")
         )
         artifact: Artifact | None = result.scalar_one_or_none()
+        conversation: Conversation | None = None
+        owner: User | None = None
+        if artifact is not None and artifact.conversation_id:
+            conversation = await session.scalar(
+                select(Conversation).where(Conversation.id == artifact.conversation_id)
+            )
+        if artifact is not None and artifact.user_id:
+            owner = await session.scalar(select(User).where(User.id == artifact.user_id))
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
 
     logger.info("[public_preview] rendering artifact preview artifact_id=%s", artifact_id)
-    canonical_url = f"{_frontend_origin()}/public/artifacts/{artifact_id}"
+    canonical_url = f"{_frontend_origin()}/basebase/documents/{artifact_id}"
+    redirect_url = f"{_frontend_origin()}/public/artifacts/{artifact_id}"
     image_url = f"{request.base_url}api/public/share/artifacts/{artifact_id}/snapshot.png"
-    title = artifact.title or "Basebase Artifact"
-    description = artifact.description or (artifact.content or "Shared artifact from Basebase.")
+    title = "base base"
+    description = _public_preview_description(conversation=conversation, artifact=artifact, owner=owner)
+    logger.info(
+        "[public_preview] artifact metadata artifact_id=%s title=%s description=%s",
+        artifact_id,
+        title,
+        description,
+    )
     html = build_preview_html(
         page_title=title,
         description=description[:240],
         canonical_url=canonical_url,
         image_url=image_url,
-        redirect_url=canonical_url,
+        redirect_url=redirect_url,
     )
     return HTMLResponse(content=html, headers={"Cache-Control": "public, max-age=300"})
 

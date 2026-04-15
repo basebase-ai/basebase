@@ -114,7 +114,7 @@ export function AppFullView({ appId }: AppFullViewProps): JSX.Element {
   const handleCopyLink = async (): Promise<void> => {
     const isPublic: boolean = app?.visibility === "public";
     const url: string = isPublic
-      ? `${window.location.origin}/api/public/share/apps/${appId}`
+      ? `${window.location.origin}/basebase/apps/${appId}`
       : `${window.location.origin}${prefix}/apps/${appId}`;
     await navigator.clipboard.writeText(url);
     setLinkCopied(true);
