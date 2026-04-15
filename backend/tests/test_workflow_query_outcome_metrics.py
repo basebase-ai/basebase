@@ -70,3 +70,27 @@ def test_record_workflow_query_outcome_ignores_skipped_status(monkeypatch) -> No
     )
 
     assert calls == []
+
+
+def test_record_workflow_query_outcome_records_error_status_as_failure(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def _fake_record_query_outcome(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(
+        "services.query_outcome_metrics.record_query_outcome",
+        _fake_record_query_outcome,
+    )
+
+    asyncio.run(
+        workflows._record_workflow_query_outcome(
+            result={"status": "error", "error": "Model is not available"},
+            workflow_id="wf-999",
+        )
+    )
+
+    assert captured["platform"] == "workflow"
+    assert captured["was_success"] is False
+    assert captured["failure_reason"] == "model is not available"
+    assert captured["conversation_id"] == "workflow:wf-999"

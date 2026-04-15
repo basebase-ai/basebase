@@ -49,7 +49,7 @@ async def _record_workflow_query_outcome(
         return
 
     status = (result.get("status") or "").strip().lower()
-    if status not in {"completed", "failed"}:
+    if status not in {"completed", "failed", "error"}:
         return
 
     from services.query_outcome_metrics import normalize_failure_reason, record_query_outcome
