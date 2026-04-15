@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 from uuid import UUID
 
@@ -27,6 +28,51 @@ from services.public_previews import build_preview_html, decode_data_url_image, 
 router = APIRouter()
 share_router = APIRouter()
 logger = logging.getLogger(__name__)
+
+_PREVIEW_CACHE_TTL_SECONDS = 300
+_PREVIEW_CACHE_MAX_ITEMS = 512
+_preview_html_cache: dict[str, tuple[float, str]] = {}
+_preview_image_cache: dict[str, tuple[float, bytes, str]] = {}
+
+
+def _cache_get_html(key: str) -> str | None:
+    now = time.time()
+    cached = _preview_html_cache.get(key)
+    if cached is None:
+        return None
+    expires_at, html = cached
+    if now > expires_at:
+        _preview_html_cache.pop(key, None)
+        return None
+    return html
+
+
+def _cache_set_html(key: str, html: str) -> None:
+    if len(_preview_html_cache) >= _PREVIEW_CACHE_MAX_ITEMS:
+        _preview_html_cache.pop(next(iter(_preview_html_cache)), None)
+    _preview_html_cache[key] = (time.time() + _PREVIEW_CACHE_TTL_SECONDS, html)
+
+
+def _cache_get_image(key: str) -> tuple[bytes, str] | None:
+    now = time.time()
+    cached = _preview_image_cache.get(key)
+    if cached is None:
+        return None
+    expires_at, image_bytes, mime_type = cached
+    if now > expires_at:
+        _preview_image_cache.pop(key, None)
+        return None
+    return image_bytes, mime_type
+
+
+def _cache_set_image(key: str, image_bytes: bytes, mime_type: str) -> None:
+    if len(_preview_image_cache) >= _PREVIEW_CACHE_MAX_ITEMS:
+        _preview_image_cache.pop(next(iter(_preview_image_cache)), None)
+    _preview_image_cache[key] = (
+        time.time() + _PREVIEW_CACHE_TTL_SECONDS,
+        image_bytes,
+        mime_type,
+    )
 
 
 @router.get("/apps/{app_id}")
@@ -224,18 +270,30 @@ async def get_public_app_share_preview(app_id: str, request: Request) -> HTMLRes
             select(App).where(App.id == app_uuid, App.visibility == "public")
         )
         app: App | None = result.scalar_one_or_none()
-        conversation: Conversation | None = None
-        owner: User | None = None
-        if app is not None and app.conversation_id:
-            conversation = await session.scalar(
-                select(Conversation).where(Conversation.id == app.conversation_id)
-            )
-        if app is not None:
-            owner = await session.scalar(select(User).where(User.id == app.user_id))
     if app is None:
         raise HTTPException(status_code=404, detail="App not found")
 
     logger.info("[public_preview] rendering app preview app_id=%s", app_id)
+    app_updated_at = app.updated_at.isoformat() if app.updated_at else "none"
+    html_cache_key = f"app_preview:{app_id}:{app_updated_at}"
+    cached_html = _cache_get_html(html_cache_key)
+    if cached_html is not None:
+        logger.info("[public_preview] app preview cache hit app_id=%s", app_id)
+        return HTMLResponse(
+            content=cached_html,
+            headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=60"},
+        )
+
+    logger.info("[public_preview] app preview cache miss app_id=%s", app_id)
+    conversation: Conversation | None = None
+    owner: User | None = None
+    async with get_admin_session() as session:
+        if app.conversation_id:
+            conversation = await session.scalar(
+                select(Conversation).where(Conversation.id == app.conversation_id)
+            )
+        owner = await session.scalar(select(User).where(User.id == app.user_id))
+
     canonical_url = f"{_frontend_origin()}/basebase/apps/{app_id}"
     redirect_url = f"{_frontend_origin()}/public/apps/{app_id}"
     image_url = f"{_public_origin(request)}/api/public/share/apps/{app_id}/snapshot.png"
@@ -254,7 +312,11 @@ async def get_public_app_share_preview(app_id: str, request: Request) -> HTMLRes
         image_url=image_url,
         redirect_url=redirect_url,
     )
-    return HTMLResponse(content=html, headers={"Cache-Control": "public, max-age=300"})
+    _cache_set_html(html_cache_key, html)
+    return HTMLResponse(
+        content=html,
+        headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=60"},
+    )
 
 
 @router.get("/share/apps/{app_id}/snapshot.png")
@@ -272,13 +334,29 @@ async def get_public_app_share_snapshot(app_id: str) -> Response:
         app: App | None = result.scalar_one_or_none()
     if app is None:
         raise HTTPException(status_code=404, detail="App not found")
+    app_updated_at = app.updated_at.isoformat() if app.updated_at else "none"
+    image_cache_key = f"app_snapshot:{app_id}:{app_updated_at}"
+    cached_image = _cache_get_image(image_cache_key)
+    if cached_image is not None:
+        image_bytes, mime_type = cached_image
+        logger.info("[public_preview] app snapshot cache hit app_id=%s mime=%s", app_id, mime_type)
+        return Response(
+            content=image_bytes,
+            media_type=mime_type,
+            headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=60"},
+        )
 
     screenshot_data_url: str | None = (app.widget_config or {}).get("screenshot")
     decoded = decode_data_url_image(screenshot_data_url)
     if decoded is not None:
         image_bytes, mime_type = decoded
         logger.info("[public_preview] serving app screenshot app_id=%s mime=%s", app_id, mime_type)
-        return Response(content=image_bytes, media_type=mime_type, headers={"Cache-Control": "public, max-age=300"})
+        _cache_set_image(image_cache_key, image_bytes, mime_type)
+        return Response(
+            content=image_bytes,
+            media_type=mime_type,
+            headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=60"},
+        )
 
     logger.info("[public_preview] app screenshot missing; serving generated card app_id=%s", app_id)
     image_bytes = render_card_png(
@@ -287,7 +365,12 @@ async def get_public_app_share_snapshot(app_id: str) -> Response:
         description=app.description or "Interactive app shared from Basebase.",
         footer=f"App ID: {app_id}",
     )
-    return Response(content=image_bytes, media_type="image/png", headers={"Cache-Control": "public, max-age=300"})
+    _cache_set_image(image_cache_key, image_bytes, "image/png")
+    return Response(
+        content=image_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=60"},
+    )
 
 
 @router.get("/share/artifacts/{artifact_id}", response_class=HTMLResponse)
@@ -305,18 +388,37 @@ async def get_public_artifact_share_preview(artifact_id: str, request: Request) 
             select(Artifact).where(Artifact.id == artifact_uuid, Artifact.visibility == "public")
         )
         artifact: Artifact | None = result.scalar_one_or_none()
-        conversation: Conversation | None = None
-        owner: User | None = None
-        if artifact is not None and artifact.conversation_id:
-            conversation = await session.scalar(
-                select(Conversation).where(Conversation.id == artifact.conversation_id)
-            )
-        if artifact is not None and artifact.user_id:
-            owner = await session.scalar(select(User).where(User.id == artifact.user_id))
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
 
     logger.info("[public_preview] rendering artifact preview artifact_id=%s", artifact_id)
+    artifact_version = ":".join(
+        [
+            str(artifact.created_at.isoformat() if artifact.created_at else "none"),
+            str(artifact.title or ""),
+            str(artifact.description or ""),
+            str(artifact.content_type or ""),
+        ]
+    )
+    html_cache_key = f"artifact_preview:{artifact_id}:{artifact_version}"
+    cached_html = _cache_get_html(html_cache_key)
+    if cached_html is not None:
+        logger.info("[public_preview] artifact preview cache hit artifact_id=%s", artifact_id)
+        return HTMLResponse(
+            content=cached_html,
+            headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=60"},
+        )
+    logger.info("[public_preview] artifact preview cache miss artifact_id=%s", artifact_id)
+    conversation: Conversation | None = None
+    owner: User | None = None
+    async with get_admin_session() as session:
+        if artifact.conversation_id:
+            conversation = await session.scalar(
+                select(Conversation).where(Conversation.id == artifact.conversation_id)
+            )
+        if artifact.user_id:
+            owner = await session.scalar(select(User).where(User.id == artifact.user_id))
+
     canonical_url = f"{_frontend_origin()}/basebase/documents/{artifact_id}"
     redirect_url = f"{_frontend_origin()}/public/artifacts/{artifact_id}"
     image_url = f"{_public_origin(request)}/api/public/share/artifacts/{artifact_id}/snapshot.png"
@@ -335,7 +437,11 @@ async def get_public_artifact_share_preview(artifact_id: str, request: Request) 
         image_url=image_url,
         redirect_url=redirect_url,
     )
-    return HTMLResponse(content=html, headers={"Cache-Control": "public, max-age=300"})
+    _cache_set_html(html_cache_key, html)
+    return HTMLResponse(
+        content=html,
+        headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=60"},
+    )
 
 
 @router.get("/share/artifacts/{artifact_id}/snapshot.png")
@@ -353,6 +459,24 @@ async def get_public_artifact_share_snapshot(artifact_id: str) -> Response:
         artifact: Artifact | None = result.scalar_one_or_none()
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
+    artifact_version = ":".join(
+        [
+            str(artifact.created_at.isoformat() if artifact.created_at else "none"),
+            str(artifact.title or ""),
+            str(artifact.description or ""),
+            str(artifact.content_type or ""),
+        ]
+    )
+    image_cache_key = f"artifact_snapshot:{artifact_id}:{artifact_version}"
+    cached_image = _cache_get_image(image_cache_key)
+    if cached_image is not None:
+        image_bytes, mime_type = cached_image
+        logger.info("[public_preview] artifact snapshot cache hit artifact_id=%s", artifact_id)
+        return Response(
+            content=image_bytes,
+            media_type=mime_type,
+            headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=60"},
+        )
 
     summary = (artifact.description or artifact.content or "Shared artifact from Basebase.").replace("\n", " ")
     image_bytes = render_card_png(
@@ -362,4 +486,9 @@ async def get_public_artifact_share_snapshot(artifact_id: str) -> Response:
         footer=f"Type: {artifact.content_type or artifact.type or 'document'}",
     )
     logger.info("[public_preview] serving generated artifact snapshot artifact_id=%s", artifact_id)
-    return Response(content=image_bytes, media_type="image/png", headers={"Cache-Control": "public, max-age=300"})
+    _cache_set_image(image_cache_key, image_bytes, "image/png")
+    return Response(
+        content=image_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=60"},
+    )

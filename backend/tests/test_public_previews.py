@@ -3,7 +3,13 @@ from __future__ import annotations
 import base64
 from types import SimpleNamespace
 
-from api.routes.public import _public_origin, _public_preview_description, _public_preview_title
+from api.routes.public import (
+    _cache_get_html,
+    _cache_set_html,
+    _public_origin,
+    _public_preview_description,
+    _public_preview_title,
+)
 from services.public_previews import build_preview_html, decode_data_url_image, render_card_png
 
 
@@ -74,3 +80,14 @@ def test_public_origin_prefers_forwarded_proxy_headers() -> None:
         url=SimpleNamespace(scheme="http", netloc="internal:8000"),
     )
     assert _public_origin(request) == "https://app.basebase.com"
+
+
+def test_preview_html_cache_hit_and_expiry(monkeypatch) -> None:
+    fake_now = {"value": 1_000.0}
+    monkeypatch.setattr("api.routes.public.time.time", lambda: fake_now["value"])
+
+    _cache_set_html("preview:test", "<html>cached</html>")
+    assert _cache_get_html("preview:test") == "<html>cached</html>"
+
+    fake_now["value"] += 301.0
+    assert _cache_get_html("preview:test") is None
