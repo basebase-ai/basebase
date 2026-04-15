@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+from types import SimpleNamespace
 
+from api.routes.public import _public_preview_description
 from services.public_previews import build_preview_html, decode_data_url_image, render_card_png
 
 
@@ -35,3 +37,21 @@ def test_render_card_png_returns_png_bytes() -> None:
         footer="App ID: abc",
     )
     assert png.startswith(b"\x89PNG")
+
+
+def test_public_preview_description_prefers_conversation_title_with_owner() -> None:
+    description = _public_preview_description(
+        conversation=SimpleNamespace(title="Q2 forecast"),
+        app=SimpleNamespace(title="Pipeline app"),
+        owner=SimpleNamespace(name="Alex", email="alex@example.com"),
+    )
+    assert description == "Q2 forecast — Alex"
+
+
+def test_public_preview_description_falls_back_to_document_and_owner_email() -> None:
+    description = _public_preview_description(
+        conversation=None,
+        artifact=SimpleNamespace(title=None),
+        owner=SimpleNamespace(name=None, email="owner@example.com"),
+    )
+    assert description == "Document — owner@example.com"
