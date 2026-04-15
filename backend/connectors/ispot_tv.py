@@ -334,7 +334,7 @@ class ISpotTvConnector(BaseConnector):
             },
         ]
 
-    async def query(self, request: str) -> dict[str, Any]:
+    async def query(self, request: str, info: dict[str, Any] | None = None) -> dict[str, Any]:
         """Execute an ad-hoc iSpot API query. Request is JSON with endpoint, filters, include, metrics, sort, page_size."""
         try:
             payload: dict[str, Any] = json.loads(request) if isinstance(request, str) else request

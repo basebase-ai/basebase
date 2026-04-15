@@ -802,7 +802,7 @@ Use `run_sql_query` on `github_repositories`, `github_commits`, `github_pull_req
 
         return prefix, value.strip(), params
 
-    async def query(self, request: str) -> dict[str, Any]:
+    async def query(self, request: str, info: dict[str, Any] | None = None) -> dict[str, Any]:
         """Dispatch an on-demand read query (QUERY capability).
 
         Supported prefixes: file:, dir:, issue:, issues:, pr:, prs:, commit:.

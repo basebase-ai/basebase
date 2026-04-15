@@ -424,7 +424,7 @@ class ApolloConnector(BaseConnector):
     # QUERY capability
     # =========================================================================
 
-    async def query(self, request: str) -> dict[str, Any]:
+    async def query(self, request: str, info: dict[str, Any] | None = None) -> dict[str, Any]:
         """Dispatch enrichment queries: person or company."""
         import json as _json
 

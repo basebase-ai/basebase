@@ -99,7 +99,7 @@ class ArtifactConnector(BaseConnector):
     async def fetch_deal(self, deal_id: str) -> dict[str, Any]:
         return {}
 
-    async def query(self, request: str) -> dict[str, Any]:
+    async def query(self, request: str, info: dict[str, Any] | None = None) -> dict[str, Any]:
         req: str = (request or "").strip()
         if not req.lower().startswith("read "):
             return {

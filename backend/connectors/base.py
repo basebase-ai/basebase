@@ -715,7 +715,7 @@ class BaseConnector(ABC):
         """Return schema/entity metadata (QUERY capability)."""
         return []
 
-    async def query(self, request: str) -> dict[str, Any]:
+    async def query(self, request: str, info: dict[str, Any] | None = None) -> dict[str, Any]:
         """Execute an on-demand query (QUERY capability)."""
         raise NotImplementedError(f"{self.source_system} does not support query()")
 

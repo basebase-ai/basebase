@@ -2078,7 +2078,7 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
         total: int = sum(counts.values())
         return {"files": total}
 
-    async def query(self, request: str) -> dict[str, Any]:
+    async def query(self, request: str, info: dict[str, Any] | None = None) -> dict[str, Any]:
         """Search files or read file content (QUERY capability).
 
         Prefix with 'search:' to search by file name; use 'search:spreadsheet' (or sheet/doc/slides) to list by type.

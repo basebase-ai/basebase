@@ -342,7 +342,7 @@ async def execute_tool(
         # Connector-driven generic tools
         "list_connected_connectors": lambda: _list_connected_connectors(organization_id),
         "get_connector_docs": lambda: _get_connector_docs(tool_input, organization_id),
-        "query_on_connector": lambda: _query_on_connector(tool_input, organization_id, user_id),
+        "query_on_connector": lambda: _query_on_connector(tool_input, organization_id, user_id, context),
         "write_on_connector": lambda: _write_on_connector(tool_input, organization_id, user_id, skip_approval, context),
         "run_on_connector": lambda: _run_on_connector(tool_input, organization_id, user_id, skip_approval, context),
     }
@@ -971,7 +971,10 @@ async def _attach_connector_docs(
 
 
 async def _query_on_connector(
-    params: dict[str, Any], organization_id: str, user_id: str | None
+    params: dict[str, Any],
+    organization_id: str,
+    user_id: str | None,
+    context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Dispatch a query to a QUERY-capable connector."""
     connector: str = (params.get("connector") or "").strip()
@@ -997,9 +1000,23 @@ async def _query_on_connector(
     assert instance is not None
 
     cross_user_warning = _build_cross_user_connector_warning(connector, instance, user_id)
+    query_info: dict[str, Any] = {}
+    context_model: str | None = (context or {}).get("model")
+    if context_model:
+        query_info["model"] = context_model
+        logger.info(
+            "[Tools] query_on_connector forwarding model context connector=%s model=%s",
+            connector,
+            context_model,
+        )
 
     try:
-        result = await instance.query(query)
+        # New connector interface accepts optional metadata in `info`; gracefully
+        # fallback for older connectors that only accept a request string.
+        try:
+            result = await instance.query(query, info=query_info or None)
+        except TypeError:
+            result = await instance.query(query)
         return _attach_cross_user_connector_warning(result, cross_user_warning)
     except Exception as exc:
         logger.error("[Tools] query_on_connector(%s) failed: %s", connector, exc, exc_info=True)

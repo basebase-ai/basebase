@@ -1205,7 +1205,7 @@ Returns normalized messages for one channel since a cutoff (does not write to th
             # Silently ignore if reaction was already removed or doesn't exist
             pass
 
-    async def query(self, request: str) -> dict[str, Any]:
+    async def query(self, request: str, info: dict[str, Any] | None = None) -> dict[str, Any]:
         """Execute a read-only query against Slack."""
         stripped = request.strip()
         if stripped.lower().replace(" ", "_") in ("list_channels", "channels", "get_channels"):

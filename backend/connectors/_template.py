@@ -137,7 +137,7 @@ class TemplateConnector(BaseConnector):
             {"entity": "contacts", "fields": ["id", "name", "email"]},
         ]
 
-    async def query(self, request: str) -> dict[str, Any]:
+    async def query(self, request: str, info: dict[str, Any] | None = None) -> dict[str, Any]:
         """Execute an on-demand query."""
         return {"results": [], "query": request}
 

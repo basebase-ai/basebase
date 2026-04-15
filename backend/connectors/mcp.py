@@ -280,7 +280,7 @@ class McpConnector(BaseConnector):
     # QUERY capability
     # ------------------------------------------------------------------
 
-    async def query(self, request: str) -> dict[str, Any]:
+    async def query(self, request: str, info: dict[str, Any] | None = None) -> dict[str, Any]:
         """List available tools or describe a specific tool."""
         endpoint_url, auth_header, cached_tools = await self._get_mcp_config()
 

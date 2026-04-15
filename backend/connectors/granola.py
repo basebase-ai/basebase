@@ -357,7 +357,7 @@ class GranolaConnector(BaseConnector):
 
     # -- QUERY capability --------------------------------------------------------
 
-    async def query(self, request: str) -> dict[str, Any]:
+    async def query(self, request: str, info: dict[str, Any] | None = None) -> dict[str, Any]:
         """Execute an on-demand query against Granola meetings.
 
         Supports:
