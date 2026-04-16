@@ -12,7 +12,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -34,6 +34,7 @@ _PREVIEW_CACHE_MAX_ITEMS = 512
 _preview_html_cache: dict[str, tuple[float, str]] = {}
 _preview_image_cache: dict[str, tuple[float, bytes, str]] = {}
 _UNFURLABLE_VISIBILITIES: frozenset[str] = frozenset({"private", "team", "public"})
+_RAW_FETCH_USER_AGENT_MARKERS: tuple[str, ...] = ("revtops/", "basebase-fetch/")
 
 
 def _cache_get_html(key: str) -> str | None:
@@ -78,6 +79,12 @@ def _cache_set_image(key: str, image_bytes: bytes, mime_type: str) -> None:
 
 def _is_unfurlable_visibility(visibility: str | None) -> bool:
     return visibility in _UNFURLABLE_VISIBILITIES
+
+
+def _should_return_raw_artifact_json(request: Request) -> bool:
+    """Detect non-browser direct fetch clients that want raw document JSON."""
+    user_agent = (request.headers.get("user-agent") or "").lower()
+    return any(marker in user_agent for marker in _RAW_FETCH_USER_AGENT_MARKERS)
 
 
 @router.get("/apps/{app_id}")
@@ -413,7 +420,7 @@ async def get_public_artifact_share_preview(
     artifact_id: str,
     request: Request,
     org_slug: str | None = None,
-) -> HTMLResponse:
+) -> Response:
     """HTML metadata endpoint used by Slack + external scrapers for public artifact links."""
     try:
         artifact_uuid = UUID(artifact_id)
@@ -430,6 +437,29 @@ async def get_public_artifact_share_preview(
             "[public_preview] rendering non-public artifact unfurl artifact_id=%s visibility=%s",
             artifact_id,
             artifact.visibility,
+        )
+    if _should_return_raw_artifact_json(request):
+        logger.info(
+            "[public_preview] returning raw artifact JSON artifact_id=%s user_agent=%s",
+            artifact_id,
+            request.headers.get("user-agent"),
+        )
+        return JSONResponse(
+            content=PublicArtifactResponse(
+                id=str(artifact.id),
+                type=artifact.type,
+                title=artifact.title,
+                description=artifact.description,
+                content_type=artifact.content_type,
+                mime_type=artifact.mime_type,
+                filename=artifact.filename,
+                content=artifact.content,
+                conversation_id=str(artifact.conversation_id) if artifact.conversation_id else None,
+                message_id=str(artifact.message_id) if artifact.message_id else None,
+                created_at=f"{artifact.created_at.isoformat()}Z" if artifact.created_at else None,
+                user_id=str(artifact.user_id) if artifact.user_id else None,
+                visibility=artifact.visibility or "public",
+            ).model_dump(mode="json")
         )
 
     logger.info(

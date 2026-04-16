@@ -10,6 +10,7 @@ from api.routes.public import (
     _public_origin,
     _public_preview_description,
     _public_preview_title,
+    _should_return_raw_artifact_json,
     share_router,
 )
 from services.public_previews import build_preview_html, decode_data_url_image, render_card_png
@@ -169,3 +170,13 @@ def test_share_router_supports_artifact_uuid_paths_for_unfurl_links() -> None:
     assert "/artifacts/{artifact_id}" in route_paths
     assert "/basebase/artifacts/{artifact_id}" in route_paths
     assert "/{org_slug}/artifacts/{artifact_id}" in route_paths
+
+
+def test_should_return_raw_artifact_json_for_direct_fetch_user_agent() -> None:
+    request = SimpleNamespace(headers={"user-agent": "Mozilla/5.0 (compatible; Revtops/1.0)"})
+    assert _should_return_raw_artifact_json(request) is True
+
+
+def test_should_not_return_raw_artifact_json_for_browser_user_agent() -> None:
+    request = SimpleNamespace(headers={"user-agent": "Mozilla/5.0 AppleWebKit/537.36 Safari/537.36"})
+    assert _should_return_raw_artifact_json(request) is False
