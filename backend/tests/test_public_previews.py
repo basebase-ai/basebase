@@ -78,15 +78,15 @@ def test_public_preview_description_falls_back_to_document_and_owner_email() -> 
     assert description == "Document — owner@example.com"
 
 
-def test_build_preview_html_uses_public_apps_redirect_url() -> None:
+def test_build_preview_html_uses_basebase_apps_redirect_url() -> None:
     html = build_preview_html(
         page_title="Example",
         description="Description",
         canonical_url="https://app.basebase.com/basebase/apps/abc",
         image_url="https://app.basebase.com/api/public/share/apps/abc/snapshot.png",
-        redirect_url="https://app.basebase.com/public/apps/abc",
+        redirect_url="https://app.basebase.com/basebase/apps/abc",
     )
-    assert 'window.location.replace("https://app.basebase.com/public/apps/abc")' in html
+    assert 'window.location.replace("https://app.basebase.com/basebase/apps/abc")' in html
 
 
 def test_public_preview_title_uses_app_title_when_present() -> None:
