@@ -350,6 +350,15 @@ function App(): JSX.Element {
 
   // Handle OAuth callback route
   const path = window.location.pathname;
+
+  // Normalize legacy app route shape once: /apps/<slug>/<appId> -> /apps/<appId>.
+  const legacyAppsSlugMatch = path.match(/^\/apps\/[A-Za-z0-9-]+\/([a-f0-9-]+)$/i);
+  if (legacyAppsSlugMatch && legacyAppsSlugMatch[1]) {
+    const normalized = `/apps/${legacyAppsSlugMatch[1]}${window.location.search}${window.location.hash}`;
+    window.location.replace(normalized);
+    return null;
+  }
+
   if (path === '/auth/callback') {
     return <OAuthCallback />;
   }
