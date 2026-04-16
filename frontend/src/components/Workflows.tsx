@@ -1515,64 +1515,66 @@ export function Workflows(): JSX.Element {
         </div>
       ) : viewMode === "list" ? (
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-          <div className="grid grid-cols-[1fr_140px_120px_120px] gap-4 px-4 py-2.5 bg-surface-800/50 border-b border-surface-700 flex-shrink-0">
-            <span className="text-left text-xs font-medium uppercase tracking-wider text-surface-500">Name</span>
-            <span className="text-left text-xs font-medium uppercase tracking-wider text-surface-500">Creator</span>
-            <span className="text-left text-xs font-medium uppercase tracking-wider text-surface-500">Trigger</span>
-            <span className="text-left text-xs font-medium uppercase tracking-wider text-surface-500">Last Run</span>
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            {allSorted.map((workflow) => {
-              const isActive: boolean = workflow.latest_run_status === 'running' || workflow.latest_run_status === 'pending';
-              return (
-                <div
-                  key={workflow.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setSelectedWorkflow(workflow)}
-                  onKeyDown={(e) => { if (e.key === "Enter") setSelectedWorkflow(workflow); }}
-                  className="grid grid-cols-[1fr_140px_120px_120px] gap-4 px-4 py-3 border-b border-surface-800 cursor-pointer transition-colors group hover:bg-surface-800/60"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-3">
-                      <div className="text-primary-400 flex-shrink-0">
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                        </svg>
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-sm text-surface-100 group-hover:text-primary-300 truncate block transition-colors">
-                            {workflow.name}
-                          </span>
-                          {isActive ? (
-                            <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
-                              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500" />
+          <div className="flex-1 overflow-auto">
+            <div className="min-w-[700px]">
+              <div className="grid grid-cols-[1fr_140px_120px_120px] gap-4 px-4 py-2.5 bg-surface-800/50 border-b border-surface-700 flex-shrink-0">
+                <span className="text-left text-xs font-medium uppercase tracking-wider text-surface-500">Name</span>
+                <span className="text-left text-xs font-medium uppercase tracking-wider text-surface-500">Creator</span>
+                <span className="text-left text-xs font-medium uppercase tracking-wider text-surface-500">Trigger</span>
+                <span className="text-left text-xs font-medium uppercase tracking-wider text-surface-500">Last Run</span>
+              </div>
+              {allSorted.map((workflow) => {
+                const isActive: boolean = workflow.latest_run_status === 'running' || workflow.latest_run_status === 'pending';
+                return (
+                  <div
+                    key={workflow.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedWorkflow(workflow)}
+                    onKeyDown={(e) => { if (e.key === "Enter") setSelectedWorkflow(workflow); }}
+                    className="grid grid-cols-[1fr_140px_120px_120px] gap-4 px-4 py-3 border-b border-surface-800 cursor-pointer transition-colors group hover:bg-surface-800/60"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-3">
+                        <div className="text-primary-400 flex-shrink-0">
+                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          </svg>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-sm text-surface-100 group-hover:text-primary-300 truncate block transition-colors">
+                              {workflow.name}
                             </span>
-                          ) : (
-                            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${workflow.is_enabled ? 'bg-green-500' : 'bg-surface-600'}`} />
-                          )}
+                            {isActive ? (
+                              <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500" />
+                              </span>
+                            ) : (
+                              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${workflow.is_enabled ? 'bg-green-500' : 'bg-surface-600'}`} />
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
+                    <div className="flex items-center">
+                      <span className="text-sm text-surface-400 truncate">
+                        {workflowCreatorNames[workflow.created_by_user_id] ?? "—"}
+                      </span>
+                    </div>
+                    <div className="flex items-center">
+                      <span className="text-xs text-surface-500 truncate">{getTriggerDescription(workflow)}</span>
+                    </div>
+                    <div className="flex items-center">
+                      <span className="text-sm text-surface-500">
+                        {workflow.last_run_at ? formatRelativeTime(workflow.last_run_at) : "—"}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center">
-                    <span className="text-sm text-surface-400 truncate">
-                      {workflowCreatorNames[workflow.created_by_user_id] ?? "—"}
-                    </span>
-                  </div>
-                  <div className="flex items-center">
-                    <span className="text-xs text-surface-500 truncate">{getTriggerDescription(workflow)}</span>
-                  </div>
-                  <div className="flex items-center">
-                    <span className="text-sm text-surface-500">
-                      {workflow.last_run_at ? formatRelativeTime(workflow.last_run_at) : "—"}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         </div>
       ) : (
