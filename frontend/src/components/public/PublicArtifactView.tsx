@@ -9,6 +9,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { API_BASE } from "../../lib/api";
 import { ArtifactViewer } from "../ArtifactViewer";
+import { parsePossiblySpaWrappedJson } from "../../lib/documentPayload";
 
 interface PublicArtifactApiResponse {
   id: string;
@@ -38,8 +39,12 @@ export function PublicArtifactView({ artifactId }: PublicArtifactViewProps): JSX
         setData(null);
         return;
       }
-      const json = (await res.json()) as PublicArtifactApiResponse;
-      setData(json);
+      const rawBody = await res.text();
+      const parsed = parsePossiblySpaWrappedJson(rawBody);
+      if (!parsed || typeof parsed !== "object") {
+        throw new Error("Invalid artifact payload");
+      }
+      setData(parsed as PublicArtifactApiResponse);
       setError(null);
     } catch {
       setError("Failed to load artifact");
