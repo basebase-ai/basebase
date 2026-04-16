@@ -237,6 +237,9 @@ def _public_preview_description(
 ) -> str:
     """Build a concise public description for social preview unfurls."""
     owner_label = _owner_label(owner)
+    app_description = (getattr(app, "description", None) or "").strip() if app else ""
+    if app_description:
+        return f"{app_description} — {owner_label}"
     if conversation and conversation.title:
         return f"{conversation.title} — {owner_label}"
     if app and app.title:
@@ -304,7 +307,7 @@ async def get_public_app_share_preview(app_id: str, request: Request) -> HTMLRes
         owner = await session.scalar(select(User).where(User.id == app.user_id))
 
     canonical_url = f"{_frontend_origin()}/basebase/apps/{app_id}"
-    redirect_url = f"{_frontend_origin()}/public/apps/{app_id}"
+    redirect_url = canonical_url
     image_url = f"{_public_origin(request)}/api/public/share/apps/{app_id}/snapshot.png"
     title = _public_preview_title(app=app)
     description = _public_preview_description(conversation=conversation, app=app, owner=owner)
