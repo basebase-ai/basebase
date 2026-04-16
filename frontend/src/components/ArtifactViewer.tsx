@@ -19,7 +19,8 @@ import remarkGfm from "remark-gfm";
 import { API_BASE, getAuthenticatedRequestHeaders } from "../lib/api";
 import { downloadArtifactAsFile } from "../lib/artifactDownload";
 import { formatDateOnly } from "../lib/dates";
-import { extractDocumentTextFromBody, parsePossiblySpaWrappedJson } from "../lib/documentPayload";
+import { extractDocumentTextFromBody } from "../lib/documentPayload";
+import { fetchArtifactByIdWithFallback } from "../lib/artifactFetch";
 
 
 // New file-based artifact format
@@ -163,28 +164,17 @@ export function ArtifactViewer({
       setLoading(true);
       setError(null);
       try {
-        const authHeaders = await getAuthenticatedRequestHeaders();
-        const response = await fetch(`${API_BASE}/artifacts/${artifact.id}`, {
-          headers: authHeaders,
-        });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
+        const payload = await fetchArtifactByIdWithFallback(artifact.id);
+        const contentValue = payload.content;
+        if (typeof contentValue === "string") {
+          setContent(contentValue);
+          console.info("[ArtifactViewer] Loaded artifact content directly from backend by artifact ID.");
+          return;
         }
-        const rawBody = await response.text();
-        const payload = parsePossiblySpaWrappedJson(rawBody);
-        if (payload && typeof payload === "object" && "content" in payload) {
-          const contentValue = (payload as { content?: unknown }).content;
-          if (typeof contentValue === "string") {
-            setContent(contentValue);
-            return;
-          }
-        }
-        const normalized = extractDocumentTextFromBody(rawBody);
-        if (normalized !== rawBody) {
-          console.info("[ArtifactViewer] Artifact response appeared SPA/JSON wrapped; normalized content.");
-        } else {
-          console.warn("[ArtifactViewer] Artifact response did not include JSON `content`; using raw body as fallback.");
-        }
+
+        const serializedPayload = JSON.stringify(payload);
+        const normalized = extractDocumentTextFromBody(serializedPayload);
+        console.warn("[ArtifactViewer] Artifact payload did not include string content; falling back to normalized payload text.");
         setContent(normalized);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load artifact");
