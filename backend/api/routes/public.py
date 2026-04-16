@@ -266,7 +266,13 @@ def _public_preview_title(*, app: App | None = None, artifact: Artifact | None =
 
 @router.get("/share/apps/{app_id}", response_class=HTMLResponse)
 @share_router.get("/basebase/apps/{app_id}", response_class=HTMLResponse)
-async def get_public_app_share_preview(app_id: str, request: Request) -> HTMLResponse:
+@share_router.get("/{org_slug}/apps/{app_id}", response_class=HTMLResponse)
+@share_router.get("/apps/{org_slug}/{app_id}", response_class=HTMLResponse)
+async def get_public_app_share_preview(
+    app_id: str,
+    request: Request,
+    org_slug: str | None = None,
+) -> HTMLResponse:
     """HTML metadata endpoint used by Slack + external scrapers for public app links."""
     try:
         app_uuid = UUID(app_id)
@@ -285,7 +291,7 @@ async def get_public_app_share_preview(app_id: str, request: Request) -> HTMLRes
             app.visibility,
         )
 
-    logger.info("[public_preview] rendering app preview app_id=%s", app_id)
+    logger.info("[public_preview] rendering app preview app_id=%s org_slug=%s", app_id, org_slug)
     app_updated_at = app.updated_at.isoformat() if app.updated_at else "none"
     html_cache_key = f"app_preview:{app_id}:{app_updated_at}"
     cached_html = _cache_get_html(html_cache_key)
@@ -306,8 +312,9 @@ async def get_public_app_share_preview(app_id: str, request: Request) -> HTMLRes
             )
         owner = await session.scalar(select(User).where(User.id == app.user_id))
 
-    canonical_url = f"{_frontend_origin()}/basebase/apps/{app_id}"
-    redirect_url = canonical_url
+    canonical_path = request.url.path if request.url.path else f"/basebase/apps/{app_id}"
+    canonical_url = f"{_frontend_origin()}{canonical_path}"
+    redirect_url = f"{_frontend_origin()}/public/apps/{app_id}"
     image_url = f"{_public_origin(request)}/api/public/share/apps/{app_id}/snapshot.png"
     title = _public_preview_title(app=app)
     description = _public_preview_description(conversation=conversation, app=app, owner=owner)
