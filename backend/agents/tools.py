@@ -1053,6 +1053,18 @@ async def _write_on_connector(
             data["conversation_id"] = ctx_apps["conversation_id"]
         if ctx_apps.get("message_id"):
             data["message_id"] = str(ctx_apps["message_id"]) if ctx_apps["message_id"] else None
+        if operation == "create" and not data.get(" app created by"):
+            conversation_owner_id = await _resolve_conversation_owner_user_id(
+                organization_id=organization_id,
+                conversation_id=ctx_apps.get("conversation_id"),
+            )
+            if conversation_owner_id:
+                data[" app created by"] = conversation_owner_id
+                logger.info(
+                    "[Tools] write_on_connector(apps.create): passing conversation owner as app override owner: conversation_id=%s owner_user_id=%s",
+                    ctx_apps.get("conversation_id"),
+                    conversation_owner_id,
+                )
     if connector == "linear":
         ctx_linear: dict[str, Any] = context or {}
         if ctx_linear.get("conversation_id"):
@@ -1098,6 +1110,37 @@ async def _write_on_connector(
             {"error": f"Write to {connector}.{operation} failed: {exc}"},
             connector, organization_id,
         )
+
+
+async def _resolve_conversation_owner_user_id(
+    organization_id: str,
+    conversation_id: Any,
+) -> str | None:
+    """Resolve conversation.user_id as a string UUID for connector ownership context."""
+    if not conversation_id:
+        return None
+
+    conversation_id_str: str = str(conversation_id).strip()
+    if not conversation_id_str:
+        return None
+
+    try:
+        conversation_uuid: UUID = UUID(conversation_id_str)
+    except (ValueError, TypeError, AttributeError):
+        logger.warning(
+            "[Tools] Could not parse conversation_id as UUID for owner lookup: conversation_id=%s",
+            conversation_id,
+        )
+        return None
+
+    async with get_session(organization_id=organization_id) as session:
+        row = await session.execute(
+            select(Conversation.user_id).where(Conversation.id == conversation_uuid)
+        )
+        owner_user_id: UUID | None = row.scalar_one_or_none()
+        if owner_user_id is None:
+            return None
+        return str(owner_user_id)
 
 
 async def _run_on_connector(
