@@ -290,50 +290,52 @@ export function DocumentsGallery(): JSX.Element {
         </div>
       ) : (
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-          <div className="grid grid-cols-[1fr_140px_100px_120px] gap-4 px-4 py-2.5 bg-surface-800/50 border-b border-surface-700 flex-shrink-0">
-            <SortHeader label="Name" field="title" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-            <SortHeader label="Creator" field="creator_name" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-            <SortHeader label="Type" field="content_type" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-            <SortHeader label="Date" field="created_at" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            {sorted.map((doc) => (
-              <div
-                key={doc.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => handleOpen(doc.id)}
-                onKeyDown={(e) => { if (e.key === "Enter") handleOpen(doc.id); }}
-                className="grid grid-cols-[1fr_140px_100px_120px] gap-4 px-4 py-3 border-b border-surface-800 cursor-pointer transition-colors group hover:bg-surface-800/60"
-              >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-3">
-                    <div className="text-primary-400 flex-shrink-0">
-                      {contentTypeIcon(doc.content_type)}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-sm text-surface-100 group-hover:text-primary-300 truncate block transition-colors">
-                          {doc.title ?? doc.filename ?? "Untitled"}
-                        </span>
-                        <VisibilityBadge visibility={doc.visibility ?? "team"} />
+          <div className="flex-1 overflow-auto">
+            <div className="min-w-[700px]">
+              <div className="grid grid-cols-[1fr_140px_100px_120px] gap-4 px-4 py-2.5 bg-surface-800/50 border-b border-surface-700 flex-shrink-0">
+                <SortHeader label="Name" field="title" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Creator" field="creator_name" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Type" field="content_type" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Date" field="created_at" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+              </div>
+              {sorted.map((doc) => (
+                <div
+                  key={doc.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleOpen(doc.id)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleOpen(doc.id); }}
+                  className="grid grid-cols-[1fr_140px_100px_120px] gap-4 px-4 py-3 border-b border-surface-800 cursor-pointer transition-colors group hover:bg-surface-800/60"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-3">
+                      <div className="text-primary-400 flex-shrink-0">
+                        {contentTypeIcon(doc.content_type)}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm text-surface-100 group-hover:text-primary-300 truncate block transition-colors">
+                            {doc.title ?? doc.filename ?? "Untitled"}
+                          </span>
+                          <VisibilityBadge visibility={doc.visibility ?? "team"} />
+                        </div>
                       </div>
                     </div>
                   </div>
+                  <div className="flex items-center">
+                    <span className="text-sm text-surface-400 truncate">{doc.creator_name ?? "—"}</span>
+                  </div>
+                  <div className="flex items-center">
+                    <span className="text-xs text-surface-500">{contentTypeLabel(doc.content_type)}</span>
+                  </div>
+                  <div className="flex items-center">
+                    <span className="text-sm text-surface-500">
+                      {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : "—"}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center">
-                  <span className="text-sm text-surface-400 truncate">{doc.creator_name ?? "—"}</span>
-                </div>
-                <div className="flex items-center">
-                  <span className="text-xs text-surface-500">{contentTypeLabel(doc.content_type)}</span>
-                </div>
-                <div className="flex items-center">
-                  <span className="text-sm text-surface-500">
-                    {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : "—"}
-                  </span>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         </div>
       )}
