@@ -29,21 +29,6 @@ type DigestLayout = "cards" | "list";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function addCalendarDays(isoDate: string, deltaDays: number): string {
-  const parts: string[] = isoDate.split("-");
-  const y: number = Number(parts[0]);
-  const m: number = Number(parts[1]);
-  const d: number = Number(parts[2]);
-  const dt: Date = new Date(Date.UTC(y, m - 1, d + deltaDays));
-  return dt.toISOString().slice(0, 10);
-}
-
-function formatDisplayDate(isoDate: string): string {
-  const [yy, mm, dd] = isoDate.split("-");
-  if (!yy || !mm || !dd) return isoDate;
-  return `${mm}/${dd}/${yy}`;
-}
-
 function formatDayMonth(isoDate: string): string {
   const [, mm, dd] = isoDate.split("-");
   if (!mm || !dd) return isoDate;
@@ -370,13 +355,6 @@ export function DailyDigestGrid({ digestDate, onDigestDateChange }: DailyDigestG
     void load();
   }, [load]);
 
-  const handlePrev = (): void => {
-    onDigestDateChange(addCalendarDays(digestDate, -1));
-  };
-  const handleNext = (): void => {
-    onDigestDateChange(addCalendarDays(digestDate, 1));
-  };
-
   const handleGenerate = async (): Promise<void> => {
     setGenerating(true);
     setError(null);
@@ -406,31 +384,20 @@ export function DailyDigestGrid({ digestDate, onDigestDateChange }: DailyDigestG
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Toolbar: date nav + search + layout toggle + actions */}
+      {/* Toolbar: date picker + search + layout toggle + actions */}
       <div className="flex flex-col md:flex-row md:flex-wrap md:items-center md:justify-between gap-3">
-        <div className="flex items-center justify-center md:justify-start gap-2 w-full md:w-auto">
-          <button
-            type="button"
-            onClick={handlePrev}
-            className="px-2 py-1 rounded-md border border-surface-600 text-surface-300 hover:bg-surface-800 text-sm"
-            aria-label="Previous day"
-          >
-            ←
-          </button>
-          <span className="text-surface-200 text-sm font-medium min-w-[8rem] text-center">
-            {formatDisplayDate(digestDate)}
-          </span>
-          <button
-            type="button"
-            onClick={handleNext}
-            className="px-2 py-1 rounded-md border border-surface-600 text-surface-300 hover:bg-surface-800 text-sm"
-            aria-label="Next day"
-          >
-            →
-          </button>
-        </div>
-
         <div className="flex items-center flex-wrap md:flex-nowrap gap-2 w-full md:w-auto pr-1">
+          {/* Date picker */}
+          <div className="flex items-center rounded-md border border-surface-600 bg-surface-800 h-8 px-2">
+            <input
+              type="date"
+              value={digestDate}
+              onChange={(e) => onDigestDateChange(e.target.value)}
+              aria-label="Digest date"
+              className="w-32 sm:w-36 bg-transparent text-surface-200 text-xs focus:outline-none"
+            />
+          </div>
+
           {/* Search */}
           <div className="relative">
             <svg className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-surface-500 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -441,7 +408,7 @@ export function DailyDigestGrid({ digestDate, onDigestDateChange }: DailyDigestG
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search members…"
-              className="w-32 sm:w-40 pl-7 pr-2 py-1 rounded-md border border-surface-600 bg-surface-800 text-surface-200 text-xs placeholder:text-surface-500 focus:outline-none focus:border-primary-500"
+              className="w-28 sm:w-36 pl-7 pr-2 py-1 rounded-md border border-surface-600 bg-surface-800 text-surface-200 text-xs placeholder:text-surface-500 focus:outline-none focus:border-primary-500"
             />
           </div>
 
