@@ -57,6 +57,18 @@ def test_public_preview_description_prefers_conversation_title_with_owner() -> N
     assert description == "Q2 forecast — Alex"
 
 
+def test_public_preview_description_prefers_app_description_with_owner() -> None:
+    description = _public_preview_description(
+        conversation=SimpleNamespace(title="Q2 forecast"),
+        app=SimpleNamespace(
+            title="Pipeline app",
+            description="Shows the current largest celestial body visible in the sky...",
+        ),
+        owner=SimpleNamespace(name="Alex", email="alex@example.com"),
+    )
+    assert description == "Shows the current largest celestial body visible in the sky... — Alex"
+
+
 def test_public_preview_description_falls_back_to_document_and_owner_email() -> None:
     description = _public_preview_description(
         conversation=None,
@@ -64,6 +76,17 @@ def test_public_preview_description_falls_back_to_document_and_owner_email() -> 
         owner=SimpleNamespace(name=None, email="owner@example.com"),
     )
     assert description == "Document — owner@example.com"
+
+
+def test_build_preview_html_uses_basebase_apps_redirect_url() -> None:
+    html = build_preview_html(
+        page_title="Example",
+        description="Description",
+        canonical_url="https://app.basebase.com/basebase/apps/abc",
+        image_url="https://app.basebase.com/api/public/share/apps/abc/snapshot.png",
+        redirect_url="https://app.basebase.com/basebase/apps/abc",
+    )
+    assert 'window.location.replace("https://app.basebase.com/basebase/apps/abc")' in html
 
 
 def test_public_preview_title_uses_app_title_when_present() -> None:
