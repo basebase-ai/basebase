@@ -27,6 +27,7 @@ from models.app import App
 from models.chat_message import ChatMessage
 from models.conversation import Conversation
 from models.database import get_session
+from services.public_preview_warmup import warm_public_preview_cache
 
 logger = logging.getLogger(__name__)
 
@@ -413,6 +414,7 @@ class AppsConnector(BaseConnector):
             title,
             list(queries.keys()),
         )
+        await warm_public_preview_cache("app", app_id_str)
 
         app_url: str = f"{settings.FRONTEND_URL.rstrip('/')}/apps/{app_id_str}"
         return {
