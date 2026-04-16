@@ -59,3 +59,56 @@ def test_write_on_connector_routes_to_dispatcher(monkeypatch) -> None:
     assert called["user_id"] == "00000000-0000-0000-0000-000000000002"
     assert called["skip_approval"] is True
     assert called["context"] == {"conversation_id": "00000000-0000-0000-0000-000000000003"}
+
+
+def test_write_on_connector_apps_create_passes_conversation_owner_as_override(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeConnector:
+        async def write(self, operation: str, data: dict[str, object]) -> dict[str, object]:
+            captured["operation"] = operation
+            captured["data"] = data
+            return {"status": "success"}
+
+    async def _fake_check_connector_call(*_args, **_kwargs):
+        class _Allowed:
+            allowed = True
+            deny_reason = None
+        return _Allowed()
+
+    async def _fake_get_connector_instance(*_args, **_kwargs):
+        return _FakeConnector(), None
+
+    async def _fake_record_intent(*_args, **_kwargs):
+        return "change-1"
+
+    async def _fake_record_outcome(*_args, **_kwargs):
+        return None
+
+    async def _fake_resolve_conversation_owner_user_id(*_args, **_kwargs):
+        return "00000000-0000-0000-0000-000000000099"
+
+    monkeypatch.setattr(tools, "check_connector_call", _fake_check_connector_call)
+    monkeypatch.setattr(tools, "_get_connector_instance", _fake_get_connector_instance)
+    monkeypatch.setattr(tools, "_resolve_conversation_owner_user_id", _fake_resolve_conversation_owner_user_id)
+    monkeypatch.setattr("services.action_ledger.record_intent", _fake_record_intent)
+    monkeypatch.setattr("services.action_ledger.record_outcome", _fake_record_outcome)
+
+    result = asyncio.run(
+        tools._write_on_connector(
+            params={
+                "connector": "apps",
+                "operation": "create",
+                "data": {"title": "Demo", "queries": {"q": {"sql": "SELECT 1", "params": {}}}, "frontend_code": "x"},
+            },
+            organization_id="00000000-0000-0000-0000-000000000001",
+            user_id="00000000-0000-0000-0000-000000000002",
+            skip_approval=True,
+            context={"conversation_id": "00000000-0000-0000-0000-000000000003"},
+        )
+    )
+
+    assert result["status"] == "success"
+    assert captured["operation"] == "create"
+    assert isinstance(captured["data"], dict)
+    assert captured["data"][" app created by"] == "00000000-0000-0000-0000-000000000099"  # type: ignore[index]
