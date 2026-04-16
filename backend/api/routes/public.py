@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from api.auth_middleware import get_optional_auth
 from config import settings
 from models.app import App
 from models.artifact import Artifact
@@ -85,6 +86,10 @@ def _should_return_raw_artifact_json(request: Request) -> bool:
     """Detect non-browser direct fetch clients that want raw document JSON."""
     user_agent = (request.headers.get("user-agent") or "").lower()
     return any(marker in user_agent for marker in _RAW_FETCH_USER_AGENT_MARKERS)
+
+
+def _is_auth_header_present(request: Request) -> bool:
+    return bool((request.headers.get("authorization") or "").strip())
 
 
 @router.get("/apps/{app_id}")
@@ -439,26 +444,45 @@ async def get_public_artifact_share_preview(
             artifact.visibility,
         )
     if _should_return_raw_artifact_json(request):
+        if not _is_auth_header_present(request):
+            raise HTTPException(status_code=401, detail="Authentication required for direct fetch")
+        auth = await get_optional_auth(
+            authorization=request.headers.get("authorization"),
+            x_organization_id=request.headers.get("x-organization-id"),
+        )
+        if auth is None:
+            raise HTTPException(status_code=401, detail="Authentication required for direct fetch")
+        if auth.organization_id is None:
+            raise HTTPException(status_code=403, detail="Organization context required for direct fetch")
+        async with get_session(
+            organization_id=auth.organization_id_str,
+            user_id=auth.user_id_str,
+        ) as session:
+            scoped_result = await session.execute(select(Artifact).where(Artifact.id == artifact_uuid))
+            scoped_artifact: Artifact | None = scoped_result.scalar_one_or_none()
+        if scoped_artifact is None:
+            raise HTTPException(status_code=404, detail="Artifact not found")
         logger.info(
-            "[public_preview] returning raw artifact JSON artifact_id=%s user_agent=%s",
+            "[public_preview] returning authenticated raw artifact JSON artifact_id=%s user_id=%s user_agent=%s",
             artifact_id,
+            auth.user_id,
             request.headers.get("user-agent"),
         )
         return JSONResponse(
             content=PublicArtifactResponse(
-                id=str(artifact.id),
-                type=artifact.type,
-                title=artifact.title,
-                description=artifact.description,
-                content_type=artifact.content_type,
-                mime_type=artifact.mime_type,
-                filename=artifact.filename,
-                content=artifact.content,
-                conversation_id=str(artifact.conversation_id) if artifact.conversation_id else None,
-                message_id=str(artifact.message_id) if artifact.message_id else None,
-                created_at=f"{artifact.created_at.isoformat()}Z" if artifact.created_at else None,
-                user_id=str(artifact.user_id) if artifact.user_id else None,
-                visibility=artifact.visibility or "public",
+                id=str(scoped_artifact.id),
+                type=scoped_artifact.type,
+                title=scoped_artifact.title,
+                description=scoped_artifact.description,
+                content_type=scoped_artifact.content_type,
+                mime_type=scoped_artifact.mime_type,
+                filename=scoped_artifact.filename,
+                content=scoped_artifact.content,
+                conversation_id=str(scoped_artifact.conversation_id) if scoped_artifact.conversation_id else None,
+                message_id=str(scoped_artifact.message_id) if scoped_artifact.message_id else None,
+                created_at=f"{scoped_artifact.created_at.isoformat()}Z" if scoped_artifact.created_at else None,
+                user_id=str(scoped_artifact.user_id) if scoped_artifact.user_id else None,
+                visibility=scoped_artifact.visibility or "public",
             ).model_dump(mode="json")
         )
 

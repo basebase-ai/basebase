@@ -4,6 +4,7 @@ import base64
 from types import SimpleNamespace
 
 from api.routes.public import (
+    _is_auth_header_present,
     _cache_get_html,
     _cache_set_html,
     _is_unfurlable_visibility,
@@ -180,3 +181,13 @@ def test_should_return_raw_artifact_json_for_direct_fetch_user_agent() -> None:
 def test_should_not_return_raw_artifact_json_for_browser_user_agent() -> None:
     request = SimpleNamespace(headers={"user-agent": "Mozilla/5.0 AppleWebKit/537.36 Safari/537.36"})
     assert _should_return_raw_artifact_json(request) is False
+
+
+def test_is_auth_header_present_detects_bearer_token() -> None:
+    request = SimpleNamespace(headers={"authorization": "Bearer token-value"})
+    assert _is_auth_header_present(request) is True
+
+
+def test_is_auth_header_present_rejects_missing_or_blank() -> None:
+    assert _is_auth_header_present(SimpleNamespace(headers={})) is False
+    assert _is_auth_header_present(SimpleNamespace(headers={"authorization": "   "})) is False
