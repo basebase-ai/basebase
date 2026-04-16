@@ -343,14 +343,18 @@ export function SandpackAppRenderer({
 
         screenshotCapturedRef.current = true;
         console.log("[screenshot] Capturing with html2canvas...", appId);
+        const previewWidth = 1200;
+        const previewHeight = 630;
         html2canvas(iframeDoc.body, {
           backgroundColor: "#18181b",
           // Capture at full DOM resolution so gallery previews stay crisp.
           scale: 1,
           logging: false,
           useCORS: true,
-          width: iframeDoc.body.scrollWidth,
-          height: Math.min(iframeDoc.body.scrollHeight, 800),
+          width: previewWidth,
+          height: previewHeight,
+          windowWidth: previewWidth,
+          windowHeight: previewHeight,
         }).then((canvas) => {
           let quality = 0.9;
           let dataUrl = canvas.toDataURL("image/jpeg", quality);
@@ -360,7 +364,8 @@ export function SandpackAppRenderer({
           }
 
           console.log(
-            `[screenshot] Captured! size=${dataUrl.length} quality=${quality.toFixed(2)} appId=${appId}`
+            `[screenshot] Captured! size=${dataUrl.length} quality=${quality.toFixed(2)} ` +
+            `dimensions=${canvas.width}x${canvas.height} appId=${appId}`
           );
           if (dataUrl.length < 2_000_000) {
             void apiRequest("/apps/" + appId + "/screenshot", {
