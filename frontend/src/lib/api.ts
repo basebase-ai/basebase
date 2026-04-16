@@ -24,12 +24,14 @@ export const isProduction: boolean =
     window.location.hostname.includes("railway.app"));
 
 // API base URL (prefer VITE_API_URL when set at build)
-export const API_BASE: string =
+export const DIRECT_API_BASE: string =
   envApiUrl
     ? `${envApiUrl.replace(/\/$/, "")}/api`
     : isProduction
       ? `${PRODUCTION_BACKEND}/api`
       : DEV_API_BASE;
+
+export const API_BASE: string = DIRECT_API_BASE;
 
 export const WS_BASE: string =
   envApiUrl

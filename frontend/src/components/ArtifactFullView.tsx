@@ -7,13 +7,13 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { API_BASE, apiRequest, getAuthenticatedRequestHeaders } from "../lib/api";
+import { apiRequest } from "../lib/api";
 import { downloadArtifactAsFile } from "../lib/artifactDownload";
 import { useAppStore, useUIStore } from "../store";
 import { ArtifactViewer } from "./ArtifactViewer";
 import type { VisibilityLevel } from "./VisibilitySelector";
 import { DetailViewHeader } from "./shared/DetailViewHeader";
-import { parsePossiblySpaWrappedJson } from "../lib/documentPayload";
+import { fetchArtifactByIdWithFallback } from "../lib/artifactFetch";
 
 interface ArtifactApiResponse {
   id: string;
@@ -133,25 +133,12 @@ export function ArtifactFullView({
     setLoading(true);
     setError(null);
     try {
-      const authHeaders = await getAuthenticatedRequestHeaders();
-      const response = await fetch(`${API_BASE}/artifacts/${artifactId}`, {
-        headers: authHeaders,
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      const rawBody = await response.text();
-      const parsed = parsePossiblySpaWrappedJson(rawBody);
-      if (!parsed || typeof parsed !== "object") {
-        throw new Error("Artifact response was not valid JSON");
-      }
+      const parsed = await fetchArtifactByIdWithFallback(artifactId);
       const artifactData = parsed as ArtifactApiResponse;
       setArtifact(toFileArtifact(artifactData));
       setVisibility((artifactData.visibility as VisibilityLevel) ?? "team");
       setOwnerUserId(artifactData.user_id);
-      if (rawBody.toLowerCase().includes("<html")) {
-        console.info("[ArtifactFullView] Parsed artifact JSON from SPA shell fallback.");
-      }
+      console.info("[ArtifactFullView] Loaded full artifact content via backend artifact-id fetch.");
     } catch (fetchErr) {
       const msg = fetchErr instanceof Error ? fetchErr.message : "Failed to load artifact";
       console.error("[ArtifactFullView] Artifact fetch failed", fetchErr);
