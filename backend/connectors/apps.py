@@ -401,17 +401,38 @@ class AppsConnector(BaseConnector):
         conversation_id: str | None = data.get("conversation_id")
         user_uuid: UUID | None = None
         conversation_uuid: UUID | None = None
+        owner_override_raw: Any = data.get(" app created by")
+        owner_override_id: str | None = None
+        if owner_override_raw is not None:
+            owner_override_id = str(owner_override_raw).strip()
+            if not owner_override_id:
+                owner_override_id = None
 
         logger.info(
-            "[AppsConnector] Creating app with ownership context: org_id=%s message_id=%s conversation_id=%s connector_user_id=%s",
+            "[AppsConnector] Creating app with ownership context: org_id=%s message_id=%s conversation_id=%s connector_user_id=%s owner_override_present=%s",
             self.organization_id,
             message_id,
             conversation_id,
             self.user_id,
+            bool(owner_override_id),
         )
 
+        if owner_override_id:
+            try:
+                user_uuid = UUID(owner_override_id)
+                logger.info(
+                    "[AppsConnector] Using explicit app owner override from request payload: user_id=%s",
+                    user_uuid,
+                )
+            except (ValueError, TypeError, AttributeError):
+                logger.warning(
+                    "[AppsConnector] Invalid app owner override provided; expected UUID: override_value=%s",
+                    owner_override_raw,
+                )
+                return {"error": "Invalid ' app created by' value: must be a valid UUID string"}
+
         connector_user_uuid: UUID | None = None
-        if self.user_id:
+        if self.user_id and user_uuid is None:
             try:
                 connector_user_uuid = UUID(self.user_id)
             except (ValueError, TypeError, AttributeError):
@@ -420,7 +441,7 @@ class AppsConnector(BaseConnector):
                     self.user_id,
                 )
 
-        if conversation_id:
+        if conversation_id and user_uuid is None:
             try:
                 conversation_uuid = UUID(conversation_id)
             except (ValueError, TypeError, AttributeError):
