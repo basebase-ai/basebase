@@ -23,7 +23,7 @@ interface AppDetail {
   query_names: string[];
   conversation_id: string | null;
   created_at: string | null;
-  user_id: string | null;
+  user_id: string;
   widget_config?: Record<string, unknown> | null;
   visibility: string;
 }
@@ -54,30 +54,15 @@ export function AppFullView({ appId }: AppFullViewProps): JSX.Element {
 
   const fetchApp = useCallback(async (): Promise<void> => {
     setLoading(true);
-    setError(null);
-
     const resp = await apiRequest<AppDetail>(`/apps/${appId}`);
-    if (resp.data) {
+    if (resp.error || !resp.data) {
+      setError(resp.error ?? "Failed to load app");
+    } else {
       setApp({
         ...resp.data,
         visibility: resp.data.visibility ?? "team",
       });
-      setLoading(false);
-      return;
     }
-
-    const publicResp = await apiRequest<AppDetail>(`/public/apps/${appId}`);
-    if (publicResp.data) {
-      setApp({
-        ...publicResp.data,
-        user_id: publicResp.data.user_id ?? null,
-        visibility: "public",
-      });
-      setLoading(false);
-      return;
-    }
-
-    setError(resp.error ?? publicResp.error ?? "Failed to load app");
     setLoading(false);
   }, [appId]);
 
