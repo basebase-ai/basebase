@@ -27,6 +27,7 @@ from connectors.registry import (
 )
 from models.artifact import Artifact
 from models.database import get_session
+from services.public_preview_warmup import warm_public_preview_cache
 
 logger = logging.getLogger(__name__)
 
@@ -248,6 +249,7 @@ class ArtifactConnector(BaseConnector):
             content_type,
             title,
         )
+        await warm_public_preview_cache("artifact", artifact_id_str)
         view_url: str = f"{settings.FRONTEND_URL.rstrip('/')}/artifacts/{artifact_id_str}"
         return {
             "status": "success",
