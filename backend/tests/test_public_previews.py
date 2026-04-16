@@ -10,6 +10,7 @@ from api.routes.public import (
     _public_origin,
     _public_preview_description,
     _public_preview_title,
+    share_router,
 )
 from services.public_previews import build_preview_html, decode_data_url_image, render_card_png
 
@@ -124,3 +125,8 @@ def test_is_unfurlable_visibility_allows_known_levels() -> None:
     assert _is_unfurlable_visibility("private")
     assert not _is_unfurlable_visibility(None)
     assert not _is_unfurlable_visibility("archived")
+
+
+def test_share_router_supports_apps_uuid_path_for_unfurl_links() -> None:
+    route_paths = {route.path for route in share_router.routes}
+    assert "/apps/{app_id}" in route_paths
