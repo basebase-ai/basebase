@@ -412,7 +412,14 @@ class AppsConnector(BaseConnector):
                     self.user_id,
                 )
 
-        if message_id:
+        if connector_user_uuid is not None:
+            user_uuid = connector_user_uuid
+            logger.info(
+                "[AppsConnector] Using current turn user context for app owner: user_id=%s",
+                connector_user_uuid,
+            )
+
+        if message_id and user_uuid is None:
             try:
                 message_uuid = UUID(message_id)
             except (ValueError, TypeError, AttributeError):
@@ -436,7 +443,7 @@ class AppsConnector(BaseConnector):
                             message_user_id,
                         )
 
-        if conversation_id:
+        if conversation_id and user_uuid is None:
             try:
                 conversation_uuid = UUID(conversation_id)
             except (ValueError, TypeError, AttributeError):
@@ -486,13 +493,6 @@ class AppsConnector(BaseConnector):
                                 conversation_source_user_id,
                                 external_actor_user_id,
                             )
-
-        if user_uuid is None and connector_user_uuid is not None:
-            user_uuid = connector_user_uuid
-            logger.info(
-                "[AppsConnector] Falling back to connector user context for app owner: user_id=%s",
-                connector_user_uuid,
-            )
 
         if not user_uuid:
             return {
