@@ -29,6 +29,7 @@ from models.conversation import Conversation
 from models.database import get_session
 from models.external_identity_mapping import ExternalIdentityMapping
 from services.public_preview_warmup import warm_public_preview_cache
+from services.slack_identity import get_alternate_slack_user_ids_for_identity
 
 logger = logging.getLogger(__name__)
 
@@ -306,7 +307,7 @@ class AppsConnector(BaseConnector):
     ) -> UUID | None:
         """Resolve an internal user from an external actor identifier."""
         normalized_source: str = (source or "").strip().lower()
-        normalized_external_user: str = (external_user_id or "").strip()
+        normalized_external_user: str = (external_user_id or "").strip().upper()
         if not normalized_source or not normalized_external_user:
             logger.debug(
                 "[AppsConnector] External actor resolution skipped due to missing source/external_user_id: source=%s external_user_id=%s",
@@ -324,40 +325,50 @@ class AppsConnector(BaseConnector):
             return None
 
         org_uuid: UUID = UUID(self.organization_id)
+        candidate_external_user_ids: list[str] = [normalized_external_user]
         async with get_session(organization_id=self.organization_id) as session:
-            slack_row = await session.execute(
-                select(ExternalIdentityMapping.user_id).where(
-                    ExternalIdentityMapping.organization_id == org_uuid,
-                    ExternalIdentityMapping.external_userid == normalized_external_user,
-                    ExternalIdentityMapping.source == "slack",
-                    ExternalIdentityMapping.user_id.is_not(None),
-                )
+            alternate_slack_ids: list[str] = await get_alternate_slack_user_ids_for_identity(
+                organization_id=self.organization_id,
+                slack_user_id=normalized_external_user,
+                session=session,
             )
-            slack_user_id: UUID | None = slack_row.scalar_one_or_none()
-            if slack_user_id is not None:
-                logger.debug(
-                    "[AppsConnector] Resolved app owner from Slack identity mapping: external_user_id=%s user_id=%s",
-                    normalized_external_user,
-                    slack_user_id,
-                )
-                return slack_user_id
+            for alternate_slack_id in alternate_slack_ids:
+                normalized_alternate: str = str(alternate_slack_id).strip().upper()
+                if normalized_alternate and normalized_alternate not in candidate_external_user_ids:
+                    candidate_external_user_ids.append(normalized_alternate)
 
-            legacy_row = await session.execute(
-                select(ExternalIdentityMapping.user_id).where(
-                    ExternalIdentityMapping.organization_id == org_uuid,
-                    ExternalIdentityMapping.external_userid == normalized_external_user,
-                    ExternalIdentityMapping.source == "revtops_unknown",
-                    ExternalIdentityMapping.user_id.is_not(None),
-                )
+            logger.info(
+                "[AppsConnector] Attempting external actor owner resolution across Slack identities: source=%s external_user_ids=%s",
+                normalized_source,
+                candidate_external_user_ids,
             )
-            legacy_user_id: UUID | None = legacy_row.scalar_one_or_none()
-            if legacy_user_id is not None:
-                logger.debug(
-                    "[AppsConnector] Resolved app owner from legacy revtops_unknown identity mapping: external_user_id=%s user_id=%s",
-                    normalized_external_user,
-                    legacy_user_id,
+
+            mapping_rows = await session.execute(
+                select(
+                    ExternalIdentityMapping.external_userid,
+                    ExternalIdentityMapping.source,
+                    ExternalIdentityMapping.user_id,
                 )
-                return legacy_user_id
+                .where(ExternalIdentityMapping.organization_id == org_uuid)
+                .where(ExternalIdentityMapping.external_userid.in_(candidate_external_user_ids))
+                .where(ExternalIdentityMapping.source.in_(("slack", "revtops_unknown")))
+                .where(ExternalIdentityMapping.user_id.is_not(None))
+                .order_by(ExternalIdentityMapping.updated_at.desc())
+            )
+            mappings: list[tuple[str, str, UUID]] = list(mapping_rows.all())
+            if mappings:
+                selected_external_user_id: str
+                selected_source: str
+                selected_user_id: UUID
+                selected_external_user_id, selected_source, selected_user_id = mappings[0]
+                logger.info(
+                    "[AppsConnector] Resolved app owner from Slack identity candidates: selected_external_user_id=%s source=%s user_id=%s total_candidate_mappings=%d",
+                    selected_external_user_id,
+                    selected_source,
+                    selected_user_id,
+                    len(mappings),
+                )
+                return selected_user_id
 
         logger.debug(
             "[AppsConnector] Could not resolve app owner from external actor: source=%s external_user_id=%s",
@@ -391,18 +402,14 @@ class AppsConnector(BaseConnector):
         user_uuid: UUID | None = None
         conversation_uuid: UUID | None = None
 
+        connector_user_uuid: UUID | None = None
         if self.user_id:
             try:
-                user_uuid = UUID(self.user_id)
+                connector_user_uuid = UUID(self.user_id)
             except (ValueError, TypeError, AttributeError):
                 logger.warning(
                     "[AppsConnector] Could not parse connector user_id as UUID for owner resolution: user_id=%s",
                     self.user_id,
-                )
-            else:
-                logger.info(
-                    "[AppsConnector] Resolved app owner from connector user context: user_id=%s",
-                    user_uuid,
                 )
 
         if message_id:
@@ -479,6 +486,13 @@ class AppsConnector(BaseConnector):
                                 conversation_source_user_id,
                                 external_actor_user_id,
                             )
+
+        if user_uuid is None and connector_user_uuid is not None:
+            user_uuid = connector_user_uuid
+            logger.info(
+                "[AppsConnector] Falling back to connector user context for app owner: user_id=%s",
+                connector_user_uuid,
+            )
 
         if not user_uuid:
             return {
