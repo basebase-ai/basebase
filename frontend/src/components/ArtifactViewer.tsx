@@ -16,9 +16,10 @@ import { useEffect, useRef, useState } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { apiRequest, API_BASE, getAuthenticatedRequestHeaders } from "../lib/api";
+import { API_BASE, getAuthenticatedRequestHeaders } from "../lib/api";
 import { downloadArtifactAsFile } from "../lib/artifactDownload";
 import { formatDateOnly } from "../lib/dates";
+import { extractDocumentTextFromBody, parsePossiblySpaWrappedJson } from "../lib/documentPayload";
 
 
 // New file-based artifact format
@@ -121,7 +122,11 @@ export function ArtifactViewer({
 
         if (disp === "text" || disp === "markdown") {
           const text = await response.text();
-          setContent(text);
+          const normalized = extractDocumentTextFromBody(text);
+          if (normalized !== text) {
+            console.info("[ArtifactViewer] Attachment response appeared SPA/JSON wrapped; normalized content.");
+          }
+          setContent(normalized);
         } else {
           const blob = await response.blob();
           const objectUrl = URL.createObjectURL(blob);
@@ -158,13 +163,29 @@ export function ArtifactViewer({
       setLoading(true);
       setError(null);
       try {
-        const { data, error: apiError } = await apiRequest<{ content: string }>(
-          `/artifacts/${artifact.id}`
-        );
-        if (apiError) {
-          throw new Error(apiError);
+        const authHeaders = await getAuthenticatedRequestHeaders();
+        const response = await fetch(`${API_BASE}/artifacts/${artifact.id}`, {
+          headers: authHeaders,
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
         }
-        setContent(data?.content ?? null);
+        const rawBody = await response.text();
+        const payload = parsePossiblySpaWrappedJson(rawBody);
+        if (payload && typeof payload === "object" && "content" in payload) {
+          const contentValue = (payload as { content?: unknown }).content;
+          if (typeof contentValue === "string") {
+            setContent(contentValue);
+            return;
+          }
+        }
+        const normalized = extractDocumentTextFromBody(rawBody);
+        if (normalized !== rawBody) {
+          console.info("[ArtifactViewer] Artifact response appeared SPA/JSON wrapped; normalized content.");
+        } else {
+          console.warn("[ArtifactViewer] Artifact response did not include JSON `content`; using raw body as fallback.");
+        }
+        setContent(normalized);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load artifact");
       } finally {

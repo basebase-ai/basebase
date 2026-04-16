@@ -7,12 +7,13 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { apiRequest } from "../lib/api";
+import { API_BASE, apiRequest, getAuthenticatedRequestHeaders } from "../lib/api";
 import { downloadArtifactAsFile } from "../lib/artifactDownload";
 import { useAppStore, useUIStore } from "../store";
 import { ArtifactViewer } from "./ArtifactViewer";
 import type { VisibilityLevel } from "./VisibilitySelector";
 import { DetailViewHeader } from "./shared/DetailViewHeader";
+import { parsePossiblySpaWrappedJson } from "../lib/documentPayload";
 
 interface ArtifactApiResponse {
   id: string;
@@ -131,16 +132,31 @@ export function ArtifactFullView({
   const fetchArtifact = useCallback(async (): Promise<void> => {
     setLoading(true);
     setError(null);
-    const resp = await apiRequest<ArtifactApiResponse>(
-      `/artifacts/${artifactId}`,
-    );
-    if (resp.error || !resp.data) {
-      setError(resp.error ?? "Failed to load artifact");
+    try {
+      const authHeaders = await getAuthenticatedRequestHeaders();
+      const response = await fetch(`${API_BASE}/artifacts/${artifactId}`, {
+        headers: authHeaders,
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const rawBody = await response.text();
+      const parsed = parsePossiblySpaWrappedJson(rawBody);
+      if (!parsed || typeof parsed !== "object") {
+        throw new Error("Artifact response was not valid JSON");
+      }
+      const artifactData = parsed as ArtifactApiResponse;
+      setArtifact(toFileArtifact(artifactData));
+      setVisibility((artifactData.visibility as VisibilityLevel) ?? "team");
+      setOwnerUserId(artifactData.user_id);
+      if (rawBody.toLowerCase().includes("<html")) {
+        console.info("[ArtifactFullView] Parsed artifact JSON from SPA shell fallback.");
+      }
+    } catch (fetchErr) {
+      const msg = fetchErr instanceof Error ? fetchErr.message : "Failed to load artifact";
+      console.error("[ArtifactFullView] Artifact fetch failed", fetchErr);
+      setError(msg);
       setArtifact(null);
-    } else {
-      setArtifact(toFileArtifact(resp.data));
-      setVisibility((resp.data.visibility as VisibilityLevel) ?? "team");
-      setOwnerUserId(resp.data.user_id);
     }
     setLoading(false);
   }, [artifactId]);
