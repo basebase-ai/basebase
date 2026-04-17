@@ -249,3 +249,76 @@ async def test_enrich_message_context_keeps_unresolved_mentions_unchanged():
         await messenger.enrich_message_context(message, org_id)
 
     assert message.text == original
+
+
+def test_summarize_channel_history_if_needed_returns_original_when_within_limit():
+    messenger = SlackMessenger()
+    history = "short history"
+    result = messenger._summarize_channel_history_if_needed(
+        history_context=history,
+        channel_messages=[],
+        thread_expansions={},
+    )
+    assert result == history
+
+
+def test_summarize_channel_history_if_needed_compresses_oversized_payload():
+    messenger = SlackMessenger()
+    channel_messages = [
+        {
+            "ts": "1710711600.100",
+            "user": "U1",
+            "text": "Kickoff update " + ("A" * 600),
+            "thread_ts": "1710711600.100",
+            "reply_count": 2,
+        },
+        {
+            "ts": "1710711601.200",
+            "user": "U2",
+            "text": "Follow up " + ("B" * 600),
+            "thread_ts": "1710711601.200",
+            "reply_count": 1,
+        },
+    ]
+    thread_expansions = {
+        "1710711600.100": [
+            {
+                "ts": "1710711600.100",
+                "user": "U1",
+                "text": "Kickoff update " + ("A" * 600),
+            },
+            {
+                "ts": "1710711600.300",
+                "user": "U3",
+                "text": "Reply in first thread " + ("C" * 300),
+            },
+            {
+                "ts": "1710711600.400",
+                "user": "U4",
+                "text": "Another reply " + ("D" * 300),
+            },
+        ],
+        "1710711601.200": [
+            {
+                "ts": "1710711601.200",
+                "user": "U2",
+                "text": "Follow up " + ("B" * 600),
+            },
+            {
+                "ts": "1710711601.250",
+                "user": "U5",
+                "text": "Reply in second thread " + ("E" * 300),
+            },
+        ],
+    }
+    oversized_history = "X" * 26000
+
+    result = messenger._summarize_channel_history_if_needed(
+        history_context=oversized_history,
+        channel_messages=channel_messages,
+        thread_expansions=thread_expansions,
+    )
+
+    assert "quick summary of newest 300 channel messages" in result
+    assert "Most active threads by reply count" in result
+    assert len(result) <= 12000
