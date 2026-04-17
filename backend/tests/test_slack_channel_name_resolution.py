@@ -376,31 +376,10 @@ def test_append_channel_snapshot_context_trims_to_max_chars():
 
 
 @pytest.mark.asyncio
-async def test_inject_recent_channel_context_prefers_recent_message_cache():
+async def test_inject_recent_channel_context_prefers_activity_cache():
     messenger = SlackMessenger()
     workspace_id = "T123"
     channel_id = "C456"
-
-    for i in range(25):
-        ts = f"17107116{i:02d}.000"
-        cached_message = InboundMessage(
-            text=f"cached msg {i}",
-            message_type=MessageType.MENTION,
-            external_user_id=f"U{i}",
-            message_id=ts,
-            messenger_context={
-                "workspace_id": workspace_id,
-                "channel_id": channel_id,
-                "channel_type": "channel",
-                "event_ts": ts,
-                "thread_ts": ts,
-            },
-        )
-        await messenger._cache_recent_channel_message(
-            message=cached_message,
-            workspace_id=workspace_id,
-            channel_id=channel_id,
-        )
 
     inbound_message = InboundMessage(
         text="new message",
@@ -411,12 +390,39 @@ async def test_inject_recent_channel_context_prefers_recent_message_cache():
             "workspace_id": workspace_id,
             "channel_id": channel_id,
             "channel_type": "channel",
+            "organization_id": str(uuid4()),
         },
     )
+    mock_result = MagicMock()
+    mock_result.all.return_value = [
+        (
+            f"{channel_id}:1710711600.000",
+            "cached msg 1",
+            {"channel_id": channel_id, "user_id": "U1", "thread_ts": "1710711600.000"},
+            None,
+            None,
+        ),
+        (
+            f"{channel_id}:1710711600.100",
+            "cached msg 2",
+            {"channel_id": channel_id, "user_id": "U2", "thread_ts": "1710711600.000"},
+            None,
+            None,
+        ),
+    ]
+    mock_session = AsyncMock()
+    mock_session.execute.return_value = mock_result
+    mock_session_ctx = MagicMock(
+        __aenter__=AsyncMock(return_value=mock_session),
+        __aexit__=AsyncMock(return_value=None),
+    )
     mock_connector = AsyncMock()
-    mock_connector.get_channel_messages.side_effect = AssertionError("should use cached payload first")
+    mock_connector.get_channel_messages.side_effect = AssertionError("should use activity cache first")
 
-    with patch.object(messenger, "_get_connector", return_value=mock_connector):
+    with (
+        patch.object(messenger, "_get_connector", return_value=mock_connector),
+        patch("messengers.slack.get_admin_session", return_value=mock_session_ctx),
+    ):
         await messenger._inject_recent_channel_context(
             message=inbound_message,
             workspace_id=workspace_id,

@@ -8,10 +8,8 @@ and formatting.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
-import time
 from datetime import UTC, datetime
 from uuid import UUID
 from typing import Any
@@ -19,6 +17,7 @@ from typing import Any
 from connectors.slack import SlackConnector, markdown_to_mrkdwn
 from messengers._workspace import WorkspaceMessenger
 from messengers.base import InboundMessage, MessengerMeta, ResponseMode
+from models.activity import Activity
 from models.database import get_admin_session
 from models.messenger_user_mapping import MessengerUserMapping
 from models.user import User
@@ -35,11 +34,6 @@ _SLACK_CONTEXT_SUMMARY_MESSAGE_CHAR_LIMIT: int = 220
 _SLACK_CONTEXT_SUMMARY_RECENT_ITEMS: int = 80
 _SLACK_CONTEXT_SUMMARY_TOP_THREADS: int = 10
 _SLACK_CONTEXT_SNAPSHOT_SEPARATOR: str = "\n\n---\n\n"
-_SLACK_RECENT_CHANNEL_CACHE_TTL_SECONDS: int = 900
-_SLACK_RECENT_CHANNEL_CACHE_MAX_CHANNELS: int = 200
-_SLACK_RECENT_CHANNEL_CACHE_MIN_MESSAGES: int = 20
-_slack_recent_channel_messages_cache: dict[tuple[str, str], tuple[list[dict[str, Any]], float]] = {}
-_slack_recent_channel_messages_cache_lock: asyncio.Lock = asyncio.Lock()
 
 
 def _normalize_slack_dedupe_text(text: str) -> str:
@@ -99,11 +93,6 @@ class SlackMessenger(WorkspaceMessenger):
             organization_id=organization_id,
             workspace_id=workspace_id,
         )
-        await self._cache_recent_channel_message(
-            message=message,
-            workspace_id=workspace_id,
-            channel_id=channel_id,
-        )
 
         await self._inject_recent_channel_context(
             message=message,
@@ -129,8 +118,8 @@ class SlackMessenger(WorkspaceMessenger):
             channel_messages: list[dict[str, Any]] = []
             thread_expansions: dict[str, list[dict[str, Any]]] = {}
             cached_payload: tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]] | None = (
-                await self._get_cached_channel_context_payload(
-                    workspace_id=workspace_id,
+                await self._get_cached_channel_context_payload_from_activity(
+                    organization_id=str(ctx.get("organization_id") or ""),
                     channel_id=channel_id,
                 )
             )
@@ -213,85 +202,74 @@ class SlackMessenger(WorkspaceMessenger):
                 exc,
             )
 
-    async def _cache_recent_channel_message(
+    async def _get_cached_channel_context_payload_from_activity(
         self,
         *,
-        message: InboundMessage,
-        workspace_id: str,
-        channel_id: str,
-    ) -> None:
-        """Record inbound channel messages in a short-lived in-memory cache for snapshot reuse."""
-        ctx: dict[str, Any] = message.messenger_context
-        channel_type: str = (ctx.get("channel_type") or "").strip().lower()
-        if channel_type in {"im", "mpim"}:
-            return
-        event_ts: str = str(ctx.get("event_ts") or message.message_id or "").strip()
-        if not event_ts:
-            return
-        files: list[dict[str, Any]] = []
-        for raw_file in message.raw_attachments or []:
-            if isinstance(raw_file, dict):
-                files.append(raw_file)
-        cache_message: dict[str, Any] = {
-            "ts": event_ts,
-            "thread_ts": str(ctx.get("thread_ts") or ctx.get("thread_id") or event_ts),
-            "user": message.external_user_id,
-            "text": message.text or "",
-            "files": files,
-            "reply_count": 0,
-        }
-        cache_key: tuple[str, str] = (workspace_id, channel_id)
-        now: float = time.time()
-        expiry: float = now + _SLACK_RECENT_CHANNEL_CACHE_TTL_SECONDS
-        async with _slack_recent_channel_messages_cache_lock:
-            self._prune_expired_recent_channel_cache(now=now)
-            cached_entry: tuple[list[dict[str, Any]], float] | None = _slack_recent_channel_messages_cache.get(cache_key)
-            cached_messages: list[dict[str, Any]] = list(cached_entry[0]) if cached_entry else []
-            cached_messages = [m for m in cached_messages if str(m.get("ts") or "") != event_ts]
-            cached_messages.insert(0, cache_message)
-            cached_messages = cached_messages[:_SLACK_CONTEXT_CHANNEL_MESSAGE_LIMIT]
-            _slack_recent_channel_messages_cache[cache_key] = (cached_messages, expiry)
-            while len(_slack_recent_channel_messages_cache) > _SLACK_RECENT_CHANNEL_CACHE_MAX_CHANNELS:
-                oldest_key: tuple[str, str] = min(
-                    _slack_recent_channel_messages_cache,
-                    key=lambda key: _slack_recent_channel_messages_cache[key][1],
-                )
-                _slack_recent_channel_messages_cache.pop(oldest_key, None)
-
-    async def _get_cached_channel_context_payload(
-        self,
-        *,
-        workspace_id: str,
+        organization_id: str,
         channel_id: str,
     ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]] | None:
-        """Return cached channel context payload when sufficiently populated."""
-        cache_key: tuple[str, str] = (workspace_id, channel_id)
-        now: float = time.time()
-        async with _slack_recent_channel_messages_cache_lock:
-            self._prune_expired_recent_channel_cache(now=now)
-            entry: tuple[list[dict[str, Any]], float] | None = _slack_recent_channel_messages_cache.get(cache_key)
-            if not entry:
-                return None
-            cached_messages: list[dict[str, Any]] = list(entry[0])
-        if len(cached_messages) < _SLACK_RECENT_CHANNEL_CACHE_MIN_MESSAGES:
+        """Read recent channel messages from persisted Slack activities (Supabase/Postgres cache)."""
+        if not organization_id:
             return None
-        return self._build_channel_context_payload_from_cached_messages(cached_messages)
+        try:
+            org_uuid: UUID = UUID(organization_id)
+        except Exception:
+            return None
 
-    def _prune_expired_recent_channel_cache(self, *, now: float) -> None:
-        """Remove expired recent-channel cache entries in-place."""
-        expired_keys: list[tuple[str, str]] = [
-            key
-            for key, (_messages, expiry) in _slack_recent_channel_messages_cache.items()
-            if expiry <= now
-        ]
-        for key in expired_keys:
-            _slack_recent_channel_messages_cache.pop(key, None)
+        channel_id_text = Activity.custom_fields["channel_id"].astext
+        async with get_admin_session() as session:
+            rows = await session.execute(
+                select(
+                    Activity.source_id,
+                    Activity.description,
+                    Activity.custom_fields,
+                    Activity.activity_date,
+                    Activity.synced_at,
+                )
+                .where(Activity.organization_id == org_uuid)
+                .where(Activity.source_system == "slack")
+                .where(channel_id_text == channel_id)
+                .order_by(
+                    Activity.activity_date.desc().nullslast(),
+                    Activity.synced_at.desc().nullslast(),
+                )
+                .limit(_SLACK_CONTEXT_CHANNEL_MESSAGE_LIMIT)
+            )
+            activity_rows: list[tuple[str | None, str | None, dict[str, Any] | None, datetime | None, datetime | None]] = (
+                list(rows.all())
+            )
+        if not activity_rows:
+            return None
+
+        cached_messages: list[dict[str, Any]] = []
+        for source_id, description, custom_fields, _activity_date, _synced_at in activity_rows:
+            source_id_value: str = str(source_id or "")
+            ts_value: str = source_id_value.split(":", 1)[1] if ":" in source_id_value else ""
+            cf: dict[str, Any] = custom_fields or {}
+            thread_ts: str = str(cf.get("thread_ts") or ts_value).strip()
+            cached_messages.append(
+                {
+                    "ts": ts_value,
+                    "thread_ts": thread_ts,
+                    "user": str(cf.get("user_id") or "unknown"),
+                    "text": description or "",
+                    "files": [],
+                    "reply_count": 0,
+                }
+            )
+        logger.info(
+            "[slack] Loaded channel context from persisted activity cache channel=%s organization=%s messages=%d",
+            channel_id,
+            organization_id,
+            len(cached_messages),
+        )
+        return self._build_channel_context_payload_from_cached_messages(cached_messages)
 
     def _build_channel_context_payload_from_cached_messages(
         self,
         cached_messages: list[dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
-        """Construct top-level message + thread-expansion payload from cached seen messages."""
+        """Construct top-level message + thread-expansion payload from cached channel messages."""
         top_level_messages: list[dict[str, Any]] = []
         by_thread_ts: dict[str, list[dict[str, Any]]] = {}
         for cached_message in cached_messages:
