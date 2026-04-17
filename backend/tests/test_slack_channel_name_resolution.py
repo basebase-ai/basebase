@@ -373,3 +373,55 @@ def test_append_channel_snapshot_context_trims_to_max_chars():
 
     assert len(result) == 24000
     assert result.endswith("B" * 10000)
+
+
+@pytest.mark.asyncio
+async def test_inject_recent_channel_context_prefers_recent_message_cache():
+    messenger = SlackMessenger()
+    workspace_id = "T123"
+    channel_id = "C456"
+
+    for i in range(25):
+        ts = f"17107116{i:02d}.000"
+        cached_message = InboundMessage(
+            text=f"cached msg {i}",
+            message_type=MessageType.MENTION,
+            external_user_id=f"U{i}",
+            message_id=ts,
+            messenger_context={
+                "workspace_id": workspace_id,
+                "channel_id": channel_id,
+                "channel_type": "channel",
+                "event_ts": ts,
+                "thread_ts": ts,
+            },
+        )
+        await messenger._cache_recent_channel_message(
+            message=cached_message,
+            workspace_id=workspace_id,
+            channel_id=channel_id,
+        )
+
+    inbound_message = InboundMessage(
+        text="new message",
+        message_type=MessageType.MENTION,
+        external_user_id="U999",
+        message_id="1710711700.000",
+        messenger_context={
+            "workspace_id": workspace_id,
+            "channel_id": channel_id,
+            "channel_type": "channel",
+        },
+    )
+    mock_connector = AsyncMock()
+    mock_connector.get_channel_messages.side_effect = AssertionError("should use cached payload first")
+
+    with patch.object(messenger, "_get_connector", return_value=mock_connector):
+        await messenger._inject_recent_channel_context(
+            message=inbound_message,
+            workspace_id=workspace_id,
+            channel_id=channel_id,
+        )
+
+    context_payload = inbound_message.messenger_context["workflow_context"]["slack_recent_channel_context"]
+    assert "cached msg" in context_payload
