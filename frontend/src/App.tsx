@@ -351,31 +351,6 @@ function App(): JSX.Element {
   // Handle OAuth callback route
   const path = window.location.pathname;
 
-  const redirectToPublicUri = (targetPath: string): JSX.Element => {
-    const redirectPath = `${targetPath}${window.location.search}${window.location.hash}`;
-    console.info('[PublicRedirect] Unauthenticated access detected, redirecting to public URI', {
-      from: window.location.pathname,
-      to: targetPath,
-    });
-    window.location.replace(redirectPath);
-    return <></>;
-  };
-
-  // Normalize public share/link routes to canonical public URIs before auth gates.
-  const publicArtifactMatch = path.match(
-    /^\/(?:basebase\/(?:documents|artifacts)|[a-z0-9-]+\/artifacts?|artifacts?\/[a-z0-9-]+)\/([a-f0-9-]+)$/i,
-  );
-  if (publicArtifactMatch?.[1]) {
-    return redirectToPublicUri(`/public/artifacts/${publicArtifactMatch[1]}`);
-  }
-
-  const publicAppMatch = path.match(
-    /^\/(?:basebase\/apps|[a-z0-9-]+\/apps|apps\/[a-z0-9-]+)\/([a-f0-9-]+)$/i,
-  );
-  if (publicAppMatch?.[1]) {
-    return redirectToPublicUri(`/public/apps/${publicAppMatch[1]}`);
-  }
-
   // Normalize legacy app route shape once: /apps/<slug>/<appId> -> /apps/<appId>.
   const legacyAppsSlugMatch = path.match(/^\/apps\/[A-Za-z0-9-]+\/([a-f0-9-]+)$/i);
   if (legacyAppsSlugMatch && legacyAppsSlugMatch[1]) {
