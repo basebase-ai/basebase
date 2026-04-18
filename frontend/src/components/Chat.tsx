@@ -2172,10 +2172,10 @@ export function Chat({
                 disabled={!userId}
                 onClick={() => setShowInviteModal(true)}
                 className="p-1.5 rounded-md text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-                title={userId ? 'Add people to this chat' : 'Sign in to add people'}
+                title={userId ? 'Add or remove people' : 'Sign in to add or remove people'}
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3M3 12h3m2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
                 </svg>
               </button>
             </div>
@@ -3046,7 +3046,7 @@ function InviteParticipantModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <div className="bg-surface-900 rounded-xl border border-surface-700 shadow-lg w-full max-w-md mx-4 max-h-[min(90vh,32rem)] flex flex-col">
         <div className="flex items-center justify-between px-4 py-3 border-b border-surface-700 flex-shrink-0">
-          <h3 className="text-lg font-semibold text-surface-100">Add people</h3>
+          <h3 className="text-lg font-semibold text-surface-100">Add or remove people</h3>
           <button
             type="button"
             onClick={onClose}
@@ -3058,8 +3058,8 @@ function InviteParticipantModal({
           </button>
         </div>
         <div className="p-4 flex flex-col min-h-0 flex-1">
-          <h4 className="block text-sm font-medium text-surface-300 mb-2">People in this conversation</h4>
-          <div className="mb-4 rounded-lg border border-surface-700 bg-surface-850 overflow-hidden">
+          <h4 className="block text-sm font-medium text-surface-300 mb-2">Add or remove people</h4>
+          <div className="mb-4 rounded-lg border border-surface-700 bg-surface-850 min-h-[3.75rem] max-h-56 overflow-y-auto">
             {participants.length === 0 ? (
               <p className="px-3 py-3 text-sm text-surface-500">No participants.</p>
             ) : (
