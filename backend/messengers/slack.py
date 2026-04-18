@@ -123,16 +123,25 @@ class SlackMessenger(WorkspaceMessenger):
                     channel_id=channel_id,
                 )
             )
-            if cached_payload:
-                channel_messages, thread_expansions = cached_payload
-                logger.info(
-                    "[slack] Using cached channel context payload workspace=%s channel=%s messages=%d threads=%d",
-                    workspace_id,
-                    channel_id,
-                    len(channel_messages),
-                    len(thread_expansions),
-                )
-            else:
+            if cached_payload is not None:
+                cached_messages, cached_thread_expansions = cached_payload
+                if cached_messages:
+                    channel_messages = cached_messages
+                    thread_expansions = cached_thread_expansions
+                    logger.info(
+                        "[slack] Using cached channel context payload workspace=%s channel=%s messages=%d threads=%d",
+                        workspace_id,
+                        channel_id,
+                        len(channel_messages),
+                        len(thread_expansions),
+                    )
+                else:
+                    logger.info(
+                        "[slack] Cached channel context payload empty; falling back to Slack API workspace=%s channel=%s",
+                        workspace_id,
+                        channel_id,
+                    )
+            if not channel_messages:
                 channel_messages = await connector.get_channel_messages(
                     channel_id=channel_id,
                     limit=_SLACK_CONTEXT_CHANNEL_MESSAGE_LIMIT,
@@ -265,7 +274,11 @@ class SlackMessenger(WorkspaceMessenger):
         self,
         cached_messages: list[dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
-        """Construct top-level message + thread-expansion payload from cached channel messages."""
+        """Construct top-level message + thread-expansion payload from cached channel messages.
+
+        Messages are grouped by ``thread_ts`` and each thread is anchored in timeline order
+        by the timestamp of its first message from cached activity rows.
+        """
         top_level_messages: list[dict[str, Any]] = []
         by_thread_ts: dict[str, list[dict[str, Any]]] = {}
         for cached_message in cached_messages:
@@ -274,27 +287,28 @@ class SlackMessenger(WorkspaceMessenger):
             if not ts_value:
                 continue
             by_thread_ts.setdefault(thread_ts, []).append(cached_message)
-            if thread_ts == ts_value:
-                top_level_messages.append(cached_message)
+
+        thread_expansions: dict[str, list[dict[str, Any]]] = {}
+        for thread_ts, thread_messages in by_thread_ts.items():
+            ordered_thread_messages: list[dict[str, Any]] = sorted(
+                thread_messages,
+                key=lambda item: float(item.get("ts") or 0.0),
+            )
+            if not ordered_thread_messages:
+                continue
+            first_thread_message: dict[str, Any] = dict(ordered_thread_messages[0])
+            first_thread_message["thread_ts"] = thread_ts
+            first_thread_message["ts"] = str(ordered_thread_messages[0].get("ts") or "").strip()
+            first_thread_message["reply_count"] = max(0, len(ordered_thread_messages) - 1)
+            top_level_messages.append(first_thread_message)
+            if len(ordered_thread_messages) > 1:
+                thread_expansions[thread_ts] = ordered_thread_messages
 
         top_level_messages = sorted(
             top_level_messages,
             key=lambda item: float(item.get("ts") or 0.0),
             reverse=True,
         )[:_SLACK_CONTEXT_CHANNEL_MESSAGE_LIMIT]
-
-        thread_expansions: dict[str, list[dict[str, Any]]] = {}
-        for top_level in top_level_messages:
-            thread_ts: str = str(top_level.get("thread_ts") or top_level.get("ts") or "").strip()
-            if not thread_ts:
-                continue
-            thread_messages: list[dict[str, Any]] = sorted(
-                by_thread_ts.get(thread_ts) or [],
-                key=lambda item: float(item.get("ts") or 0.0),
-            )
-            if len(thread_messages) > 1:
-                top_level["reply_count"] = len(thread_messages) - 1
-                thread_expansions[thread_ts] = thread_messages
 
         return top_level_messages, thread_expansions
 

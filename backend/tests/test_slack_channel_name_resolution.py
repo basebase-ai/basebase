@@ -431,3 +431,81 @@ async def test_inject_recent_channel_context_prefers_activity_cache():
 
     context_payload = inbound_message.messenger_context["workflow_context"]["slack_recent_channel_context"]
     assert "cached msg" in context_payload
+
+
+@pytest.mark.asyncio
+async def test_inject_recent_channel_context_falls_back_when_cached_payload_is_empty():
+    messenger = SlackMessenger()
+    message = InboundMessage(
+        text="hello",
+        message_type=MessageType.MENTION,
+        external_user_id="U123",
+        message_id="123.456",
+        messenger_context={
+            "workspace_id": "T123",
+            "channel_id": "C456",
+            "channel_type": "channel",
+            "organization_id": str(uuid4()),
+        },
+    )
+
+    mock_connector = AsyncMock()
+    mock_connector.get_channel_messages.return_value = [
+        {"ts": "1710711600.000", "user": "U_A", "text": "live message", "reply_count": 0}
+    ]
+
+    with (
+        patch.object(messenger, "_get_connector", return_value=mock_connector),
+        patch.object(
+            messenger,
+            "_get_cached_channel_context_payload_from_activity",
+            AsyncMock(return_value=([], {})),
+        ),
+    ):
+        await messenger._inject_recent_channel_context(
+            message=message,
+            workspace_id="T123",
+            channel_id="C456",
+        )
+
+    mock_connector.get_channel_messages.assert_awaited_once()
+    context_payload = message.messenger_context["workflow_context"]["slack_recent_channel_context"]
+    assert "live message" in context_payload
+
+
+def test_build_channel_context_payload_groups_thread_without_parent_message():
+    messenger = SlackMessenger()
+    payload = messenger._build_channel_context_payload_from_cached_messages(
+        [
+            {
+                "ts": "1710711600.300",
+                "thread_ts": "1710711600.100",
+                "user": "U2",
+                "text": "reply one",
+            },
+            {
+                "ts": "1710711600.100",
+                "thread_ts": "1710711600.100",
+                "user": "U1",
+                "text": "thread first message",
+            },
+            {
+                "ts": "1710711600.500",
+                "thread_ts": "1710711600.100",
+                "user": "U3",
+                "text": "reply two",
+            },
+        ]
+    )
+
+    top_level_messages, thread_expansions = payload
+    assert len(top_level_messages) == 1
+    assert top_level_messages[0]["ts"] == "1710711600.100"
+    assert top_level_messages[0]["thread_ts"] == "1710711600.100"
+    assert top_level_messages[0]["reply_count"] == 2
+    assert "1710711600.100" in thread_expansions
+    assert [item["ts"] for item in thread_expansions["1710711600.100"]] == [
+        "1710711600.100",
+        "1710711600.300",
+        "1710711600.500",
+    ]
