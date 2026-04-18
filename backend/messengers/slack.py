@@ -146,26 +146,11 @@ class SlackMessenger(WorkspaceMessenger):
                 return
 
             if not thread_expansions:
-                for channel_message in channel_messages:
-                    thread_ts: str = str(channel_message.get("thread_ts") or channel_message.get("ts") or "").strip()
-                    reply_count: int = int(channel_message.get("reply_count") or 0)
-                    if not thread_ts or reply_count <= 0:
-                        continue
-                    if thread_ts in thread_expansions:
-                        continue
-                    try:
-                        thread_expansions[thread_ts] = await connector.get_thread_messages(
-                            channel_id=channel_id,
-                            thread_ts=thread_ts,
-                        )
-                    except Exception as thread_exc:
-                        logger.warning(
-                            "[slack] Failed to unroll thread for context channel=%s thread_ts=%s: %s",
-                            channel_id,
-                            thread_ts,
-                            thread_exc,
-                        )
-                        thread_expansions[thread_ts] = []
+                logger.info(
+                    "[slack] Skipping live thread unroll for context channel=%s workspace=%s",
+                    channel_id,
+                    workspace_id,
+                )
 
             history_context: str = self._format_channel_history_context(
                 channel_messages=channel_messages,
