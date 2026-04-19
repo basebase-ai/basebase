@@ -336,6 +336,109 @@ class OpenAIAdapter:
         )
         return {token_param_name: max_tokens}
 
+    def _is_openai_model(self, model: str) -> bool:
+        """Return True when a model identifier appears to target OpenAI models."""
+        normalized_model: str = model.strip().lower().split("/")[-1]
+        return not normalized_model.startswith("gemini")
+
+    def _validate_openai_tool_message_sequence(
+        self, messages: list[dict[str, Any]]
+    ) -> None:
+        """Validate Chat Completions tool-call sequencing invariants.
+
+        Expected sequence (excluding system):
+        user -> assistant(with tool_calls) -> tool (one per tool_call_id) -> assistant
+        """
+        pending_tool_call_ids: set[str] = set()
+        seen_tool_call_ids: set[str] = set()
+
+        for index, message in enumerate(messages):
+            role: str = str(message.get("role", ""))
+
+            if role == "assistant":
+                if pending_tool_call_ids:
+                    raise ValueError(
+                        "Invalid OpenAI message sequence: assistant message appeared "
+                        f"before tool results for {sorted(pending_tool_call_ids)} were provided."
+                    )
+
+                tool_calls = message.get("tool_calls")
+                if not tool_calls:
+                    continue
+                if not isinstance(tool_calls, list):
+                    raise ValueError(
+                        "Invalid OpenAI message sequence: assistant.tool_calls must be a list."
+                    )
+
+                current_ids: set[str] = set()
+                for tc in tool_calls:
+                    if not isinstance(tc, dict):
+                        raise ValueError(
+                            "Invalid OpenAI message sequence: assistant.tool_calls entries must be objects."
+                        )
+                    tc_id: str = str(tc.get("id", "")).strip()
+                    if not tc_id:
+                        raise ValueError(
+                            "Invalid OpenAI message sequence: assistant.tool_calls entries must include non-empty id."
+                        )
+                    if tc_id in current_ids:
+                        raise ValueError(
+                            f"Invalid OpenAI message sequence: duplicate tool_call id in assistant message: {tc_id}"
+                        )
+                    current_ids.add(tc_id)
+                    seen_tool_call_ids.add(tc_id)
+
+                pending_tool_call_ids = current_ids
+                logger.debug(
+                    "[OpenAIAdapter] Tool-call sequence pending ids initialized at index=%d ids=%s",
+                    index,
+                    sorted(pending_tool_call_ids),
+                )
+                continue
+
+            if role == "tool":
+                if not pending_tool_call_ids:
+                    raise ValueError(
+                        "Invalid OpenAI message sequence: tool message without a preceding assistant tool_calls message."
+                    )
+                tool_call_id: str = str(message.get("tool_call_id", "")).strip()
+                if not tool_call_id:
+                    raise ValueError(
+                        "Invalid OpenAI message sequence: tool message missing tool_call_id."
+                    )
+                if tool_call_id not in pending_tool_call_ids:
+                    raise ValueError(
+                        "Invalid OpenAI message sequence: tool_call_id "
+                        f"{tool_call_id!r} does not match pending ids {sorted(pending_tool_call_ids)}."
+                    )
+                pending_tool_call_ids.remove(tool_call_id)
+                logger.debug(
+                    "[OpenAIAdapter] Consumed tool result at index=%d tool_call_id=%s remaining=%s",
+                    index,
+                    tool_call_id,
+                    sorted(pending_tool_call_ids),
+                )
+                continue
+
+            # user/system/developer/other roles cannot appear before pending tool results are complete.
+            if pending_tool_call_ids:
+                raise ValueError(
+                    "Invalid OpenAI message sequence: non-tool message role="
+                    f"{role!r} appeared before tool results for {sorted(pending_tool_call_ids)} were provided."
+                )
+
+        if pending_tool_call_ids:
+            raise ValueError(
+                "Invalid OpenAI message sequence: conversation ended before all tool results were provided for "
+                f"{sorted(pending_tool_call_ids)}."
+            )
+
+        logger.debug(
+            "[OpenAIAdapter] Tool-call sequence validation passed for %d messages (tool ids observed=%d)",
+            len(messages),
+            len(seen_tool_call_ids),
+        )
+
     # -- streaming ----------------------------------------------------------
 
     async def stream(
@@ -351,6 +454,8 @@ class OpenAIAdapter:
         api_messages: list[dict[str, Any]] = [
             {"role": "system", "content": system}
         ] + self.format_messages_for_api(messages)
+        if self._is_openai_model(model):
+            self._validate_openai_tool_message_sequence(api_messages[1:])
 
         api_kwargs: dict[str, Any] = {
             "model": model,
@@ -445,6 +550,8 @@ class OpenAIAdapter:
         api_messages: list[dict[str, Any]] = [
             {"role": "system", "content": system}
         ] + self.format_messages_for_api(messages)
+        if self._is_openai_model(model):
+            self._validate_openai_tool_message_sequence(api_messages[1:])
 
         response = await self._client.chat.completions.create(
             model=model,

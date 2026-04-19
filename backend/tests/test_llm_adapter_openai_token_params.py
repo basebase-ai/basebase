@@ -68,6 +68,87 @@ def test_openai_format_messages_coerces_tool_result_null_content_to_string():
     assert formatted == [{"role": "tool", "tool_call_id": "tool-1", "content": ""}]
 
 
+def test_openai_sequence_validator_accepts_valid_tool_pattern():
+    adapter = OpenAIAdapter(api_key="test-key")
+    messages = [
+        {"role": "user", "content": "Find revenue trends"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "run_sql_query", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "{\"rows\": []}"},
+        {"role": "assistant", "content": "Done"},
+    ]
+
+    adapter._validate_openai_tool_message_sequence(messages)
+
+
+def test_openai_sequence_validator_rejects_missing_tool_result():
+    adapter = OpenAIAdapter(api_key="test-key")
+    messages = [
+        {"role": "user", "content": "Find revenue trends"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "run_sql_query", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "assistant", "content": "Done"},
+    ]
+
+    with pytest.raises(ValueError, match="before tool results"):
+        adapter._validate_openai_tool_message_sequence(messages)
+
+
+def test_openai_sequence_validator_rejects_unmatched_tool_call_id():
+    adapter = OpenAIAdapter(api_key="test-key")
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "run_sql_query", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_2", "content": "{\"rows\": []}"},
+    ]
+
+    with pytest.raises(ValueError, match="does not match pending ids"):
+        adapter._validate_openai_tool_message_sequence(messages)
+
+
+def test_openai_sequence_validator_rejects_orphan_tool_message():
+    adapter = OpenAIAdapter(api_key="test-key")
+    messages = [{"role": "tool", "tool_call_id": "call_1", "content": "x"}]
+
+    with pytest.raises(ValueError, match="without a preceding assistant tool_calls"):
+        adapter._validate_openai_tool_message_sequence(messages)
+
+
+def test_openai_model_detection_excludes_gemini():
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    assert adapter._is_openai_model("gpt-5")
+    assert adapter._is_openai_model("openai/gpt-5-mini")
+    assert not adapter._is_openai_model("gemini-2.5-pro")
+
+
 @pytest.mark.asyncio
 async def test_openai_stream_does_not_pass_duplicate_model_kwarg():
     adapter = OpenAIAdapter(api_key="test-key")
