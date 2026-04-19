@@ -114,7 +114,6 @@ class SlackMessenger(WorkspaceMessenger):
             return
 
         try:
-            connector: SlackConnector = await self._get_connector(workspace_id)
             channel_messages: list[dict[str, Any]] = []
             thread_expansions: dict[str, list[dict[str, Any]]] = {}
             cached_payload: tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]] | None = (
@@ -142,10 +141,20 @@ class SlackMessenger(WorkspaceMessenger):
                         channel_id,
                     )
             if not channel_messages:
-                channel_messages = await connector.get_channel_messages(
-                    channel_id=channel_id,
-                    limit=_SLACK_CONTEXT_CHANNEL_MESSAGE_LIMIT,
-                )
+                try:
+                    connector: SlackConnector = await self._get_connector(workspace_id)
+                    channel_messages = await connector.get_channel_messages(
+                        channel_id=channel_id,
+                        limit=_SLACK_CONTEXT_CHANNEL_MESSAGE_LIMIT,
+                    )
+                except Exception as connector_exc:
+                    logger.warning(
+                        "[slack] Failed to fetch Slack API channel context on cache miss channel=%s workspace=%s: %s",
+                        channel_id,
+                        workspace_id,
+                        connector_exc,
+                    )
+                    return
             if not channel_messages:
                 logger.info(
                     "[slack] No channel history to attach for context channel=%s workspace=%s",
