@@ -39,6 +39,35 @@ def test_openai_gpt5_with_provider_prefix_uses_max_completion_tokens():
     ) == {"max_completion_tokens": 777}
 
 
+def test_openai_format_messages_coerces_null_content_to_empty_string():
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    formatted = adapter.format_messages_for_api(
+        [
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "x", "name": "fn", "input": {}}]},
+            {"role": "user", "content": None},
+        ]
+    )
+
+    assert formatted[0]["content"] == ""
+    assert formatted[1]["content"] == ""
+
+
+def test_openai_format_messages_coerces_tool_result_null_content_to_string():
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    formatted = adapter.format_messages_for_api(
+        [
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "tool-1", "content": None}],
+            }
+        ]
+    )
+
+    assert formatted == [{"role": "tool", "tool_call_id": "tool-1", "content": ""}]
+
+
 @pytest.mark.asyncio
 async def test_openai_stream_does_not_pass_duplicate_model_kwarg():
     adapter = OpenAIAdapter(api_key="test-key")
