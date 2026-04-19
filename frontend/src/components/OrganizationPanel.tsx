@@ -10,7 +10,7 @@
  * Uses React Query for server state (team members, org updates).
  */
 
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { OrganizationInfo, UserProfile } from './AppLayout';
 import { supabase } from '../lib/supabase';
@@ -189,6 +189,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
   const [llmCheapModel, setLlmCheapModel] = useState<string>(organization.llmCheapModel ?? '');
   const [llmWorkflowModel, setLlmWorkflowModel] = useState<string>(organization.llmWorkflowModel ?? '');
   const [llmModelMap, setLlmModelMap] = useState<Record<string, string>>({});
+  const [isModelSettingsLoading, setIsModelSettingsLoading] = useState<boolean>(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -209,14 +210,56 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
     setMenuOpenMemberId(null);
   }, [organization.id, organization.name, organization.logoUrl, organization.llmPrimaryModel, organization.llmCheapModel, organization.llmWorkflowModel]);
 
+  const loadFreshModelSettings = useCallback(async (): Promise<void> => {
+    setIsModelSettingsLoading(true);
+    console.info('[OrganizationPanel] Loading fresh model settings for settings tab', {
+      organizationId: organization.id,
+      userId: currentUser.id,
+    });
+
+    try {
+      const [{ data: organizationData, error: organizationError }, { data: llmOptionsData, error: llmOptionsError }] = await Promise.all([
+        apiRequest<{
+          llm_primary_model?: string | null;
+          llm_cheap_model?: string | null;
+          llm_workflow_model?: string | null;
+        }>(`/auth/organizations/${encodeURIComponent(organization.id)}?user_id=${encodeURIComponent(currentUser.id)}`),
+        apiRequest<{ models: Record<string, string> }>('/auth/llm-options'),
+      ]);
+
+      if (organizationError) {
+        console.warn('[OrganizationPanel] Failed to load fresh organization model settings', {
+          organizationId: organization.id,
+          error: organizationError,
+        });
+      } else if (organizationData) {
+        setLlmPrimaryModel(organizationData.llm_primary_model ?? '');
+        setLlmCheapModel(organizationData.llm_cheap_model ?? '');
+        setLlmWorkflowModel(organizationData.llm_workflow_model ?? '');
+      }
+
+      if (llmOptionsError) {
+        console.warn('[OrganizationPanel] Failed to load LLM model options', {
+          organizationId: organization.id,
+          error: llmOptionsError,
+        });
+      } else if (llmOptionsData?.models) {
+        setLlmModelMap(llmOptionsData.models);
+      }
+    } catch (error) {
+      console.error('[OrganizationPanel] Unexpected error while loading model settings', {
+        organizationId: organization.id,
+        error,
+      });
+    } finally {
+      setIsModelSettingsLoading(false);
+    }
+  }, [organization.id, currentUser.id]);
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const { data } = await apiRequest<{ models: Record<string, string> }>('/auth/llm-options');
-      if (!cancelled && data?.models) setLlmModelMap(data.models);
-    })();
-    return () => { cancelled = true; };
-  }, []);
+    if (activeTab !== 'settings') return;
+    void loadFreshModelSettings();
+  }, [activeTab, loadFreshModelSettings]);
 
   useEffect(() => {
     if (!menuOpenMemberId) return;
@@ -1375,7 +1418,9 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
               <div className="pt-6 border-t border-surface-800">
                 <h3 className="text-sm font-medium text-surface-200 mb-3">AI Model</h3>
                 <div className="space-y-4">
-                  {Object.keys(llmModelMap).length > 0 ? (
+                  {isModelSettingsLoading ? (
+                    <p className="text-sm text-surface-500">Loading latest model settings…</p>
+                  ) : Object.keys(llmModelMap).length > 0 ? (
                     <>
                       <div>
                         <label className="block text-sm text-surface-400 mb-1.5">Primary model</label>
