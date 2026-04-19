@@ -16,7 +16,7 @@ from typing import Any
 
 from connectors.slack import SlackConnector, markdown_to_mrkdwn
 from messengers._workspace import WorkspaceMessenger
-from messengers.base import InboundMessage, MessengerMeta, ResponseMode
+from messengers.base import InboundMessage, MessageType, MessengerMeta, ResponseMode
 from models.activity import Activity
 from models.database import get_admin_session
 from models.messenger_user_mapping import MessengerUserMapping
@@ -110,7 +110,14 @@ class SlackMessenger(WorkspaceMessenger):
         """Load recent channel history (with unrolled threads) and attach it for LLM context."""
         ctx: dict[str, Any] = message.messenger_context
         channel_type: str = (ctx.get("channel_type") or "").strip().lower()
-        if channel_type in {"im", "mpim"}:
+        conversation_type: str = (ctx.get("conversation_type") or "").strip().lower()
+        is_direct_message: bool = message.message_type == MessageType.DIRECT
+        if (
+            is_direct_message
+            or channel_type in {"im", "mpim", "direct_message", "dm"}
+            or conversation_type in {"im", "mpim", "direct_message", "dm"}
+            or str(channel_id).strip().upper().startswith("D")
+        ):
             return
 
         try:

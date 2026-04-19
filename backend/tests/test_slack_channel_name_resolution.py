@@ -256,7 +256,7 @@ async def test_inject_recent_channel_context_appends_refreshed_snapshot():
     messenger = SlackMessenger()
     message = InboundMessage(
         text="hello",
-        message_type=MessageType.DIRECT,
+        message_type=MessageType.MENTION,
         external_user_id="U123",
         message_id="123.456",
         messenger_context={
@@ -286,6 +286,38 @@ async def test_inject_recent_channel_context_appends_refreshed_snapshot():
     assert "fresh message" in updated
     assert "\n\n---\n\n" in updated
     assert updated.count("Slack snapshot fetched_at=") == 2
+
+
+@pytest.mark.asyncio
+async def test_inject_recent_channel_context_skips_direct_messages():
+    messenger = SlackMessenger()
+    message = InboundMessage(
+        text="hello",
+        message_type=MessageType.DIRECT,
+        external_user_id="U123",
+        message_id="123.456",
+        messenger_context={
+            "workspace_id": "T123",
+            "channel_id": "D456",
+            "organization_id": str(uuid4()),
+        },
+    )
+
+    with (
+        patch.object(messenger, "_get_connector", AsyncMock(side_effect=AssertionError("should not fetch connector"))),
+        patch.object(
+            messenger,
+            "_get_cached_channel_context_payload_from_activity",
+            AsyncMock(side_effect=AssertionError("should not read channel cache for DMs")),
+        ),
+    ):
+        await messenger._inject_recent_channel_context(
+            message=message,
+            workspace_id="T123",
+            channel_id="D456",
+        )
+
+    assert "workflow_context" not in message.messenger_context
 
 
 def test_summarize_channel_history_if_needed_returns_original_when_within_limit():
