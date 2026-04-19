@@ -478,6 +478,16 @@ class OpenAIAdapter:
         self, messages: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Translate Anthropic-style stored messages to OpenAI chat format."""
+        def _as_text(value: Any) -> str:
+            """Coerce nullable/non-string content into API-safe text."""
+            if value is None:
+                return ""
+            if isinstance(value, str):
+                return value
+            if isinstance(value, (dict, list)):
+                return json.dumps(value, ensure_ascii=False)
+            return str(value)
+
         result: list[dict[str, Any]] = []
         for msg in messages:
             role: str = msg.get("role", "user")
@@ -495,7 +505,7 @@ class OpenAIAdapter:
                             result.append({
                                 "role": "tool",
                                 "tool_call_id": block.get("tool_use_id", ""),
-                                "content": block.get("content", ""),
+                                "content": _as_text(block.get("content", "")),
                             })
                     continue
 
@@ -505,7 +515,9 @@ class OpenAIAdapter:
                     if isinstance(block, dict):
                         btype: str = block.get("type", "")
                         if btype == "text":
-                            openai_parts.append({"type": "text", "text": block.get("text", "")})
+                            openai_parts.append(
+                                {"type": "text", "text": _as_text(block.get("text", ""))}
+                            )
                         elif btype == "image":
                             source = block.get("source", {})
                             media_type: str = source.get("media_type", "image/png")
@@ -527,7 +539,7 @@ class OpenAIAdapter:
                         continue
                     btype = block.get("type", "")
                     if btype == "text":
-                        text_parts.append(block.get("text", ""))
+                        text_parts.append(_as_text(block.get("text", "")))
                     elif btype == "tool_use":
                         tool_calls.append({
                             "id": block.get("id", ""),
@@ -541,7 +553,7 @@ class OpenAIAdapter:
 
                 msg_dict: dict[str, Any] = {
                     "role": "assistant",
-                    "content": "\n".join(text_parts) if text_parts else None,
+                    "content": "\n".join(text_parts),
                 }
                 if tool_calls:
                     msg_dict["tool_calls"] = tool_calls
@@ -549,7 +561,7 @@ class OpenAIAdapter:
                 continue
 
             # Simple string content
-            result.append({"role": role, "content": content})
+            result.append({"role": role, "content": _as_text(content)})
         return result
 
     def build_completed_content(self, raw_response: Any) -> list[ContentBlock]:
