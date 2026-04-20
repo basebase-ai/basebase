@@ -180,6 +180,73 @@ def _extract_allowed_slack_channels(workflow: Any) -> list[str]:
     return unique
 
 
+_MESSENGER_CONNECTORS: set[str] = {"slack", "twilio", "teams"}
+_MESSENGER_ACTIONS: set[str] = {
+    "send_message",
+    "send_sms",
+    "send_whatsapp",
+    "send_direct_message",
+    "post_message",
+}
+
+
+def _coerce_preview_text(value: Any, *, max_length: int = 500) -> str | None:
+    """Coerce any message-like value into a bounded preview string."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if len(text) <= max_length:
+        return text
+    return f"{text[:max_length]}…"
+
+
+def _extract_messenger_connector_call_details(
+    tool_payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    """
+    Return normalized details for messenger connector calls, else None.
+
+    We currently identify messenger connector calls as run_on_connector invocations
+    for known messenger connectors/actions (Slack/Twilio/Teams send actions).
+    """
+    tool_name = str(tool_payload.get("tool_name") or "").strip().lower()
+    if tool_name != "run_on_connector":
+        return None
+
+    tool_input_raw = tool_payload.get("tool_input")
+    tool_input: dict[str, Any] = (
+        tool_input_raw if isinstance(tool_input_raw, dict) else {}
+    )
+    connector = str(tool_input.get("connector") or "").strip().lower()
+    action = str(tool_input.get("action") or "").strip().lower()
+    if connector not in _MESSENGER_CONNECTORS:
+        return None
+    if action not in _MESSENGER_ACTIONS:
+        return None
+
+    params_raw = tool_input.get("params")
+    params: dict[str, Any] = params_raw if isinstance(params_raw, dict) else {}
+    message = (
+        params.get("text")
+        or params.get("message")
+        or params.get("body")
+        or params.get("content")
+    )
+    channel = params.get("channel") or params.get("channel_id")
+    recipient = params.get("to") or params.get("user_id") or params.get("recipient")
+
+    return {
+        "tool_name": tool_name,
+        "connector": connector,
+        "action": action,
+        "message_preview": _coerce_preview_text(message),
+        "channel": _coerce_preview_text(channel, max_length=120),
+        "recipient": _coerce_preview_text(recipient, max_length=120),
+    }
+
+
 def _is_allowed_workflow_slack_target(channel: str, allowed_channels: list[str]) -> bool:
     """Allow only workflow-listed channels and DMs."""
     normalized = (channel or "").strip()
@@ -1389,6 +1456,8 @@ async def _execute_workflow_via_agent(
     # Process the prompt (this streams through the agent)
     # Since we're in a background worker, we consume the generator fully
     response_text = ""
+    messenger_history_events: list[dict[str, Any]] = []
+    pending_messenger_calls: dict[str, dict[str, Any]] = {}
     async for chunk in orchestrator.process_message(
         prompt,
         save_user_message=True,
@@ -1397,6 +1466,74 @@ async def _execute_workflow_via_agent(
         # Collect text chunks (JSON chunks are tool events)
         if not chunk.startswith("{"):
             response_text += chunk
+            continue
+
+        try:
+            parsed_chunk = json.loads(chunk)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed_chunk, dict):
+            continue
+
+        chunk_type = str(parsed_chunk.get("type") or "").strip().lower()
+        if chunk_type == "tool_call":
+            details = _extract_messenger_connector_call_details(parsed_chunk)
+            if not details:
+                continue
+            tool_id = str(parsed_chunk.get("tool_id") or "").strip()
+            if not tool_id:
+                logger.debug(
+                    "[Workflow] Messenger connector tool_call missing tool_id workflow_id=%s run_id=%s payload=%s",
+                    workflow.id,
+                    run.id,
+                    parsed_chunk,
+                )
+                continue
+            pending_messenger_calls[tool_id] = details
+            logger.info(
+                "[Workflow] Captured messenger connector call workflow_id=%s run_id=%s tool_id=%s connector=%s action=%s channel=%s recipient=%s",
+                workflow.id,
+                run.id,
+                tool_id,
+                details.get("connector"),
+                details.get("action"),
+                details.get("channel"),
+                details.get("recipient"),
+            )
+        elif chunk_type == "tool_result":
+            tool_id = str(parsed_chunk.get("tool_id") or "").strip()
+            call_details = pending_messenger_calls.pop(tool_id, None)
+            if not call_details:
+                continue
+
+            tool_result_raw = parsed_chunk.get("result")
+            tool_result: dict[str, Any] = (
+                tool_result_raw if isinstance(tool_result_raw, dict) else {}
+            )
+            event_entry: dict[str, Any] = {
+                "step_index": len(messenger_history_events),
+                "action": "messenger_connector_call",
+                "result": {
+                    "event_type": "messenger_connector_call",
+                    "connector": call_details.get("connector"),
+                    "connector_action": call_details.get("action"),
+                    "channel": call_details.get("channel"),
+                    "recipient": call_details.get("recipient"),
+                    "message_preview": call_details.get("message_preview"),
+                    "status": "failed" if tool_result.get("error") else "completed",
+                    "tool_result": tool_result,
+                },
+            }
+            messenger_history_events.append(event_entry)
+            logger.info(
+                "[Workflow] Logged messenger connector history workflow_id=%s run_id=%s tool_id=%s connector=%s action=%s status=%s",
+                workflow.id,
+                run.id,
+                tool_id,
+                call_details.get("connector"),
+                call_details.get("action"),
+                event_entry["result"]["status"],
+            )
     
     # Extract structured output from response if output_schema is defined
     structured_output: dict[str, Any] | None = None
@@ -1412,6 +1549,14 @@ async def _execute_workflow_via_agent(
         "response_preview": response_text[:500] if response_text else None,
         "structured_output": structured_output,
     }
+    if messenger_history_events:
+        run.steps_completed = messenger_history_events
+        logger.info(
+            "[Workflow] Persisted %d messenger connector history events workflow_id=%s run_id=%s",
+            len(messenger_history_events),
+            workflow.id,
+            run.id,
+        )
     run.completed_at = datetime.utcnow()
     
     # Update workflow last_run_at
