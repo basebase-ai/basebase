@@ -38,7 +38,7 @@ from models.conversation import Conversation
 from models.database import get_admin_session, get_session
 from models.org_member import OrgMember
 from models.user import User
-from services.file_handler import store_file, MAX_FILE_SIZE
+from services.file_handler import max_file_size_for_upload, store_file
 from services.slack_identity import get_slack_user_ids_for_revtops_user
 
 
@@ -1219,17 +1219,21 @@ async def upload_file(
     Upload a file to attach to a chat message.
 
     Files are stored temporarily in memory and consumed when the
-    message is sent via WebSocket. Max size: 10 MB.
+    message is sent via WebSocket.
     """
     if file.filename is None:
         raise HTTPException(status_code=400, detail="Filename is required")
 
     data: bytes = await file.read()
 
-    if len(data) > MAX_FILE_SIZE:
+    max_size_bytes: int = max_file_size_for_upload(
+        filename=file.filename,
+        content_type=file.content_type,
+    )
+    if len(data) > max_size_bytes:
         raise HTTPException(
             status_code=413,
-            detail=f"File exceeds maximum size of {MAX_FILE_SIZE // (1024 * 1024)} MB",
+            detail=f"File exceeds maximum size of {max_size_bytes // (1024 * 1024)} MB",
         )
 
     try:

@@ -880,7 +880,7 @@ class SlackMessenger(WorkspaceMessenger):
         organization_id: str | None = None,
     ) -> tuple[bytes, str, str] | None:
         """Download a Slack file using the bot token."""
-        from services.file_handler import MAX_FILE_SIZE
+        from services.file_handler import max_file_size_for_upload
 
         connector: SlackConnector = await self._get_connector(
             workspace_id, organization_id=organization_id,
@@ -893,8 +893,17 @@ class SlackMessenger(WorkspaceMessenger):
         content_type: str = file_info.get("mimetype", "application/octet-stream")
         size: int = file_info.get("size", 0)
 
-        if size > MAX_FILE_SIZE:
-            logger.warning("[slack] File %s too large (%d bytes)", filename, size)
+        max_size_bytes: int = max_file_size_for_upload(
+            filename=filename,
+            content_type=content_type,
+        )
+        if size > max_size_bytes:
+            logger.warning(
+                "[slack] File %s too large (%d bytes > %d bytes)",
+                filename,
+                size,
+                max_size_bytes,
+            )
             return None
 
         try:

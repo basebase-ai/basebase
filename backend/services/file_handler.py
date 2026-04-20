@@ -32,8 +32,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Max file size: 10 MB
+# Max file size for non-PDF uploads: 10 MB
 MAX_FILE_SIZE: int = 10 * 1024 * 1024
+
+# Max file size for PDFs: 25 MB (supports typical ~30-slide decks)
+MAX_PDF_FILE_SIZE: int = 25 * 1024 * 1024
 
 # TTL for stored files: 30 minutes
 FILE_TTL_SECONDS: int = 30 * 60
@@ -107,12 +110,12 @@ def store_file(filename: str, data: bytes, content_type: str | None = None) -> S
         StoredFile with generated upload_id
 
     Raises:
-        ValueError: If file exceeds MAX_FILE_SIZE
+        ValueError: If file exceeds the MIME-aware max size limit
     """
-    if len(data) > MAX_FILE_SIZE:
-        raise ValueError(f"File exceeds maximum size of {MAX_FILE_SIZE // (1024 * 1024)} MB")
-
     mime: str = content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    max_size_bytes: int = max_file_size_for_upload(filename=filename, content_type=mime)
+    if len(data) > max_size_bytes:
+        raise ValueError(f"File exceeds maximum size of {max_size_bytes // (1024 * 1024)} MB")
     upload_id: str = str(uuid.uuid4())
 
     stored = StoredFile(
@@ -129,6 +132,14 @@ def store_file(filename: str, data: bytes, content_type: str | None = None) -> S
 
     logger.info("Stored file %s (%s, %d bytes) as %s", filename, mime, len(data), upload_id)
     return stored
+
+
+def max_file_size_for_upload(*, filename: str, content_type: str | None) -> int:
+    """Return size ceiling in bytes for an upload based on type."""
+    normalized_ct: str = (content_type or "").strip().lower()
+    lower_name: str = (filename or "").strip().lower()
+    is_pdf: bool = normalized_ct == PDF_MIME or lower_name.endswith(".pdf")
+    return MAX_PDF_FILE_SIZE if is_pdf else MAX_FILE_SIZE
 
 
 def retrieve_file(upload_id: str) -> StoredFile | None:

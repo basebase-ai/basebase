@@ -116,7 +116,7 @@ class TeamsMessenger(WorkspaceMessenger):
         organization_id: str | None = None,
     ) -> tuple[bytes, str, str] | None:
         """Download a Teams attachment (contentUrl)."""
-        from services.file_handler import MAX_FILE_SIZE
+        from services.file_handler import max_file_size_for_upload
 
         content_url: str | None = file_info.get("contentUrl") or file_info.get(
             "content"
@@ -129,8 +129,17 @@ class TeamsMessenger(WorkspaceMessenger):
         if result is None:
             return None
         data, filename, ct = result
-        if len(data) > MAX_FILE_SIZE:
-            logger.warning("[teams] File %s too large (%d bytes)", name, len(data))
+        max_size_bytes: int = max_file_size_for_upload(
+            filename=filename or name,
+            content_type=ct or content_type,
+        )
+        if len(data) > max_size_bytes:
+            logger.warning(
+                "[teams] File %s too large (%d bytes > %d bytes)",
+                name,
+                len(data),
+                max_size_bytes,
+            )
             return None
         return (data, filename or name, ct or content_type)
 

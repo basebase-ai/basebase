@@ -164,7 +164,7 @@ def _is_safe_twilio_media_url(url: str) -> bool:
 
 async def _download_twilio_media(media_items: list[dict[str, str]]) -> list[str]:
     """Download MMS/WhatsApp media from Twilio CDN, return upload IDs."""
-    from services.file_handler import MAX_FILE_SIZE, store_file
+    from services.file_handler import max_file_size_for_upload, store_file
 
     account_sid: str | None = settings.TWILIO_ACCOUNT_SID
     auth_token: str | None = settings.TWILIO_AUTH_TOKEN
@@ -192,12 +192,21 @@ async def _download_twilio_media(media_items: list[dict[str, str]]) -> list[str]
                 resp.raise_for_status()
 
                 data: bytes = resp.content
-                if len(data) > MAX_FILE_SIZE:
-                    logger.warning("MMS media %d (%d bytes) exceeds max — skipping", i, len(data))
-                    continue
-
                 ext: str = content_type.split("/")[-1].split(";")[0]
                 filename: str = f"mms_media_{i}.{ext}"
+                max_size_bytes: int = max_file_size_for_upload(
+                    filename=filename,
+                    content_type=content_type,
+                )
+                if len(data) > max_size_bytes:
+                    logger.warning(
+                        "MMS media %d (%d bytes) exceeds max %d bytes — skipping",
+                        i,
+                        len(data),
+                        max_size_bytes,
+                    )
+                    continue
+
                 stored = store_file(filename=filename, data=data, content_type=content_type)
                 attachment_ids.append(stored.upload_id)
                 logger.info("Downloaded media %d (%s, %d bytes) → %s", i, content_type, len(data), stored.upload_id)

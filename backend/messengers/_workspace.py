@@ -663,7 +663,7 @@ class WorkspaceMessenger(BaseMessenger):
     # ------------------------------------------------------------------
 
     async def download_attachments(self, message: InboundMessage) -> list[str]:
-        from services.file_handler import MAX_FILE_SIZE, store_file
+        from services.file_handler import max_file_size_for_upload, store_file
 
         if not message.raw_attachments:
             return []
@@ -681,8 +681,18 @@ class WorkspaceMessenger(BaseMessenger):
             if result is None:
                 continue
             data, filename, content_type = result
-            if len(data) > MAX_FILE_SIZE:
-                logger.warning("[%s] File %s too large (%d bytes)", self.meta.slug, filename, len(data))
+            max_size_bytes: int = max_file_size_for_upload(
+                filename=filename,
+                content_type=content_type,
+            )
+            if len(data) > max_size_bytes:
+                logger.warning(
+                    "[%s] File %s too large (%d bytes > %d bytes)",
+                    self.meta.slug,
+                    filename,
+                    len(data),
+                    max_size_bytes,
+                )
                 continue
             stored = store_file(filename=filename, data=data, content_type=content_type)
             attachment_ids.append(stored.upload_id)
