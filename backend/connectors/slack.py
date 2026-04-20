@@ -1496,6 +1496,26 @@ Returns normalized messages for one channel since a cutoff (does not write to th
             raise ValueError(f"Empty response downloading Slack file: {url_private}")
         return data
 
+    async def get_file_info(self, file_id: str) -> dict[str, Any] | None:
+        """Fetch file metadata from Slack ``files.info``."""
+        normalized_file_id: str = str(file_id or "").strip()
+        if not normalized_file_id:
+            return None
+
+        data: dict[str, Any] = await self._make_request(
+            "POST",
+            "files.info",
+            json_data={"file": normalized_file_id},
+        )
+        file_info: dict[str, Any] | None = data.get("file")
+        if file_info is None:
+            logger.warning(
+                "[slack] files.info returned no file payload for file_id=%s",
+                normalized_file_id,
+            )
+            return None
+        return file_info
+
     async def _send_direct_message_once(
         self,
         slack_user_id: str,

@@ -885,13 +885,44 @@ class SlackMessenger(WorkspaceMessenger):
         connector: SlackConnector = await self._get_connector(
             workspace_id, organization_id=organization_id,
         )
-        url_private: str | None = file_info.get("url_private_download") or file_info.get("url_private")
+        normalized_file_info: dict[str, Any] = dict(file_info or {})
+        url_private: str | None = (
+            normalized_file_info.get("url_private_download")
+            or normalized_file_info.get("url_private")
+        )
+        if not url_private:
+            embedded_file_id: str = str(
+                normalized_file_info.get("external_id")
+                or normalized_file_info.get("file_id")
+                or normalized_file_info.get("id")
+                or ""
+            ).strip()
+            if embedded_file_id:
+                try:
+                    fetched_file_info: dict[str, Any] | None = await connector.get_file_info(embedded_file_id)
+                    if fetched_file_info:
+                        normalized_file_info = fetched_file_info
+                        url_private = (
+                            normalized_file_info.get("url_private_download")
+                            or normalized_file_info.get("url_private")
+                        )
+                        logger.info(
+                            "[slack] Resolved embedded file metadata via files.info file_id=%s has_url=%s",
+                            embedded_file_id,
+                            bool(url_private),
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "[slack] Failed to resolve embedded file metadata file_id=%s: %s",
+                        embedded_file_id,
+                        exc,
+                    )
         if not url_private:
             return None
 
-        filename: str = file_info.get("name", "slack_file")
-        content_type: str = file_info.get("mimetype", "application/octet-stream")
-        size: int = file_info.get("size", 0)
+        filename: str = normalized_file_info.get("name", "slack_file")
+        content_type: str = normalized_file_info.get("mimetype", "application/octet-stream")
+        size: int = normalized_file_info.get("size", 0)
 
         if size > MAX_FILE_SIZE:
             logger.warning("[slack] File %s too large (%d bytes)", filename, size)

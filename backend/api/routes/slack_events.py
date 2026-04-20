@@ -480,7 +480,7 @@ def _build_inbound_message(
     event_ts: str = event.get("event_ts", "") or event.get("ts", "")
     message_ts: str = event.get("ts", "") or event_ts
     thread_ts: str | None = thread_ts_override or event.get("thread_ts")
-    files: list[dict[str, Any]] = event.get("files", [])
+    files: list[dict[str, Any]] = _extract_files_from_slack_event(event)
     raw_text: str = event.get("text", "") or ""
     mentions: list[dict[str, Any]] = (
         _extract_mentions_from_slack_text(raw_text, bot_user_ids)
@@ -504,6 +504,47 @@ def _build_inbound_message(
         message_id=message_ts,
         mentions=mentions,
     )
+
+
+def _extract_files_from_slack_event(event: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract Slack file objects from top-level ``files`` and embedded blocks."""
+    files: list[dict[str, Any]] = list(event.get("files") or [])
+    seen_file_ids: set[str] = {
+        str(item.get("id") or item.get("file_id") or item.get("external_id") or "").strip()
+        for item in files
+        if isinstance(item, dict)
+    }
+
+    for block in event.get("blocks") or []:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") != "file":
+            continue
+        if str(block.get("source") or "").strip().lower() != "slack":
+            continue
+
+        external_id: str = str(
+            block.get("external_id")
+            or block.get("file_id")
+            or block.get("id")
+            or ""
+        ).strip()
+        if not external_id or external_id in seen_file_ids:
+            continue
+
+        files.append(
+            {
+                "id": external_id,
+                "external_id": external_id,
+                "source": "slack",
+                "mimetype": block.get("mimetype") or "application/octet-stream",
+                "name": block.get("title") or "slack_file",
+                "size": block.get("size") or 0,
+            }
+        )
+        seen_file_ids.add(external_id)
+
+    return files
 
 
 async def _persist_activity(

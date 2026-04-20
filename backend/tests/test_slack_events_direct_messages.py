@@ -192,3 +192,35 @@ def test_process_event_callback_records_failure_when_background_processing_raise
     assert captured["was_success"] is False
     assert captured["conversation_id"] == "D123:1700000000.002"
     assert captured["failure_reason"] == "test forced failure"
+
+
+def test_build_inbound_message_includes_embedded_slack_file_blocks() -> None:
+    event = {
+        "type": "message",
+        "channel_type": "im",
+        "channel": "D123",
+        "user": "U123",
+        "text": "Please read this",
+        "ts": "1700000000.002",
+        "blocks": [
+            {
+                "type": "file",
+                "external_id": "F0123ABC",
+                "source": "slack",
+                "title": "proposal.pdf",
+                "mimetype": "application/pdf",
+            }
+        ],
+    }
+
+    inbound = slack_events._build_inbound_message(
+        event,
+        "T123",
+        MessageType.DIRECT,
+    )
+
+    assert len(inbound.raw_attachments) == 1
+    attachment = inbound.raw_attachments[0]
+    assert attachment["external_id"] == "F0123ABC"
+    assert attachment["name"] == "proposal.pdf"
+    assert attachment["mimetype"] == "application/pdf"
