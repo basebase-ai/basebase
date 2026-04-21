@@ -107,6 +107,74 @@ class ToolDef:
     input_schema: dict[str, Any]
 
 
+def _downgrade_document_blocks_for_messages(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Replace user ``document`` blocks with provider-safe text blocks."""
+    return [_downgrade_document_blocks_in_message(msg) for msg in messages]
+
+
+def _downgrade_document_blocks_in_message(msg: dict[str, Any]) -> dict[str, Any]:
+    """Replace ``document`` content blocks with extracted-text blocks.
+
+    Only user messages can contain multimodal content blocks, so
+    assistant/tool messages are returned unchanged.
+    """
+    content: Any = msg.get("content")
+    if msg.get("role") != "user" or not isinstance(content, list):
+        return msg
+
+    needs_rewrite: bool = any(
+        isinstance(b, dict) and b.get("type") == "document" for b in content
+    )
+    if not needs_rewrite:
+        return msg
+
+    from services.file_handler import StoredFile, pdf_to_text_block
+    import base64 as _b64
+
+    new_blocks: list[dict[str, Any]] = []
+    pdf_counter: int = 0
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "document":
+            new_blocks.append(block)
+            continue
+
+        source: dict[str, Any] = block.get("source", {})
+        if source.get("media_type") != "application/pdf":
+            new_blocks.append(block)
+            continue
+
+        pdf_counter += 1
+        filename: str = block.get("title") or f"attachment-{pdf_counter}.pdf"
+
+        try:
+            raw_data: bytes = _b64.standard_b64decode(source.get("data", ""))
+        except Exception as exc:
+            logger.warning("Failed to decode PDF base64 for %s: %s", filename, exc)
+            new_blocks.append({
+                "type": "text",
+                "text": f"[Attached PDF '{filename}' could not be decoded]",
+            })
+            continue
+
+        sf = StoredFile(
+            upload_id="",
+            filename=filename,
+            mime_type="application/pdf",
+            size=len(raw_data),
+            data=raw_data,
+        )
+        new_blocks.append(pdf_to_text_block(sf))
+
+    logger.info(
+        "[LLMAdapter] Downgraded document blocks for user message (original_blocks=%d downgraded_blocks=%d)",
+        len(content),
+        len(new_blocks),
+    )
+    return {**msg, "content": new_blocks}
+
+
 # ---------------------------------------------------------------------------
 # Protocol
 # ---------------------------------------------------------------------------
@@ -287,66 +355,7 @@ class AnthropicAdapter:
     ) -> list[dict[str, Any]]:
         if self._supports_document_blocks:
             return messages
-        return [self._downgrade_document_blocks(msg) for msg in messages]
-
-    @staticmethod
-    def _downgrade_document_blocks(msg: dict[str, Any]) -> dict[str, Any]:
-        """Replace ``document`` content blocks with extracted-text blocks.
-
-        Only user messages can contain multimodal content blocks, so
-        assistant/tool messages are returned unchanged.
-        """
-        content: Any = msg.get("content")
-        if msg.get("role") != "user" or not isinstance(content, list):
-            return msg
-
-        needs_rewrite: bool = any(
-            isinstance(b, dict) and b.get("type") == "document" for b in content
-        )
-        if not needs_rewrite:
-            return msg
-
-        from services.file_handler import StoredFile, pdf_to_text_block
-        import base64 as _b64
-
-        new_blocks: list[dict[str, Any]] = []
-        pdf_counter: int = 0
-        for block in content:
-            if not isinstance(block, dict) or block.get("type") != "document":
-                new_blocks.append(block)
-                continue
-
-            source: dict[str, Any] = block.get("source", {})
-            if source.get("media_type") != "application/pdf":
-                new_blocks.append(block)
-                continue
-
-            pdf_counter += 1
-            filename: str = (
-                block.get("title")
-                or f"attachment-{pdf_counter}.pdf"
-            )
-
-            try:
-                raw_data: bytes = _b64.standard_b64decode(source.get("data", ""))
-            except Exception as exc:
-                logger.warning("Failed to decode PDF base64 for %s: %s", filename, exc)
-                new_blocks.append({
-                    "type": "text",
-                    "text": f"[Attached PDF '{filename}' could not be decoded]",
-                })
-                continue
-
-            sf = StoredFile(
-                upload_id="",
-                filename=filename,
-                mime_type="application/pdf",
-                size=len(raw_data),
-                data=raw_data,
-            )
-            new_blocks.append(pdf_to_text_block(sf))
-
-        return {**msg, "content": new_blocks}
+        return _downgrade_document_blocks_for_messages(messages)
 
     def build_completed_content(self, raw_response: Any) -> list[ContentBlock]:
         blocks: list[ContentBlock] = []
@@ -381,11 +390,18 @@ class AnthropicAdapter:
 class OpenAIAdapter:
     """Adapter for OpenAI Chat Completions API (also used by Gemini via base_url)."""
 
-    def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str | None = None,
+        supports_document_blocks: bool = False,
+    ) -> None:
         kwargs: dict[str, Any] = {"api_key": api_key}
         if base_url is not None:
             kwargs["base_url"] = base_url
         self._client: AsyncOpenAI = AsyncOpenAI(**kwargs)
+        self._supports_document_blocks: bool = supports_document_blocks
 
     def _build_token_limit_kwargs(self, *, model: str, max_tokens: int) -> dict[str, int]:
         """Map token limit parameter name based on OpenAI model requirements."""
@@ -548,6 +564,9 @@ class OpenAIAdapter:
         self, messages: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Translate Anthropic-style stored messages to OpenAI chat format."""
+        if not self._supports_document_blocks:
+            messages = _downgrade_document_blocks_for_messages(messages)
+
         def _as_text(value: Any) -> str:
             """Coerce nullable/non-string content into API-safe text."""
             if value is None:
@@ -700,7 +719,11 @@ class OpenAIAdapter:
 # ---------------------------------------------------------------------------
 
 
-_PROVIDERS_WITHOUT_DOCUMENT_BLOCKS: frozenset[str] = frozenset({"minimax"})
+_PROVIDERS_WITHOUT_DOCUMENT_BLOCKS: frozenset[str] = frozenset({
+    "minimax",
+    "openai",
+    "gemini",
+})
 
 
 def get_adapter(config: LLMConfig) -> AnthropicAdapter | OpenAIAdapter:
@@ -716,6 +739,11 @@ def get_adapter(config: LLMConfig) -> AnthropicAdapter | OpenAIAdapter:
 
     if config.provider in ("openai", "gemini"):
         base_url = config.base_url or PROVIDER_BASE_URLS.get(config.provider)
-        return OpenAIAdapter(api_key=config.api_key, base_url=base_url)
+        supports_docs: bool = config.provider not in _PROVIDERS_WITHOUT_DOCUMENT_BLOCKS
+        return OpenAIAdapter(
+            api_key=config.api_key,
+            base_url=base_url,
+            supports_document_blocks=supports_docs,
+        )
 
     raise ValueError(f"Unsupported LLM provider: {config.provider}")
