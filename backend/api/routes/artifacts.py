@@ -493,7 +493,7 @@ def _generate_chart_html(plotly_json: str, title: str) -> str:
     <div id="chart"></div>
     <script>
         const spec = {safe_chart_json};
-        Plotly.newPlot('chart', spec.data, spec.layout || {{}}, spec.config || {{responsive: true}});
+        Plotly.newPlot('chart', spec.data, spec.layout || {{}}, {{responsive: true, ...(spec.config || {{}})}});
     </script>
 </body>
 </html>"""

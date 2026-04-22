@@ -193,6 +193,14 @@ def test_api_artifact_route_is_resolved_before_slug_unfurl_route() -> None:
     assert matched_endpoint is get_artifact
 
 
+def test_generate_chart_html_keeps_responsive_true_when_config_present() -> None:
+    plotly_json = '{"data":[{"type":"scatter","y":[1,2,3]}],"layout":{},"config":{"displayModeBar":false}}'
+
+    html = _generate_chart_html(plotly_json, "Quarterly report")
+
+    assert "{responsive: true, ...(spec.config || {})}" in html
+
+
 def test_generate_chart_html_escapes_script_termination_sequences() -> None:
     plotly_json = (
         '{"data":[{"type":"scatter","text":"<\\/script><script>alert(1)</script>"}],'
