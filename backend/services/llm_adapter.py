@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Literal, Protocol
 
 from anthropic import APIStatusError as AnthropicAPIStatusError, AsyncAnthropic
-from openai import AsyncOpenAI
+from openai import APIStatusError as OpenAIAPIStatusError, AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -422,6 +422,33 @@ class OpenAIAdapter:
         )
         return {token_param_name: max_tokens}
 
+    def _openai_not_found_fallback_models(self, model: str) -> list[str]:
+        """Return same-family model candidates when a model is not found."""
+        normalized_model: str = model.strip().lower()
+        prefix: str = ""
+        base_model: str = normalized_model
+        if "/" in normalized_model:
+            prefix, base_model = normalized_model.split("/", 1)
+            prefix = f"{prefix}/"
+
+        if not base_model.startswith("gpt-5"):
+            return []
+
+        variants: list[str] = []
+        if base_model == "gpt-5":
+            variants.extend(["gpt-5-mini", "gpt-5-nano"])
+        elif base_model == "gpt-5-mini":
+            variants.append("gpt-5-nano")
+
+        fallback_models: list[str] = [f"{prefix}{variant}" for variant in variants if variant != base_model]
+        if fallback_models:
+            logger.warning(
+                "[OpenAIAdapter] Model fallback engaged after 404 not_found: requested_model=%s fallback_candidates=%s",
+                model,
+                fallback_models,
+            )
+        return fallback_models
+
     # -- streaming ----------------------------------------------------------
 
     async def stream(
@@ -439,18 +466,46 @@ class OpenAIAdapter:
         ] + self.format_messages_for_api(messages)
 
         api_kwargs: dict[str, Any] = {
-            "model": model,
             "messages": api_messages,
             "stream": True,
         }
-        api_kwargs.update(self._build_token_limit_kwargs(model=model, max_tokens=max_tokens))
         if tools:
             api_kwargs["tools"] = self.format_tools(tools)
 
         tool_calls_accum: dict[int, dict[str, str]] = {}
         current_text_started: bool = False
 
-        stream = await self._client.chat.completions.create(**api_kwargs)
+        stream: Any = None
+        model_candidates: list[str] = [model, *self._openai_not_found_fallback_models(model)]
+        for idx, candidate_model in enumerate(model_candidates):
+            candidate_kwargs: dict[str, Any] = {
+                **api_kwargs,
+                "model": candidate_model,
+                **self._build_token_limit_kwargs(model=candidate_model, max_tokens=max_tokens),
+            }
+            try:
+                stream = await self._client.chat.completions.create(**candidate_kwargs)
+                if idx > 0:
+                    logger.info(
+                        "[OpenAIAdapter] Stream call succeeded with fallback model=%s requested_model=%s",
+                        candidate_model,
+                        model,
+                    )
+                break
+            except OpenAIAPIStatusError as exc:
+                if exc.status_code == 404 and idx < len(model_candidates) - 1:
+                    logger.warning(
+                        "[OpenAIAdapter] Stream model unavailable (404), retrying fallback. requested_model=%s candidate_model=%s fallback_index=%d/%d",
+                        model,
+                        candidate_model,
+                        idx + 1,
+                        len(model_candidates),
+                    )
+                    continue
+                raise
+
+        if stream is None:
+            raise RuntimeError("OpenAI stream initialization failed without a response stream")
         chunk: Any | None = None
         async for chunk in stream:
             choice = chunk.choices[0] if chunk.choices else None
@@ -532,11 +587,36 @@ class OpenAIAdapter:
             {"role": "system", "content": system}
         ] + self.format_messages_for_api(messages)
 
-        response = await self._client.chat.completions.create(
-            model=model,
-            messages=api_messages,
-            **self._build_token_limit_kwargs(model=model, max_tokens=max_tokens),
-        )
+        response: Any = None
+        model_candidates: list[str] = [model, *self._openai_not_found_fallback_models(model)]
+        for idx, candidate_model in enumerate(model_candidates):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=candidate_model,
+                    messages=api_messages,
+                    **self._build_token_limit_kwargs(model=candidate_model, max_tokens=max_tokens),
+                )
+                if idx > 0:
+                    logger.info(
+                        "[OpenAIAdapter] Complete call succeeded with fallback model=%s requested_model=%s",
+                        candidate_model,
+                        model,
+                    )
+                break
+            except OpenAIAPIStatusError as exc:
+                if exc.status_code == 404 and idx < len(model_candidates) - 1:
+                    logger.warning(
+                        "[OpenAIAdapter] Complete model unavailable (404), retrying fallback. requested_model=%s candidate_model=%s fallback_index=%d/%d",
+                        model,
+                        candidate_model,
+                        idx + 1,
+                        len(model_candidates),
+                    )
+                    continue
+                raise
+
+        if response is None:
+            raise RuntimeError("OpenAI complete call failed without a response")
         blocks: list[ContentBlock] = self.build_completed_content(response)
         usage = response.usage
         return CompletedMessage(
