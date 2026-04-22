@@ -81,10 +81,11 @@ class ArtifactConnector(BaseConnector):
                 ],
             ),
         ],
-        description="Create and update downloadable files. IMPORTANT: When the user asks to edit, revise, or update an artifact they're viewing or that was just created, use operation='update' with the artifact_id from the previous result — do NOT create a new artifact.",
+        description="Create and update downloadable files.",
         usage_guide=(
-            "When the user says 'update', 'edit', 'change', 'revise', or 'add to' regarding an artifact from this conversation, "
-            "use operation='update' with artifact_id from your prior create/update result. Creating a new artifact gives a new URL; updating keeps the same one."
+            "When the user says 'update', 'edit', 'change', 'revise', or 'add to' regarding an artifact from this conversation "
+            "(including one they are viewing or that was just created), use operation='update' with artifact_id from your prior "
+            "create/update result. Do NOT create a new artifact. Creating a new artifact gives a new URL; updating keeps the same one."
         ),
     )
 
