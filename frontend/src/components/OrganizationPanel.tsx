@@ -692,13 +692,16 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
 
     let nextPrimary = field === 'llmPrimaryModel' ? value : llmPrimaryModel;
     let nextCheap = field === 'llmCheapModel' ? value : llmCheapModel;
+    const nextWorkflow = field === 'llmWorkflowModel' ? value : llmWorkflowModel;
     let warningMessage: string | null = null;
+    const affectedFields = new Set<'llmPrimaryModel' | 'llmCheapModel' | 'llmWorkflowModel'>([field]);
 
     if (field === 'llmCheapModel' && nextCheap.trim() && nextPrimary.trim()) {
       const selectedCheapFamily = inferModelFamily(nextCheap);
       const primaryFamily = inferModelFamily(nextPrimary);
       if (selectedCheapFamily && primaryFamily && selectedCheapFamily !== primaryFamily) {
         nextPrimary = resolveFamilyDefaultModel(selectedCheapFamily, 'primary');
+        affectedFields.add('llmPrimaryModel');
         warningMessage = `Fast model family changed to ${selectedCheapFamily}, so primary model was reset to that family default (${nextPrimary || 'default'}).`;
       }
     }
@@ -708,14 +711,24 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
       const cheapFamily = inferModelFamily(nextCheap);
       if (selectedPrimaryFamily && cheapFamily && selectedPrimaryFamily !== cheapFamily) {
         nextCheap = resolveFamilyDefaultModel(selectedPrimaryFamily, 'fast');
+        affectedFields.add('llmCheapModel');
         warningMessage = `Primary model family changed to ${selectedPrimaryFamily}, so fast model was reset to that family default (${nextCheap || 'default'}).`;
       }
     }
 
+    console.info('[OrganizationPanel] Applying model selection change', {
+      organizationId: organization.id,
+      changedField: field,
+      affectedFields: Array.from(affectedFields),
+      nextPrimary,
+      nextCheap,
+      nextWorkflow,
+    });
+
     setModelFamilyWarning(warningMessage);
     setLlmPrimaryModel(nextPrimary);
     setLlmCheapModel(nextCheap);
-    if (field === 'llmWorkflowModel') setLlmWorkflowModel(value);
+    setLlmWorkflowModel(nextWorkflow);
 
     try {
       const payload: {
@@ -728,14 +741,14 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
         orgId: organization.id,
         userId: currentUser.id,
       };
-      if (field === 'llmPrimaryModel' || (field === 'llmCheapModel' && nextPrimary !== llmPrimaryModel)) {
+      if (affectedFields.has('llmPrimaryModel')) {
         payload.llmPrimaryModel = nextPrimary || null;
       }
-      if (field === 'llmCheapModel' || (field === 'llmPrimaryModel' && nextCheap !== llmCheapModel)) {
+      if (affectedFields.has('llmCheapModel')) {
         payload.llmCheapModel = nextCheap || null;
       }
-      if (field === 'llmWorkflowModel') {
-        payload.llmWorkflowModel = value || null;
+      if (affectedFields.has('llmWorkflowModel')) {
+        payload.llmWorkflowModel = nextWorkflow || null;
       }
 
       await updateOrgMutation.mutateAsync({
@@ -745,15 +758,26 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
         ...organization,
         llmPrimaryModel: nextPrimary || null,
         llmCheapModel: nextCheap || null,
-        llmWorkflowModel: field === 'llmWorkflowModel' ? (value || null) : organization.llmWorkflowModel,
+        llmWorkflowModel: nextWorkflow || null,
       });
       setSettingsSaved(true);
       setTimeout(() => setSettingsSaved(false), 2000);
     } catch (error) {
+      console.warn('[OrganizationPanel] Rolling back model selection after failed save', {
+        organizationId: organization.id,
+        changedField: field,
+        error,
+      });
       setModelFamilyWarning(null);
       setLlmPrimaryModel(prevPrimary);
       setLlmCheapModel(prevCheap);
       setLlmWorkflowModel(prevWorkflow);
+      setOrganization({
+        ...organization,
+        llmPrimaryModel: prevPrimary || null,
+        llmCheapModel: prevCheap || null,
+        llmWorkflowModel: prevWorkflow || null,
+      });
       alert(`Failed to save: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
