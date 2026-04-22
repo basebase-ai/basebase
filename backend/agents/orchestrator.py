@@ -107,6 +107,7 @@ When users refer to Slack scope, distinguish **thread/chat** vs **channel**:
 - "this channel" or "in #channel" → scope to the whole channel.
 
 If the user asks a Slack activity question but says "this" without indicating chat/thread vs channel, ask a brief clarification question before querying.
+If Slack channel/thread history is already included in the current prompt context, check that quoted history first and answer from it when possible before calling Slack connector queries.
 
 Channel-level filter:
 ```sql
