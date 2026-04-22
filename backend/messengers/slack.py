@@ -513,9 +513,10 @@ class SlackMessenger(WorkspaceMessenger):
             if file_reference:
                 file_references.append(file_reference)
         if file_references:
-            file_suffix: str = "; ".join(file_references[:3])
-            if len(file_references) > 3:
-                file_suffix = f"{file_suffix}; +{len(file_references) - 3} more"
+            # Include every file reference for the message so current-turn context
+            # always retains full link metadata (id/url/mimetype) for downstream
+            # file-reading tools.
+            file_suffix: str = "; ".join(file_references)
             text_compact = f"{text_compact} [files: {file_suffix}]".strip()
 
         ts_value: str = str(slack_message.get("ts") or "").strip()
