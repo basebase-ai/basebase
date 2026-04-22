@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import re
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, AsyncGenerator, Sequence
 from uuid import UUID, uuid4
@@ -33,6 +34,7 @@ from services.llm_adapter import (
     get_adapter,
 )
 from services.llm_provider import resolve_llm_config
+from services.llm_provider import provider_for_model, resolve_api_key_for_provider
 from models.chat_attachment import ChatAttachment
 from models.chat_message import ChatMessage
 from models.conversation import Conversation
@@ -1072,7 +1074,6 @@ class ChatOrchestrator:
 
         # Resolve per-org LLM provider/model/key
         self._llm_config = await resolve_llm_config(self.organization_id)
-        self._adapter = get_adapter(self._llm_config)
         is_workflow_run: bool = bool((self.workflow_context or {}).get("is_workflow"))
         workflow_model_override = (self.workflow_context or {}).get("workflow_model_override")
         selected_model: str = (
@@ -1080,6 +1081,27 @@ class ChatOrchestrator:
             if is_workflow_run and workflow_model_override
             else (self._llm_config.workflow_model if is_workflow_run else self._llm_config.primary_model)
         )
+        if is_workflow_run and workflow_model_override:
+            override_provider = provider_for_model(selected_model)
+            if override_provider and override_provider != self._llm_config.provider:
+                previous_provider = self._llm_config.provider
+                override_api_key = await resolve_api_key_for_provider(
+                    override_provider, self.organization_id
+                )
+                self._llm_config = replace(
+                    self._llm_config,
+                    provider=override_provider,  # type: ignore[arg-type]
+                    api_key=override_api_key,
+                    base_url=None,
+                )
+                logger.info(
+                    "[Orchestrator] Switching provider for workflow model override conversation_id=%s previous_provider=%s override_provider=%s selected_model=%s",
+                    self.conversation_id,
+                    previous_provider,
+                    override_provider,
+                    selected_model,
+                )
+        self._adapter = get_adapter(self._llm_config)
 
         logger.info(
             "[Orchestrator] conversation_id=%s provider=%s selected_model=%s is_workflow=%s workflow_model_override=%s",
