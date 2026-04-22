@@ -1,6 +1,10 @@
 import asyncio
 
-from services.llm_provider import _infer_provider_from_model_name, resolve_llm_config
+from services.llm_provider import (
+    _infer_provider_from_model_name,
+    resolve_api_key_for_provider,
+    resolve_llm_config,
+)
 
 
 def test_infer_provider_from_model_name() -> None:
@@ -42,3 +46,12 @@ def test_resolve_llm_config_logs_when_model_fallback_engaged(monkeypatch, caplog
     assert any(
         "Model fallback engaged (quick/same-family)" in record.message for record in caplog.records
     )
+
+
+def test_resolve_api_key_for_provider_uses_global_key(monkeypatch) -> None:
+    from services import llm_provider
+
+    monkeypatch.setitem(llm_provider._GLOBAL_PROVIDER_KEYS, "gemini", "test-gemini-key")
+
+    key = asyncio.run(resolve_api_key_for_provider("gemini", None))
+    assert key == "test-gemini-key"

@@ -53,24 +53,17 @@ async def resolve_llm_config(
 
     if organization_id is not None:
         try:
-            from models.database import get_admin_session
-            from models.organization import Organization
-
-            org_uuid: UUID = (
-                organization_id if isinstance(organization_id, UUID) else UUID(str(organization_id))
-            )
-            async with get_admin_session() as session:
-                org = await session.get(Organization, org_uuid)
-                if org is not None:
-                    org_handle = org.handle
-                    if org.llm_provider:
-                        provider = org.llm_provider  # type: ignore[assignment]
-                    if org.llm_primary_model:
-                        primary_model = org.llm_primary_model
-                    if org.llm_cheap_model:
-                        cheap_model = org.llm_cheap_model
-                    if org.llm_workflow_model:
-                        workflow_model = org.llm_workflow_model
+            org = await _load_organization_for_llm(organization_id)
+            if org is not None:
+                org_handle = org.handle
+                if org.llm_provider:
+                    provider = org.llm_provider  # type: ignore[assignment]
+                if org.llm_primary_model:
+                    primary_model = org.llm_primary_model
+                if org.llm_cheap_model:
+                    cheap_model = org.llm_cheap_model
+                if org.llm_workflow_model:
+                    workflow_model = org.llm_workflow_model
         except Exception:
             logger.warning(
                 "Failed to load org LLM config for %s; using global defaults",
@@ -117,6 +110,39 @@ async def resolve_llm_config(
         workflow_model=workflow_model,
         api_key=api_key,
     )
+
+
+async def resolve_api_key_for_provider(
+    provider: LLMProvider,
+    organization_id: str | UUID | None,
+) -> str:
+    """Resolve API key for a specific provider using org-scoped key override if available."""
+    org_handle: str | None = None
+    if organization_id is not None:
+        try:
+            org = await _load_organization_for_llm(organization_id)
+            if org is not None:
+                org_handle = org.handle
+        except Exception:
+            logger.warning(
+                "Failed to load org handle for provider-key lookup organization_id=%s provider=%s",
+                organization_id,
+                provider,
+                exc_info=True,
+            )
+    return _resolve_api_key(provider, org_handle)
+
+
+async def _load_organization_for_llm(organization_id: str | UUID) -> object | None:
+    """Load organization row used by LLM configuration helpers."""
+    from models.database import get_admin_session
+    from models.organization import Organization
+
+    org_uuid: UUID = (
+        organization_id if isinstance(organization_id, UUID) else UUID(str(organization_id))
+    )
+    async with get_admin_session() as session:
+        return await session.get(Organization, org_uuid)
 
 
 def _resolve_api_key(provider: LLMProvider, org_handle: str | None) -> str:
