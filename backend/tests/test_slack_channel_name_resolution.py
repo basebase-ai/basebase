@@ -488,7 +488,7 @@ def test_summarize_channel_history_if_needed_compresses_oversized_payload():
         thread_expansions=thread_expansions,
     )
 
-    assert "quick summary of newest 300 channel messages" in result
+    assert "quick summary of newest 100 channel messages" in result
     assert "Most active threads by reply count" in result
     assert len(result) <= 12000
 
