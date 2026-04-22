@@ -5,6 +5,7 @@ def test_slack_scope_prompt_mentions_ambiguity_and_thread_filter() -> None:
     prompt = _format_slack_scope_context("C123", "1729364.001")
 
     assert "ask a brief clarification question" in prompt
+    assert "check that quoted history first" in prompt
     assert "custom_fields->>'channel_id' = 'C123'" in prompt
     assert "custom_fields->>'thread_ts' = '1729364.001'" in prompt
     assert "this chat" in prompt
