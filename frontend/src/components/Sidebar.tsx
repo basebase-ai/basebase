@@ -923,16 +923,53 @@ function ChatAccordion({
     return () => { if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); };
   }, []);
 
-  const recentSidebarChats = useMemo(() => {
+  const groupedSidebarChats = useMemo(() => {
     const pinnedSet = new Set(pinnedChatIds);
     const sorted = [...orderedChats].sort(
       (a, b) => b.lastMessageAt.getTime() - a.lastMessageAt.getTime(),
     );
-    const pinned = sorted.filter((c) => pinnedSet.has(c.id));
-    const unpinned = sorted.filter((c) => !pinnedSet.has(c.id));
-    const merged = [...pinned, ...unpinned];
+    const direct: ChatSummary[] = [];
+    const uncategorized: ChatSummary[] = [];
+    const channels = new Map<string, { label: string; chats: ChatSummary[]; newestTs: number }>();
+    const pinned: ChatSummary[] = [];
+    for (const chat of sorted) {
+      const ts = chat.lastMessageAt.getTime();
+      if (pinnedSet.has(chat.id)) pinned.push(chat);
+      const bucket = chat.groupBucketType ?? 'uncategorized';
+      if (bucket === 'direct') {
+        direct.push(chat);
+        continue;
+      }
+      if (bucket === 'channel' && chat.groupBucketKey) {
+        const current = channels.get(chat.groupBucketKey) ?? {
+          label: chat.resolvedChannelName ?? chat.normalizedChannelId ?? 'Channel',
+          chats: [],
+          newestTs: 0,
+        };
+        current.chats.push(chat);
+        current.newestTs = Math.max(current.newestTs, ts);
+        channels.set(chat.groupBucketKey, current);
+        continue;
+      }
+      uncategorized.push(chat);
+    }
     const limit = 15;
-    return merged.slice(0, limit);
+    const byNewest = (a: ChatSummary, b: ChatSummary): number => b.lastMessageAt.getTime() - a.lastMessageAt.getTime();
+    const channelSections = Array.from(channels.entries())
+      .map(([key, value]) => ({ key, label: value.label, chats: value.chats.sort(byNewest), newestTs: value.newestTs }))
+      .sort((a, b) => b.newestTs - a.newestTs);
+    const flattenCount =
+      pinned.length +
+      direct.length +
+      uncategorized.length +
+      channelSections.reduce((acc, c) => acc + c.chats.length, 0);
+    return {
+      pinned: pinned.sort(byNewest).slice(0, limit),
+      direct: direct.sort(byNewest).slice(0, limit),
+      uncategorized: uncategorized.sort(byNewest).slice(0, limit),
+      channels: channelSections.map((section) => ({ ...section, chats: section.chats.slice(0, limit) })),
+      flattenCount,
+    };
   }, [orderedChats, pinnedChatIds]);
 
   if (collapsed) return null;
@@ -1034,14 +1071,35 @@ function ChatAccordion({
       </button>
 
       <div className="flex-1 overflow-y-auto scrollbar-thin space-y-0 min-h-0">
-        {recentSidebarChats.length > 0 ? (
-          recentSidebarChats.map((chat) => renderChatItem(chat))
+        {groupedSidebarChats.flattenCount > 0 ? (
+          <>
+            {groupedSidebarChats.pinned.length > 0 && <SidebarSectionHeader title="Pinned" />}
+            {groupedSidebarChats.pinned.map((chat) => renderChatItem(chat))}
+            {groupedSidebarChats.direct.length > 0 && <SidebarSectionHeader title="Direct" />}
+            {groupedSidebarChats.direct.map((chat) => renderChatItem(chat))}
+            {groupedSidebarChats.channels.map((channel) => (
+              <div key={channel.key}>
+                <SidebarSectionHeader title={channel.label} />
+                {channel.chats.map((chat) => renderChatItem(chat))}
+              </div>
+            ))}
+            {groupedSidebarChats.uncategorized.length > 0 && <SidebarSectionHeader title="Uncategorized" />}
+            {groupedSidebarChats.uncategorized.map((chat) => renderChatItem(chat))}
+          </>
         ) : (
           <div className="px-2 py-1.5 text-xs text-surface-500 text-center">
             No conversations yet
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function SidebarSectionHeader({ title }: { title: string }): JSX.Element {
+  return (
+    <div className="px-2 pt-2 pb-1">
+      <h3 className="text-[10px] uppercase tracking-wider text-surface-500 font-semibold">{title}</h3>
     </div>
   );
 }

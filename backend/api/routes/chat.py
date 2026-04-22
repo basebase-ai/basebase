@@ -15,6 +15,8 @@ Endpoints:
 - POST /api/chat/upload - Upload a file attachment for chat context
 """
 
+import asyncio
+import base64
 import json
 from datetime import datetime
 from typing import Optional
@@ -36,8 +38,10 @@ from models.chat_attachment import ChatAttachment
 from models.chat_message import ChatMessage
 from models.conversation import Conversation
 from models.database import get_admin_session, get_session
+from models.integration import Integration
 from models.org_member import OrgMember
 from models.user import User
+from connectors.slack import SlackConnector
 from services.file_handler import store_file, MAX_FILE_SIZE
 from services.slack_identity import get_slack_user_ids_for_revtops_user
 
@@ -47,7 +51,13 @@ logger = logging.getLogger(__name__)
 
 _redis_client: aioredis.Redis | None = None
 _SLACK_USER_IDS_TTL = 300  # 5 minutes
+_SLACK_WORKSPACE_ID_TTL = 300  # 5 minutes
+_CHANNEL_NAME_SOFT_TTL_SECONDS = 15 * 60
+_CHANNEL_NAME_HARD_TTL_SECONDS = 24 * 60 * 60
+_CHANNEL_NAME_TTL_JITTER_RATIO = 0.10
+_CHANNEL_NAME_SINGLE_FLIGHT_LOCK_SECONDS = 30
 _WEB_PLATFORM_SLUG = "web"
+_slack_channel_refresh_tasks: dict[str, asyncio.Task[None]] = {}
 
 
 async def _get_redis() -> aioredis.Redis:
@@ -211,6 +221,13 @@ class ConversationResponse(BaseModel):
     participants: list[ParticipantResponse] = []
     match_snippet: Optional[str] = None  # Context around search match
     match_count: int = 0  # Number of times search term appears in conversation
+    workspace_id: Optional[str] = None
+    source: Optional[str] = None
+    source_channel_id: Optional[str] = None
+    normalized_channel_id: Optional[str] = None
+    resolved_channel_name: Optional[str] = None
+    group_bucket_type: str = "uncategorized"
+    group_bucket_key: str = "uncategorized"
 
 
 class ConversationListResponse(BaseModel):
@@ -218,6 +235,187 @@ class ConversationListResponse(BaseModel):
     conversations: list[ConversationResponse]
     total: int
     search_term: Optional[str] = None  # Echo back the search term for highlighting
+    next_cursor: Optional[str] = None
+    has_more: bool = False
+    server_time: str
+
+
+def _normalize_channel_id(source: str | None, source_channel_id: str | None) -> str | None:
+    if source != "slack" or not source_channel_id:
+        return None
+    normalized = str(source_channel_id).strip()
+    if not normalized:
+        return None
+    return normalized.split(":", 1)[0].strip().upper() or None
+
+
+def _derive_bucket(
+    *,
+    source: str | None,
+    scope: str | None,
+    normalized_channel_id: str | None,
+) -> tuple[str, str]:
+    if scope == "private":
+        return ("direct", "direct")
+    if source == "slack" and normalized_channel_id:
+        if normalized_channel_id.startswith("D"):
+            return ("direct", "direct")
+        return ("channel", f"channel:{normalized_channel_id}")
+    return ("uncategorized", "uncategorized")
+
+
+def _encode_cursor(updated_at: datetime, conversation_id: UUID) -> str:
+    payload = {"updated_at": updated_at.isoformat(), "conversation_id": str(conversation_id)}
+    return base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
+
+
+def _decode_cursor(cursor: str) -> tuple[datetime, UUID]:
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(cursor.encode("utf-8")).decode("utf-8"))
+        updated_at = datetime.fromisoformat(str(payload["updated_at"]))
+        conv_id = UUID(str(payload["conversation_id"]))
+        return updated_at, conv_id
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid cursor: {exc}") from exc
+
+
+def _channel_cache_key(workspace_id: str, channel_id: str) -> str:
+    return f"chat:slack_channel_name:{workspace_id}:{channel_id}"
+
+
+async def _get_workspace_id_for_org(session: AsyncSession, org_id: str | None) -> str | None:
+    if not org_id:
+        return None
+
+    cache_key = f"chat:slack_workspace_id:{org_id}"
+    try:
+        r = await _get_redis()
+        cached = await r.get(cache_key)
+        if cached:
+            return str(cached)
+    except Exception:
+        pass
+
+    result = await session.execute(
+        select(Integration)
+        .where(Integration.organization_id == UUID(org_id))
+        .where(Integration.connector == "slack")
+        .where(Integration.is_active == True)  # noqa: E712
+        .order_by(Integration.updated_at.desc().nullslast(), Integration.created_at.desc().nullslast())
+        .limit(1)
+    )
+    integration = result.scalar_one_or_none()
+    if not integration:
+        return None
+    extra = integration.extra_data or {}
+    workspace_id = str(extra.get("team_id") or extra.get("workspace_id") or "").strip() or None
+    if workspace_id:
+        try:
+            r = await _get_redis()
+            await r.set(cache_key, workspace_id, ex=_SLACK_WORKSPACE_ID_TTL)
+        except Exception:
+            pass
+    return workspace_id
+
+
+async def _refresh_slack_channel_name(
+    workspace_id: str,
+    channel_id: str,
+    org_id: str,
+    existing_fetched_at_iso: str | None = None,
+) -> None:
+    lock_key = f"chat:slack_channel_name_refresh_lock:{workspace_id}:{channel_id}"
+    cache_key = _channel_cache_key(workspace_id, channel_id)
+    r = await _get_redis()
+
+    if not await r.set(lock_key, "1", ex=_CHANNEL_NAME_SINGLE_FLIGHT_LOCK_SECONDS, nx=True):
+        return
+    try:
+        connector = SlackConnector(organization_id=org_id, team_id=workspace_id)
+        started_at = datetime.utcnow()
+        info = await connector.get_channel_info(channel_id)
+        name = str((info or {}).get("name") or "").strip() or None
+        if not name:
+            return
+        fetched_at = datetime.utcnow()
+        payload = {
+            "name": name,
+            "fetched_at": fetched_at.isoformat(),
+            "source": "slack",
+        }
+        current = await r.get(cache_key)
+        if current:
+            try:
+                cur_payload = json.loads(current)
+                cur_fetched = str(cur_payload.get("fetched_at") or "")
+                if existing_fetched_at_iso and cur_fetched and cur_fetched > existing_fetched_at_iso:
+                    return
+            except Exception:
+                pass
+        ttl_seconds = int(_CHANNEL_NAME_HARD_TTL_SECONDS * (1 + _CHANNEL_NAME_TTL_JITTER_RATIO))
+        await r.set(cache_key, json.dumps(payload), ex=ttl_seconds)
+        logger.info(
+            "[chat.resolver] refreshed workspace=%s channel=%s latency_ms=%d",
+            workspace_id,
+            channel_id,
+            int((datetime.utcnow() - started_at).total_seconds() * 1000),
+        )
+    except Exception as exc:
+        logger.warning(
+            "[chat.resolver] refresh failed workspace=%s channel=%s error=%s",
+            workspace_id,
+            channel_id,
+            exc,
+        )
+    finally:
+        await r.delete(lock_key)
+
+
+async def _resolve_slack_channel_name(
+    org_id: str | None,
+    workspace_id: str | None,
+    channel_id: str | None,
+) -> str | None:
+    if not org_id or not workspace_id or not channel_id:
+        return None
+
+    cache_key = _channel_cache_key(workspace_id, channel_id)
+    now = datetime.utcnow()
+    try:
+        r = await _get_redis()
+    except Exception:
+        return None
+    cached = await r.get(cache_key)
+    if cached:
+        try:
+            payload = json.loads(cached)
+            cached_name = str(payload.get("name") or "").strip() or None
+            fetched_at_iso = str(payload.get("fetched_at") or "").strip()
+            fetched_at = datetime.fromisoformat(fetched_at_iso) if fetched_at_iso else None
+            if cached_name and fetched_at:
+                age_seconds = (now - fetched_at).total_seconds()
+                if age_seconds <= _CHANNEL_NAME_SOFT_TTL_SECONDS:
+                    return cached_name
+                if age_seconds <= _CHANNEL_NAME_HARD_TTL_SECONDS:
+                    task_key = f"{workspace_id}:{channel_id}"
+                    if task_key not in _slack_channel_refresh_tasks or _slack_channel_refresh_tasks[task_key].done():
+                        _slack_channel_refresh_tasks[task_key] = asyncio.create_task(
+                            _refresh_slack_channel_name(workspace_id, channel_id, org_id, fetched_at_iso),
+                        )
+                    return cached_name
+        except Exception:
+            pass
+
+    # Blocking fallback path.
+    await _refresh_slack_channel_name(workspace_id, channel_id, org_id)
+    latest = await r.get(cache_key)
+    if latest:
+        try:
+            payload = json.loads(latest)
+            return str(payload.get("name") or "").strip() or None
+        except Exception:
+            return None
+    return None
 
 
 class ChatMessageResponse(BaseModel):
@@ -279,6 +477,7 @@ async def list_conversations(
     auth: AuthContext = Depends(get_current_auth),
     limit: int = 50,
     offset: int = 0,
+    cursor: Optional[str] = None,
     scope: Optional[str] = None,
     mine: bool = False,
     search: Optional[str] = None,
@@ -331,12 +530,33 @@ async def list_conversations(
                 )
             )
 
-        result = await session.execute(
-            query.order_by(Conversation.updated_at.desc())
-            .offset(offset)
-            .limit(limit)
+        limit = max(1, min(limit, 200))
+        if cursor:
+            cursor_updated_at, cursor_conversation_id = _decode_cursor(cursor)
+            query = query.where(
+                or_(
+                    Conversation.updated_at < cursor_updated_at,
+                    and_(
+                        Conversation.updated_at == cursor_updated_at,
+                        Conversation.id < cursor_conversation_id,
+                    ),
+                )
+            )
+
+        ordered_query = (
+            query.order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+            .offset(offset if not cursor else 0)
+            .limit(limit + 1)
         )
+        result = await session.execute(ordered_query)
         conversations: list[Conversation] = list(result.scalars().all())
+        has_more = len(conversations) > limit
+        if has_more:
+            conversations = conversations[:limit]
+        next_cursor = None
+        if conversations and has_more:
+            last = conversations[-1]
+            next_cursor = _encode_cursor(last.updated_at, last.id)
 
         # Slow path: if we got fewer rows than limit, Slack conversations may
         # be missing. Resolve Slack IDs and merge any additional results.
@@ -451,8 +671,24 @@ async def list_conversations(
                             break
 
         # Build response using cached fields
+        workspace_id = await _get_workspace_id_for_org(session, org_id)
         response_items: list[ConversationResponse] = []
         for conv in conversations:
+            normalized_channel_id = _normalize_channel_id(conv.source, conv.source_channel_id)
+            bucket_type, bucket_key = _derive_bucket(
+                source=conv.source,
+                scope=conv.scope,
+                normalized_channel_id=normalized_channel_id,
+            )
+            resolved_channel_name = await _resolve_slack_channel_name(
+                org_id=org_id,
+                workspace_id=workspace_id if conv.source == "slack" else None,
+                channel_id=normalized_channel_id,
+            ) if bucket_type == "channel" else None
+            if bucket_type == "channel" and not resolved_channel_name:
+                bucket_type = "uncategorized"
+                bucket_key = "uncategorized"
+
             if conv.source == "slack":
                 preview_length = len(conv.last_message_preview or "")
                 logger.debug(
@@ -495,12 +731,22 @@ async def list_conversations(
                 participants=participants,
                 match_snippet=snippet_by_conv_id.get(conv.id),
                 match_count=count_by_conv_id.get(conv.id, 0),
+                workspace_id=workspace_id if conv.source == "slack" else None,
+                source=conv.source,
+                source_channel_id=conv.source_channel_id,
+                normalized_channel_id=normalized_channel_id,
+                resolved_channel_name=resolved_channel_name,
+                group_bucket_type=bucket_type,
+                group_bucket_key=bucket_key,
             ))
 
         return ConversationListResponse(
             conversations=response_items,
             total=len(response_items),
             search_term=normalized_search if normalized_search else None,
+            next_cursor=next_cursor,
+            has_more=has_more,
+            server_time=f"{datetime.utcnow().isoformat()}Z",
         )
 
 
