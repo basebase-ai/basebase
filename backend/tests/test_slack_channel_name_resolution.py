@@ -726,6 +726,50 @@ def test_format_single_slack_context_line_includes_file_references():
     assert "url=https://files.slack.com/files-pri/T1-F123/download/q1-report.pdf" in line
 
 
+def test_format_single_slack_context_line_includes_all_file_links_for_message():
+    messenger = SlackMessenger()
+    line = messenger._format_single_slack_context_line(
+        {
+            "ts": "1710711602.000",
+            "user": "U3",
+            "text": "Please review all attachments",
+            "files": [
+                {
+                    "id": "F111",
+                    "name": "first.txt",
+                    "url_private_download": "https://files.slack.com/files-pri/T1-F111/download/first.txt",
+                    "mimetype": "text/plain",
+                },
+                {
+                    "id": "F222",
+                    "name": "second.txt",
+                    "url_private": "https://files.slack.com/files-pri/T1-F222/download/second.txt",
+                    "mimetype": "text/plain",
+                },
+                {
+                    "id": "F333",
+                    "name": "third.txt",
+                    "url_private_download": "https://files.slack.com/files-pri/T1-F333/download/third.txt",
+                    "mimetype": "text/plain",
+                },
+                {
+                    "id": "F444",
+                    "name": "fourth.txt",
+                    "url_private_download": "https://files.slack.com/files-pri/T1-F444/download/fourth.txt",
+                    "mimetype": "text/plain",
+                },
+            ],
+        }
+    )
+
+    assert line is not None
+    assert "url=https://files.slack.com/files-pri/T1-F111/download/first.txt" in line
+    assert "url=https://files.slack.com/files-pri/T1-F222/download/second.txt" in line
+    assert "url=https://files.slack.com/files-pri/T1-F333/download/third.txt" in line
+    assert "url=https://files.slack.com/files-pri/T1-F444/download/fourth.txt" in line
+    assert "+1 more" not in line
+
+
 @pytest.mark.asyncio
 async def test_get_cached_channel_context_payload_from_activity_preserves_file_metadata():
     messenger = SlackMessenger()
