@@ -103,7 +103,7 @@ def _format_slack_scope_context(
     private_history_note: str = ""
     if (
         (slack_channel_type or "").strip().lower() in {"group", "private_channel"}
-        and source in {"slack_mention", "slack_thread"}
+        and source in {"slack", "slack_mention", "slack_thread"}
     ):
         private_history_note = (
             "\nIf asked about message history in this private channel, include this note in your response: "
