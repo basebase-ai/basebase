@@ -252,3 +252,26 @@ def test_dm_bot_message_from_external_source_is_logged_not_processed(monkeypatch
     asyncio.run(slack_events._process_event_callback_impl(payload))
     assert len(calls) == 1
     assert processed == []
+
+
+def test_classify_message_sender_categories() -> None:
+    payload = {"api_app_id": "A123"}
+    bot_user_ids = {"UBOT"}
+
+    user_event = {"type": "message", "channel": "C123", "user": "U111", "text": "hello"}
+    self_bot_event = {
+        "type": "message",
+        "subtype": "bot_message",
+        "channel": "D123",
+        "bot_profile": {"app_id": "A123"},
+    }
+    other_bot_event = {
+        "type": "message",
+        "subtype": "bot_message",
+        "channel": "D123",
+        "bot_profile": {"app_id": "A999"},
+    }
+
+    assert slack_events._classify_message_sender(payload, user_event, bot_user_ids) == "user"
+    assert slack_events._classify_message_sender(payload, self_bot_event, bot_user_ids) == "self_bot"
+    assert slack_events._classify_message_sender(payload, other_bot_event, bot_user_ids) == "other_bot"
