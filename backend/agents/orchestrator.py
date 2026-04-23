@@ -76,6 +76,7 @@ def _format_slack_scope_context(
     slack_channel_id: str | None,
     slack_thread_ts: str | None,
     slack_channel_name: str | None = None,
+    slack_channel_type: str | None = None,
 ) -> str:
     """Build prompt guidance for Slack channel/thread query scoping."""
     if not slack_channel_id:
@@ -98,6 +99,13 @@ def _format_slack_scope_context(
         else ""
     )
 
+    private_history_note: str = ""
+    if (slack_channel_type or "").strip().lower() in {"group", "private_channel"}:
+        private_history_note = (
+            "\nIf asked about message history in this private channel, include this note in your response: "
+            "\"We do not proactively store private channel history outside of direct conversations with the bot.\""
+        )
+
     return f"""
 
 ## Slack Channel Context
@@ -110,6 +118,7 @@ When users refer to Slack scope, distinguish **thread/chat** vs **channel**:
 
 If the user asks a Slack activity question but says "this" without indicating chat/thread vs channel, ask a brief clarification question before querying.
 If Slack channel/thread history is already included in the current prompt context, check that quoted history first and answer from it when possible before calling Slack connector queries.
+{private_history_note}
 
 Channel-level filter:
 ```sql
@@ -1178,12 +1187,14 @@ class ChatOrchestrator:
         slack_channel_id: str | None = (self.workflow_context or {}).get("slack_channel_id")
         slack_thread_ts: str | None = (self.workflow_context or {}).get("slack_thread_ts")
         slack_channel_name: str | None = (self.workflow_context or {}).get("slack_channel_name")
+        slack_channel_type: str | None = (self.workflow_context or {}).get("slack_channel_type")
         slack_recent_channel_context_message = (self.workflow_context or {}).get("slack_recent_channel_context")
         system_prompt_parts.append(
             _format_slack_scope_context(
                 slack_channel_id=slack_channel_id,
                 slack_thread_ts=slack_thread_ts,
                 slack_channel_name=slack_channel_name,
+                slack_channel_type=slack_channel_type,
             )
         )
 
