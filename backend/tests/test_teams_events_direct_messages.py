@@ -132,3 +132,42 @@ def test_process_message_activity_persists_only_public_channel_messages(monkeypa
     asyncio.run(_run(personal_chat_activity))
 
     assert persisted == ["channel"]
+
+
+def test_process_message_activity_logs_bot_personal_messages_without_processing(monkeypatch) -> None:
+    appended: list[str] = []
+    processed: list[object] = []
+
+    async def _fake_append(self, message) -> bool:
+        appended.append(message.messenger_context.get("channel_id") or "")
+        return True
+
+    async def _fake_process_inbound(self, message):
+        processed.append(message)
+        return {"status": "success"}
+
+    monkeypatch.setattr(
+        TeamsMessenger,
+        "append_bot_message_to_existing_conversation",
+        _fake_append,
+    )
+    monkeypatch.setattr(TeamsMessenger, "process_inbound", _fake_process_inbound)
+
+    activity = {
+        "id": "activity-bot-personal-1",
+        "type": "message",
+        "text": "hello from bot",
+        "from": {"id": "28:bot"},
+        "recipient": {"id": "28:bot"},
+        "conversation": {
+            "id": "19:conversation-personal",
+            "conversationType": "personal",
+            "isGroup": False,
+        },
+        "channelData": {"tenant": {"id": "tenant-1"}},
+    }
+
+    asyncio.run(teams_events._process_message_activity(activity))
+
+    assert appended == ["19:conversation-personal"]
+    assert processed == []

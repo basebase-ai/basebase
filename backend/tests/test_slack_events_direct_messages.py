@@ -192,3 +192,47 @@ def test_process_event_callback_records_failure_when_background_processing_raise
     assert captured["was_success"] is False
     assert captured["conversation_id"] == "D123:1700000000.002"
     assert captured["failure_reason"] == "test forced failure"
+
+
+def test_process_event_callback_logs_bot_dm_messages_without_processing(monkeypatch) -> None:
+    appended: list[str] = []
+    processed: list[InboundMessage] = []
+
+    async def _fake_is_duplicate_event(_event_id: str) -> bool:
+        return False
+
+    async def _fake_append(self, message: InboundMessage) -> bool:
+        appended.append(message.messenger_context.get("channel_id") or "")
+        return True
+
+    async def _fake_process_inbound(self, message: InboundMessage):
+        processed.append(message)
+        return {"status": "success"}
+
+    monkeypatch.setattr(slack_events, "is_duplicate_event", _fake_is_duplicate_event)
+    monkeypatch.setattr(
+        SlackMessenger,
+        "append_bot_message_to_existing_conversation",
+        _fake_append,
+    )
+    monkeypatch.setattr(SlackMessenger, "process_inbound", _fake_process_inbound)
+
+    payload = {
+        "type": "event_callback",
+        "event_id": "EvBotDm1",
+        "team_id": "T123",
+        "event": {
+            "type": "message",
+            "channel_type": "im",
+            "channel": "D123",
+            "user": "U123",
+            "bot_id": "B123",
+            "text": "bot-authored dm",
+            "ts": "1700000000.200",
+        },
+    }
+
+    asyncio.run(slack_events._process_event_callback_impl(payload))
+
+    assert appended == ["D123"]
+    assert processed == []

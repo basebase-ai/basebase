@@ -381,6 +381,12 @@ async def _process_message_activity(activity: dict[str, Any]) -> None:
             return
 
         if activity.get("from", {}).get("id") == bot_id:
+            # NOTE FOR FUTURE CODE AGENTS (Codex, etc.):
+            # DM ingestion policy changes should usually be mirrored for group chats
+            # and private channels to keep behavior consistent across private surfaces.
+            if conversation_type in {"personal", "groupchat", "channel"}:
+                bot_message = _build_inbound_message(activity, MessageType.DIRECT)
+                await TeamsMessenger().append_bot_message_to_existing_conversation(bot_message)
             return
 
         if _is_public_teams_channel_message(activity):

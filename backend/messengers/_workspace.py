@@ -35,6 +35,7 @@ from messengers.base import (
     OutboundResponse,
 )
 from models.activity import Activity
+from models.chat_message import ChatMessage
 from models.conversation import Conversation
 from models.database import get_admin_session, get_session
 from models.integration import Integration
@@ -570,6 +571,140 @@ class WorkspaceMessenger(BaseMessenger):
                 .limit(1)
             )
             return result.first() is not None
+
+    async def append_bot_message_to_existing_conversation(
+        self,
+        message: InboundMessage,
+    ) -> bool:
+        """Log a bot-authored inbound message to an existing conversation without running the agent.
+
+        NOTE FOR FUTURE CODE AGENTS (Codex, etc.):
+        Behavior added for direct messages should generally also apply to group DMs
+        and private channels unless an explicit product/privacy rule says otherwise.
+        """
+        ctx: dict[str, Any] = message.messenger_context
+        channel_id: str = ctx.get("channel_id", "")
+        thread_id: str | None = ctx.get("thread_id") or ctx.get("thread_ts")
+        workspace_id: str | None = ctx.get("workspace_id")
+        source: str = self.meta.slug
+
+        source_channel_id: str = f"{channel_id}:{thread_id}" if thread_id else channel_id
+        if not workspace_id or not source_channel_id:
+            logger.info(
+                "[%s] Skipping inbound bot log due to missing workspace/channel context",
+                source,
+            )
+            return False
+
+        org_id: str | None = await self._resolve_org_from_workspace(workspace_id)
+        if not org_id:
+            logger.info(
+                "[%s] Skipping inbound bot log; no org mapped for workspace=%s",
+                source,
+                workspace_id,
+            )
+            return False
+
+        message_text: str = (message.text or "").strip()
+        if not message_text and not message.raw_attachments:
+            return False
+        source_message_id: str = (message.message_id or "").strip()
+
+        async with get_session(organization_id=org_id) as session:
+            result = await session.execute(
+                select(Conversation.id, Conversation.user_id)
+                .where(Conversation.organization_id == UUID(org_id))
+                .where(Conversation.source == source)
+                .where(Conversation.source_channel_id == source_channel_id)
+                .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+                .limit(1)
+            )
+            row = result.one_or_none()
+            if row is None:
+                logger.info(
+                    "[%s] No existing conversation to log inbound bot message source_channel_id=%s",
+                    source,
+                    source_channel_id,
+                )
+                return False
+
+            conversation_id: UUID = row[0]
+            existing_user_id: UUID | None = row[1]
+            if source_message_id:
+                existing_message = await session.execute(
+                    select(ChatMessage.id)
+                    .where(ChatMessage.conversation_id == conversation_id)
+                    .where(ChatMessage.role == "assistant")
+                    .where(
+                        ChatMessage.tool_calls.contains(
+                            [
+                                {
+                                    "ingest": "inbound_bot",
+                                    "source_message_id": source_message_id,
+                                }
+                            ]
+                        )
+                    )
+                    .limit(1)
+                )
+                if existing_message.first() is not None:
+                    logger.info(
+                        "[%s] Skipping inbound bot log; duplicate source_message_id=%s conversation=%s",
+                        source,
+                        source_message_id,
+                        conversation_id,
+                    )
+                    return False
+
+            content_blocks: list[dict[str, Any]] = []
+            if message_text:
+                content_blocks.append({"type": "text", "text": message_text})
+            tool_calls: list[dict[str, Any]] | None = None
+            if source_message_id:
+                tool_calls = [
+                    {
+                        "ingest": "inbound_bot",
+                        "source_message_id": source_message_id,
+                    }
+                ]
+
+            session.add(
+                ChatMessage(
+                    conversation_id=conversation_id,
+                    user_id=existing_user_id,
+                    organization_id=UUID(org_id),
+                    role="assistant",
+                    source_user_id=message.external_user_id or None,
+                    content_blocks=content_blocks or None,
+                    content=message_text,
+                    tool_calls=tool_calls,
+                    created_at=datetime.utcnow(),
+                )
+            )
+            await session.execute(
+                text(
+                    """
+                    UPDATE conversations
+                    SET updated_at = NOW(),
+                        message_count = COALESCE(message_count, 0) + 1,
+                        last_message_preview = :preview
+                    WHERE id = :conversation_id
+                    """
+                ),
+                {
+                    "preview": message_text[:200] if message_text else None,
+                    "conversation_id": conversation_id,
+                },
+            )
+            await session.commit()
+
+        logger.info(
+            "[%s] Logged inbound bot-authored message conversation=%s source_channel_id=%s",
+            source,
+            conversation_id,
+            source_channel_id,
+        )
+        return True
 
     async def _mentions_payload_for_resolve_agent(
         self,

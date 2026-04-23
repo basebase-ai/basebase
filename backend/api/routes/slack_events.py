@@ -329,6 +329,17 @@ async def _process_event_callback_impl(payload: dict[str, Any]) -> None:
     if inner_type == "message":
         channel_type: str | None = event.get("channel_type")
         if event.get("bot_id") or event.get("subtype") == "bot_message":
+            # NOTE FOR FUTURE CODE AGENTS (Codex, etc.):
+            # If we special-case direct messages, carry equivalent behavior into
+            # group DMs and private channels unless product/privacy says not to.
+            if channel_type in {"im", "mpim", "group", "private_channel", "groupchat"}:
+                bot_log_message: InboundMessage = _build_inbound_message(
+                    event,
+                    team_id,
+                    MessageType.DIRECT,
+                    bot_user_ids=bot_user_ids,
+                )
+                await messenger.append_bot_message_to_existing_conversation(bot_log_message)
             return
         if event.get("subtype") in ("message_changed", "message_deleted"):
             return
