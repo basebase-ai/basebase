@@ -531,6 +531,8 @@ async def list_conversations(
             )
 
         limit = max(1, min(limit, 200))
+        cursor_updated_at = None
+        cursor_conversation_id = None
         if cursor:
             cursor_updated_at, cursor_conversation_id = _decode_cursor(cursor)
             query = query.where(
@@ -580,6 +582,16 @@ async def list_conversations(
                     )
                 if scope in ("shared", "private"):
                     slack_query = slack_query.where(Conversation.scope == scope)
+                if cursor_updated_at is not None and cursor_conversation_id is not None:
+                    slack_query = slack_query.where(
+                        or_(
+                            Conversation.updated_at < cursor_updated_at,
+                            and_(
+                                Conversation.updated_at == cursor_updated_at,
+                                Conversation.id < cursor_conversation_id,
+                            ),
+                        )
+                    )
 
                 # Apply same search filter to Slack fallback
                 if normalized_search:
