@@ -1181,6 +1181,7 @@ async def _run_on_connector(
         if conversation_id:
             action_params["conversation_id"] = conversation_id
         action_params["basebase_user_id"] = user_id
+        action_params["_audit_logged"] = True
 
     dp_ctx = ConnectorContext(
         organization_id=organization_id,
