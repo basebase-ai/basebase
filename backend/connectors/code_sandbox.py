@@ -10,6 +10,7 @@ import json
 import logging
 import re
 from typing import Any
+from uuid import UUID
 
 from config import settings
 from connectors.base import BaseConnector
@@ -60,6 +61,56 @@ _SUDO_BLOCK_MESSAGE: str = (
 _MAX_EGRESS_BYTES: int = 1_000_000
 _BASEBASE_USER_ID_ENV_KEY: str = "BASEBASE_USER_ID"
 _BASEBASE_ALLOWED_USER_IDS_ENV_KEY: str = "BASEBASE_ALLOWED_USER_IDS"
+_AUDIT_ALREADY_LOGGED_MARKER: object = object()
+
+
+def mark_audit_already_logged(params: dict[str, Any]) -> None:
+    """Mark action params as pre-logged by trusted internal callers only."""
+    params["_audit_logged"] = _AUDIT_ALREADY_LOGGED_MARKER
+
+
+def _is_audit_already_logged(params: dict[str, Any]) -> bool:
+    return params.get("_audit_logged") is _AUDIT_ALREADY_LOGGED_MARKER
+
+
+def _command_preview(command: str, limit: int = 240) -> str:
+    normalized: str = " ".join(command.split())
+    return normalized if len(normalized) <= limit else f"{normalized[:limit]}..."
+
+
+async def _record_sandbox_command_intent(
+    organization_id: str,
+    user_id: str,
+    conversation_id: str,
+    command: str,
+    sandbox_id: str,
+) -> UUID | None:
+    from services.action_ledger import record_intent
+
+    return await record_intent(
+        organization_id=organization_id,
+        user_id=user_id,
+        context={"conversation_id": conversation_id},
+        connector="code_sandbox",
+        dispatch_type="action",
+        operation="execute_command",
+        data={
+            "command": command,
+            "sandbox_id": sandbox_id,
+            "audit_source": "connector",
+        },
+        connector_instance=None,
+    )
+
+
+async def _record_sandbox_command_outcome(
+    change_id: UUID | None,
+    organization_id: str,
+    result: dict[str, Any],
+) -> None:
+    from services.action_ledger import record_outcome
+
+    await record_outcome(change_id=change_id, organization_id=organization_id, result=result)
 
 
 def _compile_command_invocation_pattern(command: str) -> re.Pattern[str]:
@@ -218,6 +269,7 @@ class CodeSandboxConnector(BaseConnector):
         return await self._execute_command(params)
 
     async def _execute_command(self, params: dict[str, Any]) -> dict[str, Any]:
+        audit_already_logged: bool = _is_audit_already_logged(params)
         command: str = (params.get("command") or "").strip()
         if not command:
             return {"error": "No command provided."}
@@ -298,6 +350,24 @@ class CodeSandboxConnector(BaseConnector):
                 logger.error("[Sandbox] Failed to create sandbox: %s", exc)
                 return {"error": f"Failed to create sandbox: {exc}"}
 
+        logger.info(
+            "[Sandbox] Executing command org=%s conversation=%s user=%s sandbox=%s command_preview=%s",
+            self.organization_id,
+            conversation_id,
+            basebase_user_id,
+            sandbox_id,
+            _command_preview(command),
+        )
+        command_change_id: UUID | None = None
+        if not audit_already_logged:
+            command_change_id = await _record_sandbox_command_intent(
+                organization_id=self.organization_id,
+                user_id=basebase_user_id,
+                conversation_id=conversation_id,
+                command=command,
+                sandbox_id=sandbox_id,
+            )
+
         try:
             result: dict[str, Any] = await asyncio.to_thread(_run_command_sync, sandbox_id, command)
         except Exception as exc:
@@ -305,6 +375,12 @@ class CodeSandboxConnector(BaseConnector):
             if "not found" in error_str.lower() or "not running" in error_str.lower():
                 await _save_sandbox_id_to_db(conversation_id, self.organization_id, None)
             logger.error("[Sandbox] Command execution failed: %s", exc)
+            if not audit_already_logged:
+                await _record_sandbox_command_outcome(
+                    change_id=command_change_id,
+                    organization_id=self.organization_id,
+                    result={"error": f"Command execution failed: {error_str}", "sandbox_id": sandbox_id},
+                )
             return {"error": f"Command execution failed: {error_str}"}
 
         stdout: str = result["stdout"]
@@ -329,6 +405,13 @@ class CodeSandboxConnector(BaseConnector):
                 tool_result["output_files_note"] = f"Files available in /home/user/output/: {', '.join(artifact_names)}"
         except Exception as exc:
             logger.warning("[Sandbox] Failed to list output files: %s", exc)
+
+        if not audit_already_logged:
+            await _record_sandbox_command_outcome(
+                change_id=command_change_id,
+                organization_id=self.organization_id,
+                result={**tool_result, "sandbox_id": sandbox_id},
+            )
 
         return tool_result
 

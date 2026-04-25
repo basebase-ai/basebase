@@ -4,6 +4,7 @@ from connectors.code_sandbox import (
     CodeSandboxConnector,
     _extract_pending_participant_user_ids,
     get_blocked_package_install_reason,
+    mark_audit_already_logged,
 )
 
 
@@ -307,3 +308,158 @@ async def test_execute_action_recreates_sandbox_when_user_context_changes(monkey
     assert killed == ["sbx_old"]
     assert created == [("org_123", "conv_123", "user_b", "user_a,user_b")]
     assert saved == [("conv_123", "org_123", "sbx_new")]
+
+
+@pytest.mark.asyncio
+async def test_execute_action_records_command_audit_when_not_prelogged(monkeypatch) -> None:
+    connector = CodeSandboxConnector(organization_id="org_123")
+    monkeypatch.setattr("connectors.code_sandbox.settings.E2B_API_KEY", "test-key")
+    recorded: list[tuple[str, dict[str, object]]] = []
+
+    async def _fake_allowed_users(_conversation_id: str, _organization_id: str) -> list[str]:
+        return ["user_123"]
+
+    async def _fake_get_sandbox_id(_conversation_id: str, _organization_id: str) -> str | None:
+        return "sbx_existing"
+
+    def _fake_is_alive(_sandbox_id: str) -> bool:
+        return True
+
+    def _fake_get_context(_sandbox_id: str) -> dict[str, str]:
+        return {"basebase_user_id": "user_123", "basebase_allowed_user_ids": "user_123"}
+
+    def _fake_run_command(_sandbox_id: str, _command: str) -> dict[str, object]:
+        return {"stdout": "ok\n", "stderr": "", "exit_code": 0}
+
+    def _fake_list_output_files(_sandbox_id: str) -> list[dict[str, object]]:
+        return []
+
+    async def _fake_record_intent(**kwargs):
+        recorded.append(("intent", kwargs))
+        return "change_1"
+
+    async def _fake_record_outcome(**kwargs):
+        recorded.append(("outcome", kwargs))
+
+    monkeypatch.setattr("connectors.code_sandbox._get_conversation_allowed_user_ids", _fake_allowed_users)
+    monkeypatch.setattr("connectors.code_sandbox._get_sandbox_id_from_db", _fake_get_sandbox_id)
+    monkeypatch.setattr("connectors.code_sandbox._is_sandbox_alive_sync", _fake_is_alive)
+    monkeypatch.setattr("connectors.code_sandbox._get_sandbox_context_sync", _fake_get_context)
+    monkeypatch.setattr("connectors.code_sandbox._run_command_sync", _fake_run_command)
+    monkeypatch.setattr("connectors.code_sandbox._list_output_files_sync", _fake_list_output_files)
+    monkeypatch.setattr("services.action_ledger.record_intent", _fake_record_intent)
+    monkeypatch.setattr("services.action_ledger.record_outcome", _fake_record_outcome)
+
+    result = await connector.execute_action(
+        "execute_command",
+        {"command": "python3 -c 'print(1)'", "conversation_id": "conv_123", "basebase_user_id": "user_123"},
+    )
+
+    assert result == {"exit_code": 0, "stdout": "ok\n", "stderr": ""}
+    assert [entry[0] for entry in recorded] == ["intent", "outcome"]
+
+
+@pytest.mark.asyncio
+async def test_execute_action_ignores_caller_supplied_audit_logged_flag(monkeypatch) -> None:
+    connector = CodeSandboxConnector(organization_id="org_123")
+    monkeypatch.setattr("connectors.code_sandbox.settings.E2B_API_KEY", "test-key")
+    recorded: list[str] = []
+
+    async def _fake_allowed_users(_conversation_id: str, _organization_id: str) -> list[str]:
+        return ["user_123"]
+
+    async def _fake_get_sandbox_id(_conversation_id: str, _organization_id: str) -> str | None:
+        return "sbx_existing"
+
+    def _fake_is_alive(_sandbox_id: str) -> bool:
+        return True
+
+    def _fake_get_context(_sandbox_id: str) -> dict[str, str]:
+        return {"basebase_user_id": "user_123", "basebase_allowed_user_ids": "user_123"}
+
+    def _fake_run_command(_sandbox_id: str, _command: str) -> dict[str, object]:
+        return {"stdout": "ok\n", "stderr": "", "exit_code": 0}
+
+    def _fake_list_output_files(_sandbox_id: str) -> list[dict[str, object]]:
+        return []
+
+    async def _fake_record_intent(**_kwargs):
+        recorded.append("intent")
+        return "change_1"
+
+    async def _fake_record_outcome(**_kwargs):
+        recorded.append("outcome")
+
+    monkeypatch.setattr("connectors.code_sandbox._get_conversation_allowed_user_ids", _fake_allowed_users)
+    monkeypatch.setattr("connectors.code_sandbox._get_sandbox_id_from_db", _fake_get_sandbox_id)
+    monkeypatch.setattr("connectors.code_sandbox._is_sandbox_alive_sync", _fake_is_alive)
+    monkeypatch.setattr("connectors.code_sandbox._get_sandbox_context_sync", _fake_get_context)
+    monkeypatch.setattr("connectors.code_sandbox._run_command_sync", _fake_run_command)
+    monkeypatch.setattr("connectors.code_sandbox._list_output_files_sync", _fake_list_output_files)
+    monkeypatch.setattr("services.action_ledger.record_intent", _fake_record_intent)
+    monkeypatch.setattr("services.action_ledger.record_outcome", _fake_record_outcome)
+
+    result = await connector.execute_action(
+        "execute_command",
+        {
+            "command": "python3 -c 'print(1)'",
+            "conversation_id": "conv_123",
+            "basebase_user_id": "user_123",
+            "_audit_logged": True,
+        },
+    )
+
+    assert result == {"exit_code": 0, "stdout": "ok\n", "stderr": ""}
+    assert recorded == ["intent", "outcome"]
+
+
+@pytest.mark.asyncio
+async def test_execute_action_skips_connector_audit_when_prelogged_by_internal_marker(monkeypatch) -> None:
+    connector = CodeSandboxConnector(organization_id="org_123")
+    monkeypatch.setattr("connectors.code_sandbox.settings.E2B_API_KEY", "test-key")
+    recorded: list[str] = []
+
+    async def _fake_allowed_users(_conversation_id: str, _organization_id: str) -> list[str]:
+        return ["user_123"]
+
+    async def _fake_get_sandbox_id(_conversation_id: str, _organization_id: str) -> str | None:
+        return "sbx_existing"
+
+    def _fake_is_alive(_sandbox_id: str) -> bool:
+        return True
+
+    def _fake_get_context(_sandbox_id: str) -> dict[str, str]:
+        return {"basebase_user_id": "user_123", "basebase_allowed_user_ids": "user_123"}
+
+    def _fake_run_command(_sandbox_id: str, _command: str) -> dict[str, object]:
+        return {"stdout": "ok\n", "stderr": "", "exit_code": 0}
+
+    def _fake_list_output_files(_sandbox_id: str) -> list[dict[str, object]]:
+        return []
+
+    async def _fake_record_intent(**_kwargs):
+        recorded.append("intent")
+        return "change_1"
+
+    async def _fake_record_outcome(**_kwargs):
+        recorded.append("outcome")
+
+    monkeypatch.setattr("connectors.code_sandbox._get_conversation_allowed_user_ids", _fake_allowed_users)
+    monkeypatch.setattr("connectors.code_sandbox._get_sandbox_id_from_db", _fake_get_sandbox_id)
+    monkeypatch.setattr("connectors.code_sandbox._is_sandbox_alive_sync", _fake_is_alive)
+    monkeypatch.setattr("connectors.code_sandbox._get_sandbox_context_sync", _fake_get_context)
+    monkeypatch.setattr("connectors.code_sandbox._run_command_sync", _fake_run_command)
+    monkeypatch.setattr("connectors.code_sandbox._list_output_files_sync", _fake_list_output_files)
+    monkeypatch.setattr("services.action_ledger.record_intent", _fake_record_intent)
+    monkeypatch.setattr("services.action_ledger.record_outcome", _fake_record_outcome)
+
+    params = {
+        "command": "python3 -c 'print(1)'",
+        "conversation_id": "conv_123",
+        "basebase_user_id": "user_123",
+    }
+    mark_audit_already_logged(params)
+    result = await connector.execute_action("execute_command", params)
+
+    assert result == {"exit_code": 0, "stdout": "ok\n", "stderr": ""}
+    assert recorded == []

@@ -1170,6 +1170,8 @@ async def _run_on_connector(
 
     # Inject code_sandbox context requirements
     if connector == "code_sandbox" and action == "execute_command":
+        from connectors.code_sandbox import mark_audit_already_logged
+
         if not user_id:
             return {
                 "error": (
@@ -1181,6 +1183,7 @@ async def _run_on_connector(
         if conversation_id:
             action_params["conversation_id"] = conversation_id
         action_params["basebase_user_id"] = user_id
+        mark_audit_already_logged(action_params)
 
     dp_ctx = ConnectorContext(
         organization_id=organization_id,
@@ -1199,9 +1202,13 @@ async def _run_on_connector(
 
     from services.action_ledger import record_intent, record_outcome
 
+    ledger_action_params: dict[str, Any] = {
+        key: value for key, value in action_params.items() if key != "_audit_logged"
+    }
+
     change_id = await record_intent(
         organization_id, user_id, context, connector,
-        dispatch_type="action", operation=action, data=action_params,
+        dispatch_type="action", operation=action, data=ledger_action_params,
         connector_instance=instance,
     )
     cross_user_warning = _build_cross_user_connector_warning(connector, instance, user_id)
