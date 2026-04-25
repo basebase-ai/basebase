@@ -431,11 +431,13 @@ class OpenAIAdapter:
             prefix, base_model = normalized_model.split("/", 1)
             prefix = f"{prefix}/"
 
-        if not base_model.startswith("gpt-5.5"):
+        if not base_model.startswith("gpt-5"):
             return []
 
         variants: list[str] = []
-        if base_model == "gpt-5.5":
+        if base_model == "gpt-5":
+            variants.extend(["gpt-5.5", "gpt-5.5-mini", "gpt-5.5-nano"])
+        elif base_model == "gpt-5.5":
             variants.extend(["gpt-5", "gpt-5.5-mini", "gpt-5.5-nano"])
         elif base_model == "gpt-5.5-mini":
             variants.append("gpt-5.5-nano")
