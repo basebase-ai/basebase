@@ -61,6 +61,16 @@ _SUDO_BLOCK_MESSAGE: str = (
 _MAX_EGRESS_BYTES: int = 1_000_000
 _BASEBASE_USER_ID_ENV_KEY: str = "BASEBASE_USER_ID"
 _BASEBASE_ALLOWED_USER_IDS_ENV_KEY: str = "BASEBASE_ALLOWED_USER_IDS"
+_AUDIT_ALREADY_LOGGED_MARKER: object = object()
+
+
+def mark_audit_already_logged(params: dict[str, Any]) -> None:
+    """Mark action params as pre-logged by trusted internal callers only."""
+    params["_audit_logged"] = _AUDIT_ALREADY_LOGGED_MARKER
+
+
+def _is_audit_already_logged(params: dict[str, Any]) -> bool:
+    return params.get("_audit_logged") is _AUDIT_ALREADY_LOGGED_MARKER
 
 
 def _command_preview(command: str, limit: int = 240) -> str:
@@ -259,7 +269,7 @@ class CodeSandboxConnector(BaseConnector):
         return await self._execute_command(params)
 
     async def _execute_command(self, params: dict[str, Any]) -> dict[str, Any]:
-        audit_already_logged: bool = bool(params.get("_audit_logged"))
+        audit_already_logged: bool = _is_audit_already_logged(params)
         command: str = (params.get("command") or "").strip()
         if not command:
             return {"error": "No command provided."}

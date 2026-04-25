@@ -1170,6 +1170,8 @@ async def _run_on_connector(
 
     # Inject code_sandbox context requirements
     if connector == "code_sandbox" and action == "execute_command":
+        from connectors.code_sandbox import mark_audit_already_logged
+
         if not user_id:
             return {
                 "error": (
@@ -1181,7 +1183,7 @@ async def _run_on_connector(
         if conversation_id:
             action_params["conversation_id"] = conversation_id
         action_params["basebase_user_id"] = user_id
-        action_params["_audit_logged"] = True
+        mark_audit_already_logged(action_params)
 
     dp_ctx = ConnectorContext(
         organization_id=organization_id,
