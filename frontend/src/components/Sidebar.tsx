@@ -915,6 +915,7 @@ function ChatAccordion({
   onViewAll: () => void;
 }): JSX.Element | null {
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
   const prefetchConversation = useAppStore((s) => s.prefetchConversation);
   const pinnedChatIds = useAppStore((s) => s.pinnedChatIds);
   const unreadConversationIds = useChatStore((s) => s.unreadConversationIds);
@@ -986,6 +987,22 @@ function ChatAccordion({
   }, [orderedChats, pinnedChatIds]);
 
   if (collapsed) return null;
+
+  const isSectionCollapsed = (sectionKey: string): boolean => {
+    const explicit = collapsedSections[sectionKey];
+    if (typeof explicit === 'boolean') return explicit;
+    return sectionKey !== 'direct';
+  };
+
+  const toggleSection = (sectionKey: string): void => {
+    setCollapsedSections((prev) => ({
+      ...prev,
+      [sectionKey]:
+        typeof prev[sectionKey] === 'boolean'
+          ? !prev[sectionKey]
+          : sectionKey === 'direct',
+    }));
+  };
 
   const renderChatItem = (chat: ChatSummary, itemKey: string): JSX.Element => {
     const hasActiveTask = chat.id in activeTasksByConversation;
@@ -1086,18 +1103,48 @@ function ChatAccordion({
       <div className="flex-1 overflow-y-auto scrollbar-thin space-y-0 min-h-0">
         {groupedSidebarChats.flattenCount > 0 ? (
           <>
-            {groupedSidebarChats.pinned.length > 0 && <SidebarSectionHeader title="Pinned" />}
-            {groupedSidebarChats.pinned.map((chat) => renderChatItem(chat, `pinned-${chat.id}`))}
-            {groupedSidebarChats.direct.length > 0 && <SidebarSectionHeader title="Direct" />}
-            {groupedSidebarChats.direct.map((chat) => renderChatItem(chat, `direct-${chat.id}`))}
+            {groupedSidebarChats.pinned.length > 0 && (
+              <>
+                <SidebarSectionHeader
+                  title="Pinned"
+                  collapsed={isSectionCollapsed('pinned')}
+                  onToggle={() => toggleSection('pinned')}
+                />
+                {!isSectionCollapsed('pinned') && groupedSidebarChats.pinned.map((chat) => renderChatItem(chat, `pinned-${chat.id}`))}
+              </>
+            )}
+            {groupedSidebarChats.direct.length > 0 && (
+              <>
+                <SidebarSectionHeader
+                  title="Direct"
+                  collapsed={isSectionCollapsed('direct')}
+                  onToggle={() => toggleSection('direct')}
+                />
+                {!isSectionCollapsed('direct') && groupedSidebarChats.direct.map((chat) => renderChatItem(chat, `direct-${chat.id}`))}
+              </>
+            )}
             {groupedSidebarChats.channels.map((channel) => (
               <div key={channel.key}>
-                <SidebarSectionHeader title={channel.label} />
-                {channel.chats.map((chat) => renderChatItem(chat, `channel-${channel.key}-${chat.id}`))}
+                <SidebarSectionHeader
+                  title={channel.label}
+                  collapsed={isSectionCollapsed(`channel:${channel.key}`)}
+                  onToggle={() => toggleSection(`channel:${channel.key}`)}
+                />
+                {!isSectionCollapsed(`channel:${channel.key}`) &&
+                  channel.chats.map((chat) => renderChatItem(chat, `channel-${channel.key}-${chat.id}`))}
               </div>
             ))}
-            {groupedSidebarChats.uncategorized.length > 0 && <SidebarSectionHeader title="Uncategorized" />}
-            {groupedSidebarChats.uncategorized.map((chat) => renderChatItem(chat, `uncategorized-${chat.id}`))}
+            {groupedSidebarChats.uncategorized.length > 0 && (
+              <>
+                <SidebarSectionHeader
+                  title="Uncategorized"
+                  collapsed={isSectionCollapsed('uncategorized')}
+                  onToggle={() => toggleSection('uncategorized')}
+                />
+                {!isSectionCollapsed('uncategorized') &&
+                  groupedSidebarChats.uncategorized.map((chat) => renderChatItem(chat, `uncategorized-${chat.id}`))}
+              </>
+            )}
           </>
         ) : (
           <div className="px-2 py-1.5 text-xs text-surface-500 text-center">
@@ -1109,10 +1156,45 @@ function ChatAccordion({
   );
 }
 
-function SidebarSectionHeader({ title }: { title: string }): JSX.Element {
+function SidebarSectionHeader({
+  title,
+  collapsed,
+  onToggle,
+}: {
+  title: string;
+  collapsed: boolean;
+  onToggle: () => void;
+}): JSX.Element {
   return (
-    <div className="px-2 pt-2 pb-1">
-      <h3 className="text-[10px] uppercase tracking-wider text-surface-500 font-semibold">{title}</h3>
+    <div className="px-1 pt-2 pb-1 flex items-center gap-1">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex-1 min-w-0 px-1 py-0.5 rounded-md hover:bg-surface-800/60 transition-colors flex items-center gap-1.5 text-left"
+        aria-expanded={!collapsed}
+        aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${title}`}
+      >
+        <svg
+          className={`w-3 h-3 text-surface-500 transition-transform ${collapsed ? '' : 'rotate-90'}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+        <h3 className="truncate text-[10px] uppercase tracking-wider text-surface-500 font-semibold">{title}</h3>
+      </button>
+      <button
+        type="button"
+        className="p-1 rounded-md text-surface-500 hover:bg-surface-800/60 hover:text-surface-300 transition-colors"
+        aria-label={`${title} options`}
+      >
+        <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="5" r="1.8" />
+          <circle cx="12" cy="12" r="1.8" />
+          <circle cx="12" cy="19" r="1.8" />
+        </svg>
+      </button>
     </div>
   );
 }
