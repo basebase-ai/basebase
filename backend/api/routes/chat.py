@@ -551,85 +551,98 @@ async def list_conversations(
             .limit(limit + 1)
         )
         result = await session.execute(ordered_query)
-        conversations: list[Conversation] = list(result.scalars().all())
-        has_more = len(conversations) > limit
+        primary_rows: list[Conversation] = list(result.scalars().all())
+        primary_has_more = len(primary_rows) > limit
+        has_more = primary_has_more
+        conversations: list[Conversation] = primary_rows[:limit]
 
-        # Fast path: if the primary query already proved there is another page,
-        # avoid waiting on Slack fallback and keep cursor metadata as-is.
-        if has_more:
-            conversations = conversations[:limit]
+        # Optimistically preserve has_more from the primary query so the caller
+        # can keep pagination controls enabled immediately while we reconcile
+        # Slack-only rows that may need to be merged into the visible page.
+        slack_user_ids = await _get_slack_user_ids(auth, session=session)
+        should_merge_slack = bool(slack_user_ids) and (
+            len(conversations) < limit or has_more
+        )
 
-        # Slow path: if we do not yet have a full page, Slack conversations may
-        # be missing. Resolve Slack IDs and merge any additional results.
-        if not has_more and len(conversations) < limit:
-            slack_user_ids = await _get_slack_user_ids(auth, session=session)
-            if slack_user_ids:
-                logger.info(
-                    "[chat] Listing conversations for user=%s with Slack IDs %s",
-                    auth.user_id_str,
-                    sorted(slack_user_ids),
+        if should_merge_slack:
+            logger.info(
+                "[chat] Listing conversations for user=%s with Slack IDs %s",
+                auth.user_id_str,
+                sorted(slack_user_ids),
+            )
+            seen_ids = {c.id for c in conversations}
+            slack_query = (
+                select(Conversation)
+                .where(Conversation.type != "workflow")
+                .where(Conversation.source == "slack")
+                .where(Conversation.source_user_id.in_(slack_user_ids))
+            )
+            if auth.organization_id:
+                slack_query = slack_query.where(
+                    Conversation.organization_id == auth.organization_id
                 )
-                seen_ids = {c.id for c in conversations}
-                slack_query = (
-                    select(Conversation)
-                    .where(Conversation.type != "workflow")
-                    .where(Conversation.source == "slack")
-                    .where(Conversation.source_user_id.in_(slack_user_ids))
-                )
-                if auth.organization_id:
-                    slack_query = slack_query.where(
-                        Conversation.organization_id == auth.organization_id
+            if scope in ("shared", "private"):
+                slack_query = slack_query.where(Conversation.scope == scope)
+            if cursor_updated_at is not None and cursor_conversation_id is not None:
+                slack_query = slack_query.where(
+                    or_(
+                        Conversation.updated_at < cursor_updated_at,
+                        and_(
+                            Conversation.updated_at == cursor_updated_at,
+                            Conversation.id < cursor_conversation_id,
+                        ),
                     )
-                if scope in ("shared", "private"):
-                    slack_query = slack_query.where(Conversation.scope == scope)
-                if cursor_updated_at is not None and cursor_conversation_id is not None:
-                    slack_query = slack_query.where(
-                        or_(
-                            Conversation.updated_at < cursor_updated_at,
-                            and_(
-                                Conversation.updated_at == cursor_updated_at,
-                                Conversation.id < cursor_conversation_id,
-                            ),
-                        )
-                    )
-
-                # Apply same search filter to Slack fallback
-                if normalized_search:
-                    slack_search = f"%{normalized_search}%"
-                    slack_msg_subq = sa_text(
-                        "SELECT DISTINCT conversation_id FROM chat_messages "
-                        "WHERE content ILIKE :st "
-                        "UNION "
-                        "SELECT DISTINCT conversation_id FROM chat_messages, "
-                        "jsonb_array_elements(content_blocks) AS block "
-                        "WHERE block->>'type' = 'text' "
-                        "AND block->>'text' ILIKE :st"
-                    ).bindparams(st=slack_search).columns(column("conversation_id"))
-                    slack_query = slack_query.where(
-                        or_(
-                            Conversation.title.ilike(slack_search),
-                            Conversation.summary.ilike(slack_search),
-                            Conversation.last_message_preview.ilike(slack_search),
-                            Conversation.id.in_(slack_msg_subq),
-                        )
-                    )
-
-                slack_result = await session.execute(
-                    slack_query.order_by(
-                        Conversation.updated_at.desc(), Conversation.id.desc()
-                    ).limit(limit + 1)
-                )
-                for conv in slack_result.scalars().all():
-                    if conv.id not in seen_ids:
-                        conversations.append(conv)
-                        seen_ids.add(conv.id)
-
-                conversations.sort(
-                    key=lambda c: (c.updated_at, c.id),
-                    reverse=True,
                 )
 
-            has_more = len(conversations) > limit
+            if has_more and conversations:
+                page_tail = conversations[-1]
+                slack_query = slack_query.where(
+                    or_(
+                        Conversation.updated_at > page_tail.updated_at,
+                        and_(
+                            Conversation.updated_at == page_tail.updated_at,
+                            Conversation.id > page_tail.id,
+                        ),
+                    )
+                )
+
+            # Apply same search filter to Slack fallback
+            if normalized_search:
+                slack_search = f"%{normalized_search}%"
+                slack_msg_subq = sa_text(
+                    "SELECT DISTINCT conversation_id FROM chat_messages "
+                    "WHERE content ILIKE :st "
+                    "UNION "
+                    "SELECT DISTINCT conversation_id FROM chat_messages, "
+                    "jsonb_array_elements(content_blocks) AS block "
+                    "WHERE block->>'type' = 'text' "
+                    "AND block->>'text' ILIKE :st"
+                ).bindparams(st=slack_search).columns(column("conversation_id"))
+                slack_query = slack_query.where(
+                    or_(
+                        Conversation.title.ilike(slack_search),
+                        Conversation.summary.ilike(slack_search),
+                        Conversation.last_message_preview.ilike(slack_search),
+                        Conversation.id.in_(slack_msg_subq),
+                    )
+                )
+
+            slack_result = await session.execute(
+                slack_query.order_by(
+                    Conversation.updated_at.desc(), Conversation.id.desc()
+                ).limit(limit + 1)
+            )
+            for conv in slack_result.scalars().all():
+                if conv.id not in seen_ids:
+                    conversations.append(conv)
+                    seen_ids.add(conv.id)
+
+            conversations.sort(
+                key=lambda c: (c.updated_at, c.id),
+                reverse=True,
+            )
+
+            has_more = primary_has_more or len(conversations) > limit
             if has_more:
                 conversations = conversations[:limit]
         next_cursor = None
