@@ -70,6 +70,17 @@ async def _get_redis() -> aioredis.Redis:
     return _redis_client
 
 
+def _register_slack_refresh_task(task_key: str, task: asyncio.Task[None]) -> None:
+    """Track a single refresh task per key and clean up after completion."""
+    _slack_channel_refresh_tasks[task_key] = task
+
+    def _cleanup(done_task: asyncio.Task[None]) -> None:
+        if _slack_channel_refresh_tasks.get(task_key) is done_task:
+            _slack_channel_refresh_tasks.pop(task_key, None)
+
+    task.add_done_callback(_cleanup)
+
+
 async def _get_slack_user_ids(
     auth: AuthContext, session: AsyncSession | None = None,
 ) -> set[str]:
@@ -385,7 +396,10 @@ async def _resolve_slack_channel_name(
         r = await _get_redis()
     except Exception:
         return None
-    cached = await r.get(cache_key)
+    try:
+        cached = await r.get(cache_key)
+    except Exception:
+        cached = None
     if cached:
         try:
             payload = json.loads(cached)
@@ -399,8 +413,13 @@ async def _resolve_slack_channel_name(
                 if age_seconds <= _CHANNEL_NAME_HARD_TTL_SECONDS:
                     task_key = f"{workspace_id}:{channel_id}"
                     if task_key not in _slack_channel_refresh_tasks or _slack_channel_refresh_tasks[task_key].done():
-                        _slack_channel_refresh_tasks[task_key] = asyncio.create_task(
-                            _refresh_slack_channel_name(workspace_id, channel_id, org_id, fetched_at_iso),
+                        _register_slack_refresh_task(
+                            task_key,
+                            asyncio.create_task(
+                                _refresh_slack_channel_name(
+                                    workspace_id, channel_id, org_id, fetched_at_iso
+                                ),
+                            ),
                         )
                     return cached_name
         except Exception:
@@ -408,7 +427,10 @@ async def _resolve_slack_channel_name(
 
     # Blocking fallback path.
     await _refresh_slack_channel_name(workspace_id, channel_id, org_id)
-    latest = await r.get(cache_key)
+    try:
+        latest = await r.get(cache_key)
+    except Exception:
+        latest = None
     if latest:
         try:
             payload = json.loads(latest)
@@ -594,7 +616,7 @@ async def list_conversations(
                     )
                 )
 
-            if has_more and conversations:
+            if cursor and has_more and conversations:
                 page_tail = conversations[-1]
                 slack_query = slack_query.where(
                     or_(
