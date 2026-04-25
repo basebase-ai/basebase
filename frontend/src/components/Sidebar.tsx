@@ -974,13 +974,13 @@ function ChatAccordion({
 
   if (collapsed) return null;
 
-  const renderChatItem = (chat: ChatSummary): JSX.Element => {
+  const renderChatItem = (chat: ChatSummary, itemKey: string): JSX.Element => {
     const hasActiveTask = chat.id in activeTasksByConversation;
     const isUnread = unreadConversationIds.has(chat.id);
 
     return (
       <div
-        key={chat.id}
+        key={itemKey}
         className={`relative w-full text-left px-2 py-1 rounded-md transition-colors cursor-pointer leading-tight ${
           currentChatId === chat.id
             ? 'bg-surface-800 text-surface-100'
@@ -1074,17 +1074,17 @@ function ChatAccordion({
         {groupedSidebarChats.flattenCount > 0 ? (
           <>
             {groupedSidebarChats.pinned.length > 0 && <SidebarSectionHeader title="Pinned" />}
-            {groupedSidebarChats.pinned.map((chat) => renderChatItem(chat))}
+            {groupedSidebarChats.pinned.map((chat) => renderChatItem(chat, `pinned-${chat.id}`))}
             {groupedSidebarChats.direct.length > 0 && <SidebarSectionHeader title="Direct" />}
-            {groupedSidebarChats.direct.map((chat) => renderChatItem(chat))}
+            {groupedSidebarChats.direct.map((chat) => renderChatItem(chat, `direct-${chat.id}`))}
             {groupedSidebarChats.channels.map((channel) => (
               <div key={channel.key}>
                 <SidebarSectionHeader title={channel.label} />
-                {channel.chats.map((chat) => renderChatItem(chat))}
+                {channel.chats.map((chat) => renderChatItem(chat, `channel-${channel.key}-${chat.id}`))}
               </div>
             ))}
             {groupedSidebarChats.uncategorized.length > 0 && <SidebarSectionHeader title="Uncategorized" />}
-            {groupedSidebarChats.uncategorized.map((chat) => renderChatItem(chat))}
+            {groupedSidebarChats.uncategorized.map((chat) => renderChatItem(chat, `uncategorized-${chat.id}`))}
           </>
         ) : (
           <div className="px-2 py-1.5 text-xs text-surface-500 text-center">
