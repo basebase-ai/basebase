@@ -999,6 +999,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                       const isGuest: boolean = member.isGuest;
                       const isInvited: boolean = member.status === 'invited';
                       const isOrgAdminMember: boolean = member.role === 'admin';
+                      const isGlobalAdmin: boolean = member.isGlobalAdmin;
                       const isAdmin: boolean = member.role === 'admin'
                         || member.role === 'global_admin'
                         || member.canLoginAsAdmin;
@@ -1132,18 +1133,27 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                                       </button>
                                       {canAdministerOrg && (
                                         <>
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setMenuOpenMemberId(null);
-                                              const nextRole: 'admin' | 'member' = isOrgAdminMember ? 'member' : 'admin';
-                                              void handleUpdateMemberRole(member.id, nextRole);
-                                            }}
-                                            disabled={updateMemberRoleMutation.isPending}
-                                            className="w-full text-left px-3 py-2 text-sm text-surface-200 hover:bg-surface-600/60 transition-colors disabled:opacity-50"
-                                          >
-                                            {isOrgAdminMember ? 'Demote to user' : 'Promote to admin'}
-                                          </button>
+                                          {isGlobalAdmin ? (
+                                            <div
+                                              className="w-full text-left px-3 py-2 text-sm text-surface-400 italic cursor-not-allowed"
+                                              title="Global admin role is managed at the user level and overrides per-org admin status."
+                                            >
+                                              Global admin
+                                            </div>
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setMenuOpenMemberId(null);
+                                                const nextRole: 'admin' | 'member' = isOrgAdminMember ? 'member' : 'admin';
+                                                void handleUpdateMemberRole(member.id, nextRole);
+                                              }}
+                                              disabled={updateMemberRoleMutation.isPending}
+                                              className="w-full text-left px-3 py-2 text-sm text-surface-200 hover:bg-surface-600/60 transition-colors disabled:opacity-50"
+                                            >
+                                              {isOrgAdminMember ? 'Demote to user' : 'Promote to admin'}
+                                            </button>
+                                          )}
                                           <button
                                             type="button"
                                             onClick={() => {
