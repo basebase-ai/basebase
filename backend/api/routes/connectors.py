@@ -26,12 +26,6 @@ from workers.events import emit_event
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Connectors hidden from the public connector list. They still work for orgs
-# that already have them connected, but they won't appear in the Connect modal
-# so users can't accidentally add them.
-HIDDEN_CONNECTORS: frozenset[str] = frozenset({"code_sandbox"})
-
-
 def _connection_flow(meta: ConnectorMeta) -> str:
     """Return oauth | builtin | custom_credentials for the frontend connect flow.
 
@@ -54,8 +48,6 @@ async def list_connectors() -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
 
     for slug, cls in sorted(registry.items()):
-        if slug in HIDDEN_CONNECTORS:
-            continue
         meta = cls.meta  # type: ignore[attr-defined]
         sharing = get_provider_sharing_defaults(slug)
         result.append({

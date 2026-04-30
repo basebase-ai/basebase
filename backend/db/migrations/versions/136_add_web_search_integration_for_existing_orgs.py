@@ -1,7 +1,7 @@
 """Add web_search Integration for existing orgs.
 
-Revision ID: 134_web_search_integration
-Revises: 133_org_members_self_edit
+Revision ID: 136_web_search_integration
+Revises: 135_chan_mem_scope
 Create Date: 2026-04-18
 
 Auto-enable the web_search connector for organizations that don't already
@@ -17,8 +17,8 @@ from alembic import op
 from sqlalchemy import text
 
 
-revision: str = "134_web_search_integration"
-down_revision: Union[str, None] = "133_org_members_self_edit"
+revision: str = "136_web_search_integration"
+down_revision: Union[str, None] = "135_chan_mem_scope"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -11,14 +11,6 @@ def _list() -> list[dict]:
     return asyncio.run(connectors_route.list_connectors())
 
 
-def test_list_hides_code_sandbox() -> None:
-    slugs = {c["slug"] for c in _list()}
-    assert "code_sandbox" not in slugs, "code_sandbox must not appear in the public connector list"
-    assert "apps" in slugs
-    assert "web_search" in slugs
-    assert "artifacts" in slugs
-
-
 def test_builtin_no_auth_fields_classified_as_builtin() -> None:
     by_slug = {c["slug"]: c for c in _list()}
     for slug in ("apps", "web_search", "artifacts", "twilio"):
