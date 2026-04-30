@@ -1064,6 +1064,14 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                                   <span className="font-medium text-surface-100 truncate">
                                     {displayName}
                                   </span>
+                                  {member.id === currentUser.id && (
+                                    <span
+                                      aria-label="You"
+                                      className="px-2 py-0.5 text-xs font-medium bg-surface-700 text-surface-200 rounded-full"
+                                    >
+                                      You
+                                    </span>
+                                  )}
                                   {isAdmin && (
                                     <span className="px-2 py-0.5 text-xs font-medium bg-primary-500/20 text-primary-400 rounded-full">
                                       admin
