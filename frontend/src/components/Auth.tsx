@@ -186,13 +186,14 @@ export function Auth({ onBack, onSuccess }: AuthProps): JSX.Element {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
+    <div className="h-full overflow-y-auto">
       {/* Background effects */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-1/2 -right-1/4 w-[800px] h-[800px] rounded-full bg-gradient-to-br from-primary-600/20 to-transparent blur-3xl" />
         <div className="absolute -bottom-1/4 -left-1/4 w-[600px] h-[600px] rounded-full bg-gradient-to-tr from-emerald-600/10 to-transparent blur-3xl" />
       </div>
 
+      <div className="min-h-full flex items-center justify-center p-4">
       <div className="relative z-10 w-full max-w-md">
         {/* Back button */}
         <button
@@ -509,6 +510,7 @@ export function Auth({ onBack, onSuccess }: AuthProps): JSX.Element {
             )}
           </p>
         </div>
+      </div>
       </div>
     </div>
   );
