@@ -1522,19 +1522,18 @@ Returns normalized messages for one channel since a cutoff (does not write to th
                 or params.get("channel_id")
                 or params.get("channelId")
             )
-            since_val: str | None = (
-                params.get("since")
-                or params.get("since_iso")
-                or params.get("start_time")
-                or params.get("oldest")
-            )
+            since_val: Any = None
+            for key in ("since", "since_iso", "start_time", "oldest"):
+                if key in params and params.get(key) is not None:
+                    since_val = params.get(key)
+                    break
             if not ch or not str(ch).strip():
                 logger.error(
                     "[slack] fetch_channel_history missing channel params_keys=%s",
                     sorted(params.keys()),
                 )
                 raise ValueError("fetch_channel_history requires 'channel' (or 'channel_id')")
-            if not since_val or not str(since_val).strip():
+            if since_val is None or not str(since_val).strip():
                 default_since: str = (datetime.now(timezone.utc) - timedelta(days=7)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
                 logger.warning(
                     "[slack] fetch_channel_history missing since; defaulting to last 7 days channel=%s params_keys=%s default_since=%s",
