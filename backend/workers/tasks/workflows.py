@@ -202,6 +202,50 @@ def _coerce_preview_text(value: Any, *, max_length: int = 500) -> str | None:
     return f"{text[:max_length]}…"
 
 
+def _normalize_model_lookup_key(model: str) -> str:
+    """Normalize model names for rough/approximate allowlist matching."""
+    normalized = (model or "").strip().lower()
+    return "".join(ch for ch in normalized if ch.isalnum())
+
+
+def _resolve_requested_provider_with_fallback(
+    *,
+    model: str,
+    configured_provider: str,
+    provider_for_model_fn: Any,
+    model_provider_map: dict[str, str],
+) -> str | None:
+    """Resolve provider for model with exact + approximate allowlist matching."""
+    resolved_provider = provider_for_model_fn(model)
+    if resolved_provider:
+        return resolved_provider
+
+    model_lookup_key = _normalize_model_lookup_key(model)
+    if not model_lookup_key:
+        return None
+
+    for allowlisted_model, allowlisted_provider in model_provider_map.items():
+        if not allowlisted_provider:
+            continue
+        allowlisted_lookup_key = _normalize_model_lookup_key(allowlisted_model)
+        if not allowlisted_lookup_key:
+            continue
+        # Only allow requested-model extensions of allowlisted base names.
+        # Do not allow reverse-prefix matches (e.g., "gpt-5" matching
+        # allowlisted "gpt-5.5-mini"), which can bypass allowlist intent.
+        approximate_match = model_lookup_key.startswith(allowlisted_lookup_key)
+        if approximate_match and allowlisted_provider != configured_provider:
+            logger.info(
+                "[Workflow] Resolved provider via approximate allowlist model match requested_model=%s allowlisted_model=%s configured_provider=%s resolved_provider=%s",
+                model,
+                allowlisted_model,
+                configured_provider,
+                allowlisted_provider,
+            )
+            return allowlisted_provider
+    return None
+
+
 def _extract_messenger_connector_call_details(
     tool_payload: dict[str, Any],
 ) -> dict[str, Any] | None:
@@ -1841,7 +1885,14 @@ async def _action_llm(
     """Call an LLM for processing."""
     from access_control import RightsContext, check_external_api
     from config import settings
-    from services.llm_provider import resolve_llm_config, get_adapter
+    from services.llm_adapter import LLMConfig
+    from services.llm_provider import (
+        get_adapter,
+        get_model_provider_map,
+        provider_for_model,
+        resolve_api_key_for_provider,
+        resolve_llm_config,
+    )
 
     prompt = params.get("prompt", "")
     org_id: str = context.get("organization_id") or ""
@@ -1853,10 +1904,34 @@ async def _action_llm(
     llm_config = await resolve_llm_config(org_id or None)
     model: str = params.get("model", llm_config.primary_model)
 
-    if not llm_config.api_key:
+    requested_provider = _resolve_requested_provider_with_fallback(
+        model=model,
+        configured_provider=llm_config.provider,
+        provider_for_model_fn=provider_for_model,
+        model_provider_map=get_model_provider_map(),
+    )
+    effective_config = llm_config
+    if requested_provider and requested_provider != llm_config.provider:
+        logger.info(
+            "[Workflow] Switching LLM provider for model-specific workflow action organization_id=%s configured_provider=%s requested_model=%s requested_provider=%s",
+            org_id,
+            llm_config.provider,
+            model,
+            requested_provider,
+        )
+        requested_api_key = await resolve_api_key_for_provider(requested_provider, org_id or None)
+        effective_config = LLMConfig(
+            provider=requested_provider,
+            primary_model=llm_config.primary_model,
+            cheap_model=llm_config.cheap_model,
+            workflow_model=llm_config.workflow_model,
+            api_key=requested_api_key,
+        )
+
+    if not effective_config.api_key:
         return {
             "status": "failed",
-            "error": f"No API key configured for provider {llm_config.provider}",
+            "error": f"No API key configured for provider {effective_config.provider}",
         }
 
     rights_ctx = RightsContext(
@@ -1867,7 +1942,7 @@ async def _action_llm(
     )
     rights_result = await check_external_api(
         rights_ctx,
-        llm_config.provider,
+        effective_config.provider,
         {"model": model, "prompt_length": len(prompt)},
     )
     if not rights_result.allowed:
@@ -1876,7 +1951,7 @@ async def _action_llm(
             "error": rights_result.deny_reason or "External API call not allowed",
         }
 
-    adapter = get_adapter(llm_config)
+    adapter = get_adapter(effective_config)
     try:
         completed = await adapter.complete(
             model=model,
