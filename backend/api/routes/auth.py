@@ -1402,6 +1402,7 @@ class TeamMemberResponse(BaseModel):
     status: Optional[str] = None  # 'active', 'crm_only', etc.
     is_guest: bool = False
     can_login_as_admin: bool = False  # True when user is org admin for this org, or global_admin
+    is_global_admin: bool = False  # True when user has the global_admin role at the user level
     identities: list[IdentityMappingResponse] = []
 
 
@@ -1524,6 +1525,7 @@ async def get_organization_members(
                         bool(membership and membership.role == "admin")
                         or _is_global_admin(u)
                     ),
+                    is_global_admin=_is_global_admin(u),
                     identities=identities,
                 )
             )
@@ -2372,6 +2374,13 @@ async def update_organization_member_role(
         requester: Optional[User] = await session.get(User, requester_uuid)
         if not await _can_administer_org(session, requester, org_uuid):
             raise HTTPException(status_code=403, detail="Org admin or global_admin required for this organization")
+
+        target_user: Optional[User] = await session.get(User, target_uuid)
+        if _is_global_admin(target_user):
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot change the org-level role of a global admin. Their global role overrides the per-org setting.",
+            )
 
         membership_result = await session.execute(
             select(OrgMember).where(
