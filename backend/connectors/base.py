@@ -63,7 +63,6 @@ _CONNECTION_REMOVED_ERROR_SNIPPETS: tuple[str, ...] = (
     "connection not found",
     "404 not found",
     "404 client error",
-    "400 bad request",
     "invalid_auth",
     "account_inactive",
     "token_revoked",
@@ -96,10 +95,28 @@ def build_connection_removed_message(provider: str) -> str:
     )
 
 
+def _is_auth_related_bad_request(message: str) -> bool:
+    """Return True for 400 errors that explicitly mention auth/connection revocation."""
+    return "400" in message and "bad request" in message and any(
+        marker in message
+        for marker in (
+            "auth",
+            "oauth",
+            "token",
+            "revoked",
+            "expired",
+            "connection",
+            "not found",
+        )
+    )
+
+
 def is_connection_removed_error(error: Exception | str) -> bool:
     """Return True when an error looks like a revoked or deleted upstream connection."""
     message = str(error).lower()
-    return any(snippet in message for snippet in _CONNECTION_REMOVED_ERROR_SNIPPETS)
+    if any(snippet in message for snippet in _CONNECTION_REMOVED_ERROR_SNIPPETS):
+        return True
+    return _is_auth_related_bad_request(message)
 
 
 class SyncCancelledError(RuntimeError):
