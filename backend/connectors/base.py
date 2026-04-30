@@ -105,8 +105,13 @@ def _is_auth_related_bad_request(message: str) -> bool:
             "token",
             "revoked",
             "expired",
-            "connection",
-            "not found",
+            "connection revoked",
+            "connection expired",
+            "connection not found",
+            "invalid connection",
+            "disconnected",
+            "not_authed",
+            "invalid_auth",
         )
     )
 

@@ -22,5 +22,6 @@ def test_is_connection_removed_error_detects_revoked_auth_patterns() -> None:
     assert is_connection_removed_error("Slack API error: invalid_auth") is True
     assert is_connection_removed_error("Client error '404 Not Found' for url") is True
     assert is_connection_removed_error("Client error '400 Bad Request' for url") is False
+    assert is_connection_removed_error("Client error '400 Bad Request' for url https://api.nango.dev/connection/123") is False
     assert is_connection_removed_error("400 Bad Request: OAuth token expired") is True
     assert is_connection_removed_error("temporary upstream timeout") is False
