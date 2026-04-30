@@ -64,6 +64,38 @@ def test_fetch_channel_history_accepts_unix_timestamp_since(monkeypatch) -> None
         "latest": None,
         "inclusive": False,
     }
+
+
+def test_fetch_channel_history_prefers_iso_basic_date_over_unix_seconds(monkeypatch) -> None:
+    connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
+
+    captured: dict[str, object] = {}
+
+    async def _fake_get_channel_messages(
+        channel_id: str,
+        oldest: float | None = None,
+        limit: int = 100,
+        latest: str | None = None,
+        inclusive: bool = False,
+    ) -> list[dict[str, object]]:
+        captured["channel_id"] = channel_id
+        captured["oldest"] = oldest
+        captured["limit"] = limit
+        captured["latest"] = latest
+        captured["inclusive"] = inclusive
+        return []
+
+    monkeypatch.setattr(connector, "get_channel_messages", _fake_get_channel_messages)
+
+    result = asyncio.run(connector.fetch_channel_history("C123", "20250101", limit=20))
+
+    assert result["ok"] is True
+    assert captured["channel_id"] == "C123"
+    assert captured["limit"] == 20
+    assert captured["latest"] is None
+    assert captured["inclusive"] is False
+    assert captured["oldest"] == pytest.approx(1735689600.0)
+
 def test_execute_action_fetch_channel_history_returns_normalized_messages(monkeypatch) -> None:
     connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
 
