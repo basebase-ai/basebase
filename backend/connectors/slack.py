@@ -14,7 +14,7 @@ import base64
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from urllib.parse import urlparse
 
@@ -180,16 +180,26 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_since_iso_to_utc_timestamp(raw: str) -> float:
-    """Parse an ISO 8601 datetime string to a UTC Unix timestamp for Slack ``oldest``."""
+    """Parse ISO 8601 or Unix timestamp strings to a UTC Unix timestamp for Slack ``oldest``."""
     s: str = raw.strip()
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
-    dt: datetime = datetime.fromisoformat(s)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    else:
-        dt = dt.astimezone(timezone.utc)
-    return dt.timestamp()
+
+    # Prefer ISO parsing first to preserve valid basic-date inputs like "20250101".
+    iso_candidate: str = s[:-1] + "+00:00" if s.endswith("Z") else s
+    dt: datetime | None = None
+    try:
+        dt = datetime.fromisoformat(iso_candidate)
+    except ValueError:
+        pass
+
+    if dt is not None:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt.timestamp()
+
+    # Slack ``oldest`` commonly arrives as a Unix ts string like "1711405920.999999".
+    return float(s)
 
 
 class SlackConnector(BaseConnector):
@@ -1515,20 +1525,32 @@ Returns normalized messages for one channel since a cutoff (does not write to th
                 or params.get("channel_id")
                 or params.get("channelId")
             )
-            since_val: str | None = params.get("since")
+            since_val: Any = None
+            for key in ("since", "since_iso", "start_time", "oldest"):
+                if key not in params:
+                    continue
+                candidate_since_val: Any = params.get(key)
+                if candidate_since_val is None:
+                    continue
+                if isinstance(candidate_since_val, str) and not candidate_since_val.strip():
+                    continue
+                since_val = candidate_since_val
+                break
             if not ch or not str(ch).strip():
                 logger.error(
                     "[slack] fetch_channel_history missing channel params_keys=%s",
                     sorted(params.keys()),
                 )
                 raise ValueError("fetch_channel_history requires 'channel' (or 'channel_id')")
-            if not since_val or not str(since_val).strip():
-                logger.error(
-                    "[slack] fetch_channel_history missing since channel=%s params_keys=%s",
+            if since_val is None or not str(since_val).strip():
+                default_since: str = (datetime.now(timezone.utc) - timedelta(days=7)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+                logger.warning(
+                    "[slack] fetch_channel_history missing since; defaulting to last 7 days channel=%s params_keys=%s default_since=%s",
                     ch,
                     sorted(params.keys()),
+                    default_since,
                 )
-                raise ValueError("fetch_channel_history requires 'since' (ISO 8601 datetime)")
+                since_val = default_since
             limit_raw: Any = params.get("limit", 1000)
             limit_val: int = int(limit_raw) if limit_raw is not None else 1000
             logger.info(
