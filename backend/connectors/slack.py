@@ -1524,9 +1524,15 @@ Returns normalized messages for one channel since a cutoff (does not write to th
             )
             since_val: Any = None
             for key in ("since", "since_iso", "start_time", "oldest"):
-                if key in params and params.get(key) is not None:
-                    since_val = params.get(key)
-                    break
+                if key not in params:
+                    continue
+                candidate_since_val: Any = params.get(key)
+                if candidate_since_val is None:
+                    continue
+                if isinstance(candidate_since_val, str) and not candidate_since_val.strip():
+                    continue
+                since_val = candidate_since_val
+                break
             if not ch or not str(ch).strip():
                 logger.error(
                     "[slack] fetch_channel_history missing channel params_keys=%s",

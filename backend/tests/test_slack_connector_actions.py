@@ -324,6 +324,31 @@ def test_execute_action_fetch_channel_history_accepts_since_alias(monkeypatch) -
     assert result["ok"] is True
 
 
+def test_execute_action_fetch_channel_history_skips_blank_since_uses_alias(monkeypatch) -> None:
+    connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
+
+    async def _fake_fetch(channel: str, since: str, *, limit: int = 1000) -> dict[str, object]:
+        assert channel == "C123"
+        assert since == "2025-01-02T00:00:00Z"
+        assert limit == 1000
+        return {"ok": True, "count": 0, "messages": []}
+
+    monkeypatch.setattr(connector, "fetch_channel_history", _fake_fetch)
+
+    result = asyncio.run(
+        connector.execute_action(
+            "fetch_channel_history",
+            {
+                "channel": "C123",
+                "since": "   ",
+                "since_iso": "2025-01-02T00:00:00Z",
+            },
+        )
+    )
+
+    assert result["ok"] is True
+
+
 def test_execute_action_fetch_channel_history_defaults_since_when_missing(monkeypatch) -> None:
     connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
 
