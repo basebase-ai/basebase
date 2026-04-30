@@ -34,7 +34,11 @@ from services.llm_adapter import (
     get_adapter,
 )
 from services.llm_provider import resolve_llm_config
-from services.llm_provider import provider_for_model, resolve_api_key_for_provider
+from services.llm_provider import (
+    get_model_provider_map,
+    provider_for_model,
+    resolve_api_key_for_provider,
+)
 from models.chat_attachment import ChatAttachment
 from models.chat_message import ChatMessage
 from models.conversation import Conversation
@@ -43,6 +47,41 @@ from models.memory import Memory
 from services.anthropic_health import report_anthropic_call_failure, report_anthropic_call_success
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_model_lookup_key(model: str) -> str:
+    """Normalize model names for approximate allowlist matching."""
+    normalized = (model or "").strip().lower()
+    return "".join(ch for ch in normalized if ch.isalnum())
+
+
+def _resolve_provider_for_workflow_selected_model(*, model: str, configured_provider: str) -> str | None:
+    """Resolve provider with exact then approximate allowlist matching for workflow model overrides."""
+    direct_provider = provider_for_model(model)
+    if direct_provider:
+        return direct_provider
+
+    model_lookup_key = _normalize_model_lookup_key(model)
+    if not model_lookup_key:
+        return None
+
+    for allowlisted_model, allowlisted_provider in get_model_provider_map().items():
+        if not allowlisted_provider:
+            continue
+        allowlisted_lookup_key = _normalize_model_lookup_key(allowlisted_model)
+        if not allowlisted_lookup_key:
+            continue
+        if model_lookup_key.startswith(allowlisted_lookup_key) and allowlisted_provider != configured_provider:
+            logger.info(
+                "[Orchestrator] Resolved provider via approximate allowlist model match selected_model=%s allowlisted_model=%s configured_provider=%s resolved_provider=%s",
+                model,
+                allowlisted_model,
+                configured_provider,
+                allowlisted_provider,
+            )
+            return allowlisted_provider
+
+    return None
 
 
 def _json_dumps(payload: Any) -> str:
@@ -1193,7 +1232,10 @@ class ChatOrchestrator:
             else (self._llm_config.workflow_model if is_workflow_run else self._llm_config.primary_model)
         )
         if is_workflow_run:
-            selected_model_provider = provider_for_model(selected_model)
+            selected_model_provider = _resolve_provider_for_workflow_selected_model(
+                model=selected_model,
+                configured_provider=self._llm_config.provider,
+            )
             if selected_model_provider and selected_model_provider != self._llm_config.provider:
                 previous_provider = self._llm_config.provider
                 override_api_key = await resolve_api_key_for_provider(
