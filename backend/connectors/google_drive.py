@@ -247,6 +247,7 @@ class GoogleDriveConnector(BaseConnector):
         scope=ConnectorScope.USER,
         entity_types=["files"],
         capabilities=[Capability.SYNC, Capability.QUERY, Capability.ACTION],
+        description="Google Drive – Docs, Sheets, Slides, and Gemini meeting notes",
         query_description=(
             "Search or read Google Drive files. "
             "Prefix with 'search:' to search by file name (e.g. 'search:quarterly report') or by type: use 'search:spreadsheet', 'search:document', or 'search:presentation' to list files of that type. "
