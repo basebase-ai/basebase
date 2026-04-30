@@ -180,8 +180,15 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_since_iso_to_utc_timestamp(raw: str) -> float:
-    """Parse an ISO 8601 datetime string to a UTC Unix timestamp for Slack ``oldest``."""
+    """Parse ISO 8601 or Unix timestamp strings to a UTC Unix timestamp for Slack ``oldest``."""
     s: str = raw.strip()
+
+    # Slack ``oldest`` commonly arrives as a Unix ts string like "1711405920.999999".
+    try:
+        return float(s)
+    except ValueError:
+        pass
+
     if s.endswith("Z"):
         s = s[:-1] + "+00:00"
     dt: datetime = datetime.fromisoformat(s)
