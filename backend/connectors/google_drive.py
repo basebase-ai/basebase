@@ -330,7 +330,7 @@ class GoogleDriveConnector(BaseConnector):
             ),
         ],
         nango_integration_id="google-drive",
-        description="Google Drive – file metadata sync, search, read, create folders/files, and edit",
+        description="Google Drive – Docs, Sheets, Slides, and Gemini meeting notes",
         usage_guide="""# Google Drive Usage Guide
 
 ## Query format (query_on_connector)
