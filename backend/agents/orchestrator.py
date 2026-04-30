@@ -1192,25 +1192,26 @@ class ChatOrchestrator:
             if is_workflow_run and workflow_model_override
             else (self._llm_config.workflow_model if is_workflow_run else self._llm_config.primary_model)
         )
-        if is_workflow_run and workflow_model_override:
-            override_provider = provider_for_model(selected_model)
-            if override_provider and override_provider != self._llm_config.provider:
+        if is_workflow_run:
+            selected_model_provider = provider_for_model(selected_model)
+            if selected_model_provider and selected_model_provider != self._llm_config.provider:
                 previous_provider = self._llm_config.provider
                 override_api_key = await resolve_api_key_for_provider(
-                    override_provider, self.organization_id
+                    selected_model_provider, self.organization_id
                 )
                 self._llm_config = replace(
                     self._llm_config,
-                    provider=override_provider,  # type: ignore[arg-type]
+                    provider=selected_model_provider,  # type: ignore[arg-type]
                     api_key=override_api_key,
                     base_url=None,
                 )
                 logger.info(
-                    "[Orchestrator] Switching provider for workflow model override conversation_id=%s previous_provider=%s override_provider=%s selected_model=%s",
+                    "[Orchestrator] Switching provider for workflow-selected model conversation_id=%s previous_provider=%s selected_provider=%s selected_model=%s workflow_model_override=%s",
                     self.conversation_id,
                     previous_provider,
-                    override_provider,
+                    selected_model_provider,
                     selected_model,
+                    workflow_model_override,
                 )
         self._adapter = get_adapter(self._llm_config)
 
