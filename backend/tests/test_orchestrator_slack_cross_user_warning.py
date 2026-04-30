@@ -9,9 +9,11 @@ from services.llm_adapter import StreamEvent
 class _FakeAdapter:
     def __init__(self) -> None:
         self._calls = 0
+        self.calls: list[dict[str, object]] = []
 
     async def stream(self, **kwargs):  # type: ignore[no-untyped-def]
         self._calls += 1
+        self.calls.append(kwargs)
         if self._calls == 1:
             yield StreamEvent(type="tool_use_start", tool_id="tool-1", tool_name="query_on_connector")
             yield StreamEvent(type="tool_input_delta", tool_input_json='{"connector":"hubspot","query":"x"}')
@@ -49,6 +51,9 @@ def test_stream_with_tools_emits_cross_user_warning_for_slack_sources(monkeypatc
 
     assert "⚠️ Used teammate connector" in joined
     assert "Final response" in joined
+    second_call_messages = orchestrator._adapter.calls[1]["messages"]
+    assert second_call_messages[-1]["role"] == "user"
+    assert second_call_messages[-1]["content"][0]["type"] == "tool_result"
 
 
 def test_stream_with_tools_does_not_emit_warning_for_web(monkeypatch) -> None:

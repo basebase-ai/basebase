@@ -1981,6 +1981,8 @@ class ChatOrchestrator:
                 })
             messages.append({"role": "assistant", "content": assistant_content})
 
+            messages.append({"role": "user", "content": tool_results})
+
             if self.source.lower().startswith("slack") and pending_cross_user_warnings:
                 warning_prefix: str = "⚠️ "
                 warning_text = "\n\n".join(
@@ -1988,9 +1990,6 @@ class ChatOrchestrator:
                 )
                 content_blocks.append({"type": "text", "text": warning_text})
                 yield warning_text + "\n\n"
-                messages.append({"role": "assistant", "content": [{"type": "text", "text": warning_text}]})
-
-            messages.append({"role": "user", "content": tool_results})
 
     @staticmethod
     def _build_user_content(
