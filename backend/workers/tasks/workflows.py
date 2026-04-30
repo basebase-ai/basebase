@@ -230,10 +230,10 @@ def _resolve_requested_provider_with_fallback(
         allowlisted_lookup_key = _normalize_model_lookup_key(allowlisted_model)
         if not allowlisted_lookup_key:
             continue
-        approximate_match = (
-            model_lookup_key.startswith(allowlisted_lookup_key)
-            or allowlisted_lookup_key.startswith(model_lookup_key)
-        )
+        # Only allow requested-model extensions of allowlisted base names.
+        # Do not allow reverse-prefix matches (e.g., "gpt-5" matching
+        # allowlisted "gpt-5.5-mini"), which can bypass allowlist intent.
+        approximate_match = model_lookup_key.startswith(allowlisted_lookup_key)
         if approximate_match and allowlisted_provider != configured_provider:
             logger.info(
                 "[Workflow] Resolved provider via approximate allowlist model match requested_model=%s allowlisted_model=%s configured_provider=%s resolved_provider=%s",
