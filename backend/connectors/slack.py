@@ -14,7 +14,7 @@ import base64
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from urllib.parse import urlparse
 
@@ -1515,7 +1515,12 @@ Returns normalized messages for one channel since a cutoff (does not write to th
                 or params.get("channel_id")
                 or params.get("channelId")
             )
-            since_val: str | None = params.get("since")
+            since_val: str | None = (
+                params.get("since")
+                or params.get("since_iso")
+                or params.get("start_time")
+                or params.get("oldest")
+            )
             if not ch or not str(ch).strip():
                 logger.error(
                     "[slack] fetch_channel_history missing channel params_keys=%s",
@@ -1523,12 +1528,14 @@ Returns normalized messages for one channel since a cutoff (does not write to th
                 )
                 raise ValueError("fetch_channel_history requires 'channel' (or 'channel_id')")
             if not since_val or not str(since_val).strip():
-                logger.error(
-                    "[slack] fetch_channel_history missing since channel=%s params_keys=%s",
+                default_since: str = (datetime.now(timezone.utc) - timedelta(days=7)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+                logger.warning(
+                    "[slack] fetch_channel_history missing since; defaulting to last 7 days channel=%s params_keys=%s default_since=%s",
                     ch,
                     sorted(params.keys()),
+                    default_since,
                 )
-                raise ValueError("fetch_channel_history requires 'since' (ISO 8601 datetime)")
+                since_val = default_since
             limit_raw: Any = params.get("limit", 1000)
             limit_val: int = int(limit_raw) if limit_raw is not None else 1000
             logger.info(

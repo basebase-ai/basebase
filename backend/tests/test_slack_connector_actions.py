@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -264,6 +264,55 @@ def test_execute_action_fetch_channel_history_accepts_channel_id_alias(monkeypat
     )
 
     assert result["ok"] is True
+
+def test_execute_action_fetch_channel_history_accepts_since_alias(monkeypatch) -> None:
+    connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
+
+    async def _fake_fetch(channel: str, since: str, *, limit: int = 1000) -> dict[str, object]:
+        assert channel == "C123"
+        assert since == "2025-01-01T00:00:00Z"
+        assert limit == 1000
+        return {"ok": True, "count": 0, "messages": []}
+
+    monkeypatch.setattr(connector, "fetch_channel_history", _fake_fetch)
+
+    result = asyncio.run(
+        connector.execute_action(
+            "fetch_channel_history",
+            {
+                "channel": "C123",
+                "since_iso": "2025-01-01T00:00:00Z",
+            },
+        )
+    )
+
+    assert result["ok"] is True
+
+
+def test_execute_action_fetch_channel_history_defaults_since_when_missing(monkeypatch) -> None:
+    connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
+
+    async def _fake_fetch(channel: str, since: str, *, limit: int = 1000) -> dict[str, object]:
+        assert channel == "C123"
+        parsed = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        delta = datetime.now(timezone.utc) - parsed
+        assert timedelta(days=6) <= delta <= timedelta(days=8)
+        assert limit == 1000
+        return {"ok": True, "count": 0, "messages": []}
+
+    monkeypatch.setattr(connector, "fetch_channel_history", _fake_fetch)
+
+    result = asyncio.run(
+        connector.execute_action(
+            "fetch_channel_history",
+            {
+                "channel": "C123",
+            },
+        )
+    )
+
+    assert result["ok"] is True
+
 
 def test_execute_action_send_message_accepts_legacy_message_param(monkeypatch) -> None:
     connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
