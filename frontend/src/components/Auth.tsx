@@ -169,10 +169,14 @@ export function Auth({ onBack, onSuccess }: AuthProps): JSX.Element {
     setError(null);
 
     try {
+      // Preserve invite params across the OAuth round-trip so the post-auth
+      // redirect can land the user in the invited org (BAS-468).
+      const currentParams = new URLSearchParams(window.location.search);
+      const inviteSearch = currentParams.get('invite') === '1' ? `?${currentParams.toString()}` : '';
       const { error } = await supabase.auth.signInWithOAuth({
         provider,
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
+          redirectTo: `${window.location.origin}/auth/callback${inviteSearch}`,
           scopes: provider === 'azure' ? 'email profile openid' : undefined,
           // Force account selection prompt - prevents auto-selecting a previously used account
           queryParams: {
