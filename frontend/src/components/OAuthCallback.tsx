@@ -55,7 +55,7 @@ export function OAuthCallback(): JSX.Element {
           setState('success');
           // Redirect to home after a brief delay
           setTimeout(() => {
-            window.location.href = '/';
+            window.location.href = `/${preserveInviteSearch()}`;
           }, 1500);
         } else {
           // No session yet - might still be processing
