@@ -11,6 +11,7 @@ import { API_BASE } from '../lib/api';
 import { APP_NAME, LOGO_PATH } from '../lib/brand';
 
 interface InviteContext {
+  orgId: string | null;
   orgName: string;
   orgLogo: string | null;
   inviterName: string | null;
@@ -51,6 +52,7 @@ function parseInviteParams(): InviteContext | null {
   const orgName: string | null = params.get('org_name');
   if (!orgName) return null;
   return {
+    orgId: params.get('org_id') || null,
     orgName,
     orgLogo: params.get('org_logo') || null,
     inviterName: params.get('inviter_name') || null,
