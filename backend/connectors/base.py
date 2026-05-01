@@ -68,6 +68,10 @@ _CONNECTION_REMOVED_ERROR_SNIPPETS: tuple[str, ...] = (
     "token_revoked",
     "not_authed",
     "auth revoked",
+    "401 unauthorized",
+    "401 client error",
+    "403 forbidden",
+    "403 client error",
 )
 
 _PROVIDER_DISPLAY_NAMES: dict[str, str] = {

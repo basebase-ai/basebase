@@ -24,4 +24,6 @@ def test_is_connection_removed_error_detects_revoked_auth_patterns() -> None:
     assert is_connection_removed_error("Client error '400 Bad Request' for url") is False
     assert is_connection_removed_error("Client error '400 Bad Request' for url https://api.nango.dev/connection/123") is False
     assert is_connection_removed_error("400 Bad Request: OAuth token expired") is True
+    assert is_connection_removed_error("Client error '401 Unauthorized' for url") is True
+    assert is_connection_removed_error("Client error '403 Forbidden' for url") is True
     assert is_connection_removed_error("temporary upstream timeout") is False
