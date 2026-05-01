@@ -68,6 +68,8 @@ _CONNECTION_REMOVED_ERROR_SNIPPETS: tuple[str, ...] = (
     "token_revoked",
     "not_authed",
     "auth revoked",
+    "401 unauthorized",
+    "403 forbidden",
 )
 
 _PROVIDER_DISPLAY_NAMES: dict[str, str] = {
@@ -90,15 +92,38 @@ def build_connection_removed_message(provider: str) -> str:
     """Return a coherent reconnect message when upstream access was removed."""
     provider_name = get_provider_display_name(provider)
     return (
-        f"The {provider_name} connection was removed or revoked in {provider_name}. "
-        f"Please disconnect it in Basebase and reconnect it if you still want to sync."
+        f"The {provider_name} connection has expired or been revoked. "
+        f"Please go to Connectors (/connectors) to disconnect and reconnect {provider_name}."
+    )
+
+
+def _is_auth_related_bad_request(message: str) -> bool:
+    """Return True for 400 errors that explicitly mention auth/connection revocation."""
+    return "400" in message and "bad request" in message and any(
+        marker in message
+        for marker in (
+            "auth",
+            "oauth",
+            "token",
+            "revoked",
+            "expired",
+            "connection revoked",
+            "connection expired",
+            "connection not found",
+            "invalid connection",
+            "disconnected",
+            "not_authed",
+            "invalid_auth",
+        )
     )
 
 
 def is_connection_removed_error(error: Exception | str) -> bool:
     """Return True when an error looks like a revoked or deleted upstream connection."""
     message = str(error).lower()
-    return any(snippet in message for snippet in _CONNECTION_REMOVED_ERROR_SNIPPETS)
+    if any(snippet in message for snippet in _CONNECTION_REMOVED_ERROR_SNIPPETS):
+        return True
+    return _is_auth_related_bad_request(message)
 
 
 class SyncCancelledError(RuntimeError):
