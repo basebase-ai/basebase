@@ -1,4 +1,4 @@
-from messengers._workspace import _resolve_conversation_scope
+from messengers._workspace import _resolve_conversation_scope, _resolve_conversation_scope_with_reason
 from messengers.base import InboundMessage, MessageType
 
 
@@ -52,3 +52,25 @@ def test_resolve_conversation_scope_private_for_mentions_in_private_slack_channe
 def test_resolve_conversation_scope_private_for_teams_groupchat_direct_message() -> None:
     message = _build_message(MessageType.DIRECT, channel_type="groupChat", external_user_id="U123")
     assert _resolve_conversation_scope(message, revtops_user_id="11111111-1111-1111-1111-111111111111") == "private"
+
+
+def test_resolve_conversation_scope_with_reason_for_private_slack_channel() -> None:
+    message = InboundMessage(
+        external_user_id="U123",
+        text="hello",
+        message_type=MessageType.MENTION,
+        messenger_context={"channel_type": "private_channel", "channel_id": "C123"},
+        message_id="mid-1",
+    )
+    assert _resolve_conversation_scope_with_reason(
+        message,
+        revtops_user_id="11111111-1111-1111-1111-111111111111",
+    ) == ("private", "private_slack_channel_or_group")
+
+
+def test_resolve_conversation_scope_with_reason_for_shared_mention() -> None:
+    message = _build_message(MessageType.MENTION, channel_type="channel", external_user_id="U123")
+    assert _resolve_conversation_scope_with_reason(
+        message,
+        revtops_user_id="11111111-1111-1111-1111-111111111111",
+    ) == ("shared", "non_direct_message")
