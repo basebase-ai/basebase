@@ -1922,6 +1922,9 @@ async def invite_to_organization(
             select(User).where(User.email == invite_email)
         )
         target_user: Optional[User] = result.scalar_one_or_none()
+        # Existing == previously logged in. Stub users from a prior invite have
+        # last_login=None, so they still get the "sign up" copy.
+        recipient_is_existing_user: bool = bool(target_user and target_user.last_login)
 
         if not target_user:
             # Create stub user
@@ -1964,6 +1967,8 @@ async def invite_to_organization(
                     inviter_name,
                     org_logo_url=org.logo_url,
                     inviter_avatar_url=inviter.avatar_url,
+                    org_id=str(org_uuid),
+                    recipient_is_existing_user=recipient_is_existing_user,
                 )
                 return InviteToOrgResponse(
                     membership_id=membership_id_str,
@@ -2000,6 +2005,8 @@ async def invite_to_organization(
             inviter_name,
             org_logo_url=org.logo_url,
             inviter_avatar_url=inviter.avatar_url,
+            org_id=str(org_uuid),
+            recipient_is_existing_user=recipient_is_existing_user,
         )
 
         return InviteToOrgResponse(
@@ -2163,6 +2170,8 @@ async def invite_missing_slack_users_to_organization(
 
         inviter_name: str = inviter.name or inviter.email
         for email in invited_emails:
+            existing_user = target_users.get(email)
+            recipient_is_existing_user: bool = bool(existing_user and existing_user.last_login)
             background_tasks.add_task(
                 send_org_invitation_email,
                 email,
@@ -2170,6 +2179,8 @@ async def invite_missing_slack_users_to_organization(
                 inviter_name,
                 org_logo_url=org.logo_url,
                 inviter_avatar_url=inviter.avatar_url,
+                org_id=str(org_uuid),
+                recipient_is_existing_user=recipient_is_existing_user,
             )
 
         return SlackMissingInviteResponse(

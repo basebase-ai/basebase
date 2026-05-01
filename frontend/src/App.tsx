@@ -223,6 +223,31 @@ function App(): JSX.Element {
     const domain = getEmailDomain(email);
     setEmailDomain(domain);
 
+    // If the user landed via an invite URL (?invite=1&org_id=...), redirect them
+    // into the invited org instead of falling back to their previous active org.
+    // Auto-acceptance of the pending membership happens server-side during sync.
+    const redirectToInvitedOrg = async (): Promise<void> => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('invite') !== '1') return;
+      const invitedOrgId = params.get('org_id');
+      if (!invitedOrgId) return;
+      const switched = await switchActiveOrganization(invitedOrgId);
+      if (switched) {
+        const orgs = useAppStore.getState().organizations;
+        const next = orgs.find((o) => o.id === invitedOrgId);
+        if (next) {
+          setOrganization({
+            id: next.id,
+            name: next.name,
+            logoUrl: next.logoUrl ?? null,
+            handle: next.handle ?? null,
+          });
+        }
+        // Strip the invite params so a refresh doesn't re-trigger this branch.
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+    };
+
     // Get avatar from OAuth metadata - try multiple possible field names
     // Google OAuth stores it in user_metadata, but also check identities array
     const identityData = supabaseUser.identities?.[0]?.identity_data as Record<string, unknown> | undefined;
@@ -324,6 +349,7 @@ function App(): JSX.Element {
             setScreen('onboarding-wizard');
             return;
           }
+          await redirectToInvitedOrg();
           setScreen('app');
           return;
         }
@@ -347,6 +373,7 @@ function App(): JSX.Element {
           });
         }
       }
+      await redirectToInvitedOrg();
       setScreen('app');
       return;
     }
