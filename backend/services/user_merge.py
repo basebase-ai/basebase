@@ -151,7 +151,7 @@ async def merge_users(
             ("apps.user_id", "UPDATE apps SET user_id = :target_id WHERE user_id = :source_id"),
             ("artifacts.user_id", "UPDATE artifacts SET user_id = :target_id WHERE user_id = :source_id"),
             ("bulk_operations.user_id", "UPDATE bulk_operations SET user_id = :target_id WHERE user_id = :source_id"),
-            ("temp_data.created_by_user_id", "UPDATE temp_data SET created_by_user_id = :target_id WHERE created_by_user_id = :source_id"),
+            ("knowledge_base.created_by_user_id", "UPDATE knowledge_base SET created_by_user_id = :target_id WHERE created_by_user_id = :source_id"),
             ("sheet_imports.user_id", "UPDATE sheet_imports SET user_id = :target_id WHERE user_id = :source_id"),
             ("user_tool_settings.user_id", "UPDATE user_tool_settings SET user_id = :target_id WHERE user_id = :source_id"),
             ("pending_operations.user_id", "UPDATE pending_operations SET user_id = :target_id WHERE user_id = :source_id"),

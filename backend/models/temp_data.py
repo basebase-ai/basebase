@@ -1,5 +1,5 @@
 """
-TempData model – flexible JSONB storage for agent-computed results.
+KnowledgeBaseEntry model – flexible JSONB document storage for agents/workflows.
 
 Agents and workflows write interim / computed outputs here (deal confidence
 scores, churn risk, engagement grades, etc.).  Rows are optionally linked
@@ -18,10 +18,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from models.database import Base
 
 
-class TempData(Base):
-    """Flexible key/value store for agent-generated results."""
+class KnowledgeBaseEntry(Base):
+    """Flexible JSON document store for agent-generated knowledge."""
 
-    __tablename__ = "temp_data"
+    __tablename__ = "knowledge_base"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4

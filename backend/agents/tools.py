@@ -196,7 +196,7 @@ ALLOWED_TABLES: set[str] = {
     "shared_files",
     "tracker_teams", "tracker_projects", "tracker_issues",
     "bulk_operations", "bulk_operation_results",
-    "temp_data",
+    "knowledge_base",
     "daily_digests", "daily_team_summaries",
 }
 
@@ -1330,7 +1330,7 @@ WRITABLE_TABLES: set[str] = {
     "deals",
     "accounts",
     "org_members",
-    "temp_data",
+    "knowledge_base",
     "daily_digests",
 }
 

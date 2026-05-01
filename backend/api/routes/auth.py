@@ -2691,7 +2691,7 @@ async def delete_organization(
             "apps",
             "artifacts",
             "memories",
-            "temp_data",
+            "knowledge_base",
             "org_members",
         )
         for table_name in org_scoped_tables:
