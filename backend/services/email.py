@@ -472,7 +472,7 @@ async def send_org_invitation_email(
         subject = (
             f"{invited_by_name} added you to {org_name} on Basebase"
             if invited_by_name
-            else f"You&apos;ve been added to {org_name} on Basebase"
+            else f"You've been added to {org_name} on Basebase"
         )
         cta_subhead = f"Open Basebase to start collaborating in {org_name}."
         cta_button = "Open Basebase"
