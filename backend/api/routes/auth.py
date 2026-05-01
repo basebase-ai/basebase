@@ -3647,6 +3647,18 @@ async def nango_oauth_callback_redirect(request: Request) -> RedirectResponse:
     This route can be used as the callback URL for any Nango integration.
     It preserves all query parameters and redirects to Nango's callback endpoint.
     """
+    frontend_url = settings.FRONTEND_URL.rstrip("/")
+    if "state" not in request.query_params:
+        logger.warning(
+            "OAuth callback missing state key; redirecting to login. path=%s query_keys=%s",
+            request.url.path,
+            sorted(request.query_params.keys()),
+        )
+        return RedirectResponse(
+            url=f"{frontend_url}/login?reason=missing_state",
+            status_code=302,
+        )
+
     nango_callback_url = "https://api.nango.dev/oauth/callback"
     
     # Preserve all query parameters from the incoming request
