@@ -1974,17 +1974,17 @@ export function Chat({
           <div className="h-5 w-48 rounded bg-surface-800 animate-pulse" />
         </header>
 
-        <div className="flex-1 overflow-hidden p-3 md:p-6">
+        <div className="flex-1 overflow-hidden px-4 py-3 md:p-5">
           <div className="space-y-6">
-            <div className="flex gap-3">
-              <div className="w-7 h-7 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-0.5" />
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-px" />
               <div className="space-y-2 flex-1 max-w-[65%]">
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-4/5" />
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-3/5" />
               </div>
             </div>
-            <div className="flex gap-3">
-              <div className="w-7 h-7 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-0.5" />
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-px" />
               <div className="space-y-2 flex-1 max-w-[80%]">
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-full" style={{ animationDelay: '75ms' }} />
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-11/12" style={{ animationDelay: '150ms' }} />
@@ -1992,14 +1992,14 @@ export function Chat({
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-5/6" style={{ animationDelay: '300ms' }} />
               </div>
             </div>
-            <div className="flex gap-3">
-              <div className="w-7 h-7 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-0.5" />
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-px" />
               <div className="space-y-2 flex-1 max-w-[55%]">
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-full" style={{ animationDelay: '375ms' }} />
               </div>
             </div>
-            <div className="flex gap-3">
-              <div className="w-7 h-7 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-0.5" />
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-px" />
               <div className="space-y-2 flex-1 max-w-[75%]">
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-full" style={{ animationDelay: '450ms' }} />
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-5/6" style={{ animationDelay: '525ms' }} />
@@ -2009,7 +2009,7 @@ export function Chat({
           </div>
         </div>
 
-        <div className="flex-shrink-0 border-t border-surface-800 p-3 md:p-4">
+        <div className="flex-shrink-0 border-t border-surface-800 px-4 md:px-5 pb-4 pt-1">
           <div>
             <div className="h-11 rounded-xl bg-surface-800 animate-pulse" />
           </div>
