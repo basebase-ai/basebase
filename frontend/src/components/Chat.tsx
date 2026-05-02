@@ -2504,7 +2504,7 @@ export function Chat({
                 />
               </div>
             )}
-            <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto overflow-x-hidden p-3 md:p-5">
+            <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto overflow-x-hidden px-4 py-3 md:p-5">
             {!userId && (
               <div className="mb-3 rounded-lg border border-amber-600/50 bg-amber-900/20 px-3 py-2 text-sm text-amber-200">
                 User context is missing — artifacts and apps may not save correctly. Please refresh or re-sign in.
@@ -2650,7 +2650,7 @@ export function Chat({
       </div>
 
       {/* Composer */}
-      <div className="px-3 md:px-5 pb-4 pt-1">
+      <div className="px-4 md:px-5 pb-4 pt-1">
         <div className="relative">
           <div
             className={`absolute left-0 bottom-full mb-1 min-w-[14rem] max-w-sm max-h-44 overflow-y-auto rounded-lg border border-surface-700 bg-surface-900 shadow-lg z-50 ${
