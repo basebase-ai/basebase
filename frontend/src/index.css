@@ -1,16 +1,19 @@
-/* Surface scale via CSS variables: :root = light (inverted mapping), .dark = dark UI */
+/*
+ * Surface scale via CSS variables: :root = light, .dark = dark UI.
+ * Light theme uses a warm “vellum” ramp (cream paper, brown-gray text) similar to Claude’s calm UI.
+ */
 :root {
-  --surface-50: #09090b;
-  --surface-100: #18181b;
-  --surface-200: #27272a;
-  --surface-300: #3f3f46;
-  --surface-400: #52525b;
-  --surface-500: #71717a;
-  --surface-600: #a1a1aa;
-  --surface-700: #d4d4d8;
-  --surface-800: #e4e4e7;
-  --surface-900: #f4f4f5;
-  --surface-950: #fafafa;
+  --surface-50: #1a1714;
+  --surface-100: #3d3834;
+  --surface-200: #524a44;
+  --surface-300: #6b6159;
+  --surface-400: #857a71;
+  --surface-500: #9e9288;
+  --surface-600: #b8aea4;
+  --surface-700: #d4cbc2;
+  --surface-800: #e8e0d6;
+  --surface-900: #f3ece4;
+  --surface-950: #faf6ef;
   color-scheme: light;
 }
 
