@@ -911,21 +911,22 @@ function ChatAccordion({
             </svg>
           )}
         </div>
-        <div className="flex items-center gap-1 mt-0 leading-none">
+        <div className="flex items-center gap-1.5 mt-1.5 leading-none">
           {chat.scope === 'shared' && chat.participants && chat.participants.length > 0 && (
-            <div className="flex -space-x-1.5">
+            <div className="flex -space-x-1">
               {chat.participants.slice(0, 3).map((p, idx) => (
                 <Avatar
                   key={p.id}
                   user={p}
                   size="xs"
                   bordered
+                  className="!w-4 !h-4 !text-[8px]"
                   style={{ zIndex: 3 - idx }}
                 />
               ))}
               {chat.participants.length > 3 && (
                 <div
-                  className="w-5 h-5 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[10px] font-medium text-surface-300"
+                  className="w-4 h-4 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[8px] font-medium text-surface-300"
                   title={`${chat.participants.length - 3} more`}
                 >
                   +{chat.participants.length - 3}
