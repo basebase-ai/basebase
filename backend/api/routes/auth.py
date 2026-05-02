@@ -1208,6 +1208,15 @@ async def create_organization(
         session.add(new_org)
         await session.flush()
 
+        from services.credits import record_grant
+        await record_grant(
+            session,
+            organization_id=new_org.id,
+            amount=new_org.credits_balance,
+            balance_after=new_org.credits_balance,
+            reason="signup_bonus",
+        )
+
         from models.org_member import OrgMember
 
         guest_user = User(

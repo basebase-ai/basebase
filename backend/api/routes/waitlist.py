@@ -805,12 +805,23 @@ async def grant_organization_free_credits(
 
         org.subscription_tier = "partner"
         org.subscription_status = "active"
+        old_balance: int = org.credits_balance
         org.credits_balance = body.credits
         org.credits_included = body.credits
         org.current_period_start = now
         org.current_period_end = period_end
         org.stripe_customer_id = None
         org.stripe_subscription_id = None
+
+        from services.credits import record_grant
+        await record_grant(
+            session,
+            organization_id=org.id,
+            amount=org.credits_balance - old_balance,
+            balance_after=org.credits_balance,
+            reason="partner_grant",
+            user_id=auth.user_id,
+        )
 
         await session.commit()
         await session.refresh(org)
