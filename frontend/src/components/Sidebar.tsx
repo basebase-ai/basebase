@@ -9,12 +9,11 @@
  * - Profile section
  */
 
-import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
+import { useMemo, useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import type { View, ChatSummary, OrganizationInfo } from './AppLayout';
 import { useAppStore, useAuthStore, useChatStore, useIsGlobalAdmin, useIsOrgAdmin, useActiveTasksByConversation, type UserOrganization, type AdminPanelTab } from '../store';
 import { apiRequest } from '../lib/api';
-import { FaLifeRing } from 'react-icons/fa';
 import { Avatar } from './Avatar';
 import { ScopeLockIcon } from './ScopeVisibilityIcons';
 import { APP_NAME, LOGO_PATH } from '../lib/brand';
@@ -22,123 +21,6 @@ import { APP_NAME, LOGO_PATH } from '../lib/brand';
 const CHANNEL_PERSONALITY_MAX_LENGTH = 1000;
 const CHANNEL_PERSONALITY_TEXTAREA_BASE_HEIGHT_PX = 160;
 const CHANNEL_PERSONALITY_TEXTAREA_MAX_HEIGHT_PX = Math.round(CHANNEL_PERSONALITY_TEXTAREA_BASE_HEIGHT_PX * 1.5);
-
-/** Help button and modal for support requests. */
-function HelpButton(): JSX.Element {
-  const [showModal, setShowModal] = useState(false);
-  const [message, setMessage] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [success, setSuccess] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSubmit = useCallback(async (): Promise<void> => {
-    const trimmed = message.trim();
-    if (!trimmed || submitting) return;
-    setSubmitting(true);
-    setError(null);
-    const { error: err } = await apiRequest<{ status: string; detail: string }>('/support/request', {
-      method: 'POST',
-      body: JSON.stringify({ message: trimmed }),
-    });
-    setSubmitting(false);
-    if (err) {
-      setError(err);
-      return;
-    }
-    setSuccess(true);
-    setMessage('');
-  }, [message, submitting]);
-
-  const handleClose = useCallback((): void => {
-    setShowModal(false);
-    setSuccess(false);
-    setError(null);
-    setMessage('');
-  }, []);
-
-  return (
-    <>
-      <button
-        onClick={() => setShowModal(true)}
-        title="Get Immediate Help"
-        className="mr-0.5 p-2 rounded-lg text-amber-400 hover:text-amber-300 hover:bg-amber-500/15 transition-colors"
-        aria-label="Get Immediate Help"
-      >
-        <FaLifeRing className="w-[18px] h-[18px]" />
-      </button>
-      {showModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-          onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
-        >
-          <div
-            className="bg-surface-900 rounded-xl shadow-2xl ring-1 ring-white/10 max-w-md w-full p-6"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-surface-100">Get Help</h2>
-              <button
-                onClick={handleClose}
-                className="p-1 text-surface-400 hover:text-surface-200 rounded transition-colors"
-                aria-label="Close"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            {success ? (
-              <p className="text-sm text-surface-300 mb-4">
-                Your message has been sent. A team member will be notified immediately and will respond within a few minutes during business hours.
-              </p>
-            ) : (
-              <>
-                <p className="text-sm text-surface-300 mb-4">
-                  You&apos;re our partner in building this product. Share questions, feedback, feature requests, or suggestions of any kind—we read every message and respond within a few minutes during business hours.
-                </p>
-                <textarea
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  placeholder="Questions, feedback, feature requests, or suggestions..."
-                  rows={4}
-                  className="w-full px-3 py-2 rounded-lg bg-surface-800 border border-surface-700 text-surface-100 placeholder-surface-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none mb-4"
-                  maxLength={4000}
-                />
-                {error && <p className="text-sm text-red-400 mb-2">{error}</p>}
-              </>
-            )}
-            <div className="flex justify-end gap-2">
-              {success ? (
-                <button
-                  onClick={handleClose}
-                  className="px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white font-medium transition-colors"
-                >
-                  Done
-                </button>
-              ) : (
-                <>
-                  <button
-                    onClick={handleClose}
-                    className="px-4 py-2 rounded-lg text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() => void handleSubmit()}
-                    disabled={!message.trim() || submitting}
-                    className="px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {submitting ? 'Sending...' : 'Send'}
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
 
 /** Shield icon for global admin console identity in the org switcher. */
 function GlobalAdminShieldIcon({ className }: { className?: string }): JSX.Element {
@@ -288,7 +170,7 @@ function OrgSwitcherSection({
         <button
           ref={triggerRef}
           onClick={() => setShowDropdown((prev) => !prev)}
-          className="w-full flex items-center gap-3 px-3 pt-3 pb-1 hover:bg-surface-800/50 transition-colors"
+          className="w-full flex items-center gap-3 px-4 pt-3 pb-1 hover:bg-surface-800/50 transition-colors"
         >
           {isAdminConsole ? (
             <>
@@ -748,7 +630,7 @@ export function Sidebar({
 
       {currentView !== 'admin' && (
       <>
-      <div className={`px-2 py-2 flex-shrink-0 flex items-center gap-1.5 ${collapsed ? 'flex-col' : ''}`}>
+      <div className={`px-3 py-2 flex-shrink-0 flex items-center gap-1.5 ${collapsed ? 'flex-col' : ''}`}>
         <button
           type="button"
           onClick={onNewChat}
@@ -807,25 +689,21 @@ export function Sidebar({
       {/* Bottom Section */}
       <div className="mt-auto">
         {user && (
-          <div className="flex items-center">
-            <button
-              onClick={onOpenProfilePanel}
-              className={`flex-1 min-w-0 flex items-center gap-3 px-3 py-3 hover:bg-surface-800/50 transition-colors ${collapsed ? 'justify-center' : ''}`}
-            >
-              <Avatar user={user} size="md" />
-              {!collapsed && (
-                <div className="flex-1 min-w-0 text-left">
-                  <div className="text-sm font-medium text-surface-200 truncate">
-                    {user.name ?? 'User'}
-                  </div>
-                  <div className="text-xs text-surface-500 truncate">{user.email}</div>
+          <button
+            onClick={onOpenProfilePanel}
+            className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-surface-800/50 transition-colors ${collapsed ? 'justify-center' : ''}`}
+          >
+            <Avatar user={user} size="md" />
+            {!collapsed && (
+              <div className="flex-1 min-w-0 text-left">
+                <div className="text-sm font-medium text-surface-200 truncate">
+                  {user.name ?? 'User'}
                 </div>
-              )}
-            </button>
-            <HelpButton />
-          </div>
+                <div className="text-xs text-surface-500 truncate">{user.email}</div>
+              </div>
+            )}
+          </button>
         )}
-
       </div>
     </aside>
   );
@@ -1064,7 +942,7 @@ function ChatAccordion({
   };
   
   return (
-    <div className="flex-1 flex flex-col min-h-0 px-1.5 pt-1 pb-px">
+    <div className="flex-1 flex flex-col min-h-0 px-3 pt-1 pb-px">
       <div className="flex-1 overflow-y-auto scrollbar-thin space-y-0 min-h-0">
         {groupedSidebarChats.flattenCount > 0 ? (
           <>

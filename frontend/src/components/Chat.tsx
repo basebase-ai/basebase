@@ -113,7 +113,7 @@ interface ToolApprovalState {
 const AGENT_AVATAR_PATH: string = '/basebase_logo_reverse-256.png';
 const CHAT_MSG_ROW: string =
   'group/msg flex items-start gap-3 px-5 -mx-5 hover:bg-black/[0.035] dark:hover:bg-surface-800/40 transition-colors';
-const CHAT_MSG_AVATAR: string = 'flex-shrink-0 !w-9 !h-9 !rounded-lg mt-px';
+const CHAT_MSG_AVATAR: string = 'flex-shrink-0 !w-9 !h-9 !rounded-full mt-px';
 const CHAT_MSG_AVATAR_SPACER: string = 'w-9 flex-shrink-0 mt-px';
 const CHAT_MSG_NAME: string =
   'text-[15px] font-bold leading-tight text-surface-50 dark:text-surface-50 tracking-[-0.015em]';

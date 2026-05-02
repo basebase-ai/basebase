@@ -13,6 +13,7 @@ import type { UserProfile } from './AppLayout';
 import { API_BASE, getAuthenticatedRequestHeaders } from '../lib/api';
 import { useUIStore, type UITheme } from '../store/uiStore';
 import { Memories } from './Memories';
+import { HelpButton } from './HelpButton';
 
 // ---------------------------------------------------------------------------
 // Phone verification modal
@@ -546,6 +547,7 @@ export function ProfilePanel({ user, onClose, onLogout, onUpdateUser }: ProfileP
               {isSaving ? 'Saving...' : 'Save changes'}
             </button>
           )}
+          <HelpButton />
           <button
             onClick={handleLogout}
             className="w-full flex items-center justify-center gap-2 px-4 py-3 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors font-medium"
