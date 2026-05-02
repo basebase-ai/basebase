@@ -562,17 +562,6 @@ export function Sidebar({
     >
       {/* Header: Organization identity */}
       <div className="relative min-w-0 overflow-hidden flex-shrink-0">
-        {isMobile && (
-          <button
-            onClick={onCloseMobile}
-            className="absolute right-2 top-3 z-10 p-1.5 rounded-md text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors shrink-0"
-            title="Close menu"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        )}
         <OrgSwitcherSection
           organization={organization}
           isMobile={isMobile}
@@ -620,7 +609,10 @@ export function Sidebar({
               orderedChats={orderedChats}
               currentChatId={currentChatId}
               activeTasksByConversation={activeTasksByConversation}
-              onSelectChat={onSelectChat}
+              onSelectChat={(id) => {
+                onSelectChat(id);
+                if (isMobile) onCloseMobile?.();
+              }}
             />
 
             {collapsed && <div className="flex-1" />}
