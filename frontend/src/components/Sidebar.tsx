@@ -719,7 +719,7 @@ export function Sidebar({
   return (
     <aside
       style={{ width: widthPx }}
-      className="h-full bg-surface-900 flex flex-col transition-all duration-200 ease-in-out flex-shrink-0 overflow-hidden"
+      className="h-full bg-surface-950 flex flex-col transition-all duration-200 ease-in-out flex-shrink-0 overflow-hidden"
     >
       {/* Header: Organization identity */}
       <div className="relative min-w-0 overflow-hidden flex-shrink-0">

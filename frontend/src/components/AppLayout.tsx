@@ -1809,7 +1809,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
   };
 
   return (
-    <div className="h-full flex flex-col bg-surface-950 overflow-hidden">
+    <div className="h-full flex flex-col bg-surface-900 overflow-hidden">
       {/* Masquerade Banner */}
       {masquerade && (
         <div className="bg-amber-500/20 dark:bg-amber-500/20 px-4 py-2 flex items-center justify-between flex-shrink-0">
@@ -1838,7 +1838,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
       <div className="flex-1 flex flex-col md:flex-row min-h-0 overflow-hidden">
       {/* Mobile Header */}
       {isMobile && (
-        <header className="h-14 bg-surface-900 flex items-center justify-between px-4 flex-shrink-0">
+        <header className="h-14 bg-surface-950 flex items-center justify-between px-4 flex-shrink-0">
           <button
             onClick={() => setMobileSidebarOpen(true)}
             className="p-2 -ml-2 rounded-lg text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors"
