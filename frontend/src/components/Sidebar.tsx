@@ -1,13 +1,11 @@
 /**
  * Collapsible sidebar navigation.
- * 
+ *
  * Features:
- * - Expand/collapse toggle
+ * - Org switcher with workspace links (Connectors, Apps, Workflows, etc.)
  * - New Chat button
- * - Connectors tab with badge
- * - Chats tab
  * - Recent chats list
- * - Organization section
+ * - Organization identity (org switcher)
  * - Profile section
  */
 
@@ -17,7 +15,7 @@ import type { View, ChatSummary, OrganizationInfo } from './AppLayout';
 import { useAppStore, useAuthStore, useChatStore, useIsGlobalAdmin, useIsOrgAdmin, useActiveTasksByConversation, type UserOrganization, type AdminPanelTab } from '../store';
 import { apiRequest } from '../lib/api';
 import { FaLifeRing } from 'react-icons/fa';
-import { Avatar, type AvatarUser } from './Avatar';
+import { Avatar } from './Avatar';
 import { ScopeLockIcon } from './ScopeVisibilityIcons';
 import { APP_NAME, LOGO_PATH, RELEASE_STAGE } from '../lib/brand';
 
@@ -142,38 +140,6 @@ function HelpButton(): JSX.Element {
   );
 }
 
-/** Small SVG donut chart showing remaining credits as a ring. */
-function CreditDonut({ balance, total }: { balance: number; total: number }): JSX.Element {
-  const size = 22;
-  const strokeWidth = 2.5;
-  const radius: number = (size - strokeWidth) / 2;
-  const circumference: number = 2 * Math.PI * radius;
-  const pct: number = total > 0 ? Math.max(0, Math.min(1, balance / total)) : 0;
-  const dashOffset: number = circumference * (1 - pct);
-
-  const strokeColor = '#9ca3af';
-
-  return (
-    <svg width={size} height={size} className="flex-shrink-0">
-      <circle
-        cx={size / 2} cy={size / 2} r={radius}
-        fill="none" stroke="currentColor" strokeWidth={strokeWidth}
-        className="text-surface-700"
-      />
-      {pct > 0 && (
-        <circle
-          cx={size / 2} cy={size / 2} r={radius}
-          fill="none" stroke={strokeColor} strokeWidth={strokeWidth}
-          strokeDasharray={circumference}
-          strokeDashoffset={dashOffset}
-          strokeLinecap="round"
-          transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        />
-      )}
-    </svg>
-  );
-}
-
 /** Shield icon for global admin console identity in the org switcher. */
 function GlobalAdminShieldIcon({ className }: { className?: string }): JSX.Element {
   return (
@@ -183,29 +149,74 @@ function GlobalAdminShieldIcon({ className }: { className?: string }): JSX.Eleme
   );
 }
 
+/** Single row in org dropdown for workspace (team) navigation. */
+function OrgDropdownWorkspaceRow({
+  label,
+  icon,
+  isActive,
+  onSelect,
+  badge,
+  badgeColor = 'primary',
+  colorTheme = 'surface',
+}: {
+  label: string;
+  icon: JSX.Element;
+  isActive: boolean;
+  onSelect: () => void;
+  badge?: number;
+  badgeColor?: 'primary' | 'amber';
+  colorTheme?: 'surface' | 'amber';
+}): JSX.Element {
+  const activeClass: string =
+    colorTheme === 'amber'
+      ? 'bg-amber-500/15 text-amber-300'
+      : 'bg-surface-700 text-surface-100';
+  const inactiveClass: string =
+    colorTheme === 'amber'
+      ? 'text-amber-400 hover:bg-amber-500/10 hover:text-amber-300'
+      : 'text-surface-300 hover:bg-surface-700 hover:text-surface-100';
+  const badgeBg: string = badgeColor === 'amber' ? 'bg-amber-500' : 'bg-primary-500';
+
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onSelect}
+      className={`w-full flex items-center gap-3 px-3 py-2 text-left text-sm transition-colors ${isActive ? activeClass : inactiveClass}`}
+    >
+      <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center [&>svg]:w-4 [&>svg]:h-4">{icon}</span>
+      <span className="truncate flex-1 min-w-0">{label}</span>
+      {badge != null && badge > 0 ? (
+        <span className={`shrink-0 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold text-white flex items-center justify-center ${badgeBg}`}>
+          {badge}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
 /** Organization switcher — displayed prominently at the top of the sidebar. */
 function OrgSwitcherSection({
   organization,
-  members,
-  creditsDisplay,
-  onOpenOrgPanel,
-  onOpenBilling,
   onCreateNewOrg,
   isMobile,
   currentView,
   onViewChange,
+  connectedSourcesCount,
+  workflowCount,
+  pendingChangesCount,
 }: {
   organization: OrganizationInfo;
-  members: AvatarUser[];
-  creditsDisplay: { balance: number; included: number } | null;
-  onOpenOrgPanel: () => void;
-  onOpenBilling: () => void;
   onCreateNewOrg: () => void;
   isMobile: boolean;
   currentView: View;
   onViewChange: (view: View) => void;
+  connectedSourcesCount: number;
+  workflowCount: number;
+  pendingChangesCount: number;
 }): JSX.Element {
   const isGlobalAdmin: boolean = useIsGlobalAdmin();
+  const isOrgAdmin: boolean = useIsOrgAdmin();
   const isAdminConsole: boolean = currentView === 'admin';
   const organizations: UserOrganization[] = useAppStore((state) => state.organizations);
   const switchActiveOrganization = useAppStore((state) => state.switchActiveOrganization);
@@ -240,7 +251,7 @@ function OrgSwitcherSection({
       setDropdownRect({
         top: rect.bottom + 4,
         left: rect.left + inset,
-        width: Math.max(200, rect.width - inset * 2),
+        width: Math.max(240, rect.width - inset * 2),
       });
     } else {
       setDropdownRect(null);
@@ -329,7 +340,7 @@ function OrgSwitcherSection({
           <div
             ref={dropdownContentRef}
             role="menu"
-            className="fixed bg-surface-800 border border-surface-700 rounded-lg shadow-xl overflow-hidden z-[9999]"
+            className="fixed bg-surface-800 border border-surface-700 rounded-lg shadow-xl max-h-[min(85vh,640px)] overflow-y-auto z-[9999]"
             style={{ top: dropdownRect.top, left: dropdownRect.left, width: dropdownRect.width }}
           >
             <div className="py-1">
@@ -397,70 +408,146 @@ function OrgSwitcherSection({
                   </button>
                 </>
               )}
+              {!isAdminConsole && (
+                <>
+                  <div className="border-t border-surface-700 my-1" />
+                  <div className="py-1" role="group" aria-label="Workspace">
+                    <OrgDropdownWorkspaceRow
+                      label="Home"
+                      isActive={currentView === 'home'}
+                      onSelect={() => {
+                        setShowDropdown(false);
+                        onViewChange('home');
+                      }}
+                      icon={
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                        </svg>
+                      }
+                    />
+                    <OrgDropdownWorkspaceRow
+                      label="Connectors"
+                      badge={connectedSourcesCount}
+                      isActive={currentView === 'data-sources'}
+                      onSelect={() => {
+                        setShowDropdown(false);
+                        onViewChange('data-sources');
+                      }}
+                      icon={
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+                        </svg>
+                      }
+                    />
+                    <OrgDropdownWorkspaceRow
+                      label="Search Data"
+                      isActive={currentView === 'data'}
+                      onSelect={() => {
+                        setShowDropdown(false);
+                        onViewChange('data');
+                      }}
+                      icon={
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      }
+                    />
+                    <OrgDropdownWorkspaceRow
+                      label="Workflows"
+                      badge={workflowCount}
+                      isActive={currentView === 'workflows'}
+                      onSelect={() => {
+                        setShowDropdown(false);
+                        onViewChange('workflows');
+                      }}
+                      icon={
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                      }
+                    />
+                    <OrgDropdownWorkspaceRow
+                      label="Apps"
+                      isActive={currentView === 'apps' || currentView === 'app-view'}
+                      onSelect={() => {
+                        setShowDropdown(false);
+                        onViewChange('apps');
+                      }}
+                      icon={
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        </svg>
+                      }
+                    />
+                    <OrgDropdownWorkspaceRow
+                      label="Documents"
+                      isActive={currentView === 'documents' || currentView === 'artifact-view'}
+                      onSelect={() => {
+                        setShowDropdown(false);
+                        onViewChange('documents');
+                      }}
+                      icon={
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                      }
+                    />
+                    <div className="border-t border-surface-700 my-1" />
+                    {isOrgAdmin && (
+                      <OrgDropdownWorkspaceRow
+                        label="Activity"
+                        isActive={currentView === 'activity-log'}
+                        onSelect={() => {
+                          setShowDropdown(false);
+                          onViewChange('activity-log');
+                        }}
+                        icon={
+                          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                          </svg>
+                        }
+                      />
+                    )}
+                    <OrgDropdownWorkspaceRow
+                      label="Settings"
+                      isActive={currentView === 'org-settings'}
+                      onSelect={() => {
+                        setShowDropdown(false);
+                        onViewChange('org-settings');
+                      }}
+                      icon={
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                      }
+                    />
+                    {pendingChangesCount > 0 && (
+                      <OrgDropdownWorkspaceRow
+                        label="Changes"
+                        badge={pendingChangesCount}
+                        badgeColor="amber"
+                        colorTheme="amber"
+                        isActive={currentView === 'pending-changes'}
+                        onSelect={() => {
+                          setShowDropdown(false);
+                          onViewChange('pending-changes');
+                        }}
+                        icon={
+                          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                          </svg>
+                        }
+                      />
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </div>,
           document.body
         )}
       </div>
-
-      {/* Team members row */}
-      {!isAdminConsole && members.length > 0 && (
-        <div className="flex items-center gap-2 px-3 py-1.5">
-          <button
-            onClick={onOpenOrgPanel}
-            className="flex-1 min-w-0 flex items-center gap-2 hover:bg-surface-800/50 transition-colors rounded -mx-1 px-1 py-0.5"
-          >
-            <span className="text-xs text-surface-500 shrink-0">
-              {members.length} {members.length !== 1 ? 'members' : 'member'}
-            </span>
-            <div className="flex -space-x-1.5 ml-auto">
-              {members.filter((m) => m.avatarUrl && !m.isGuest).slice(0, 3).map((m, idx) => (
-                <img
-                  key={m.id}
-                  src={m.avatarUrl!}
-                  alt={m.name ?? m.email ?? ''}
-                  referrerPolicy="no-referrer"
-                  className="w-6 h-6 rounded-full object-cover border border-surface-700 dark:border-surface-600"
-                  style={{ zIndex: 3 - idx }}
-                />
-              ))}
-            </div>
-          </button>
-          <button
-            onClick={onOpenOrgPanel}
-            className="shrink-0 px-2.5 py-1 rounded-md bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium transition-colors"
-          >
-            + Invite
-          </button>
-        </div>
-      )}
-
-      {/* Credits row */}
-      {!isAdminConsole && creditsDisplay != null && (() => {
-        const balance: number = creditsDisplay.balance;
-        const isOut: boolean = balance <= 0;
-        const pct: number = creditsDisplay.included > 0 ? balance / creditsDisplay.included : 1;
-        const isDanger: boolean = !isOut && pct <= 0.05;
-        const isWarning: boolean = !isOut && pct <= 0.25 && pct > 0.05;
-        const textClass: string = isOut || isDanger ? 'text-red-400' : isWarning ? 'text-amber-400' : 'text-surface-500';
-        return (
-          <button
-            onClick={onOpenBilling}
-            className="w-full flex items-center px-3 py-1.5 hover:bg-surface-800/50 transition-colors"
-          >
-            <span className={`text-xs ${textClass}`}>
-              {isOut ? (
-                <span className="font-semibold animate-pulse">No credits remaining</span>
-              ) : (
-                <>{balance} / {creditsDisplay.included} credits</>
-              )}
-            </span>
-            <div className="ml-auto">
-              <CreditDonut balance={balance} total={creditsDisplay.included} />
-            </div>
-          </button>
-        );
-      })()}
 
       {/* Bottom padding for the header block */}
       <div className="pb-1" />
@@ -481,70 +568,10 @@ interface SidebarProps {
   currentChatId: string | null;
   onNewChat: () => void;
   organization: OrganizationInfo;
-  members: AvatarUser[];
-  creditsDisplay: { balance: number; included: number } | null;
-  onOpenOrgPanel: () => void;
-  onOpenBilling: () => void;
   onCreateNewOrg: () => void;
   onOpenProfilePanel: () => void;
   isMobile?: boolean;
   onCloseMobile?: () => void;
-}
-
-/** Shared nav item used by the sidebar navigation. */
-function NavItem({
-  view,
-  activeViews,
-  label,
-  icon,
-  badge,
-  badgeColor = 'primary',
-  colorTheme = 'surface',
-  fontWeight,
-  collapsed,
-  currentView,
-  onViewChange,
-}: {
-  view: View;
-  activeViews?: View[];
-  label: string;
-  icon: JSX.Element;
-  badge?: number;
-  badgeColor?: 'primary' | 'amber';
-  colorTheme?: 'surface' | 'amber';
-  fontWeight?: 'medium';
-  collapsed: boolean;
-  currentView: View;
-  onViewChange: (view: View) => void;
-}): JSX.Element {
-  const isActive = (activeViews ?? [view]).includes(currentView);
-  const activeClass = colorTheme === 'amber'
-    ? 'bg-amber-500/20 text-amber-300'
-    : 'bg-surface-800 text-surface-100';
-  const inactiveClass = colorTheme === 'amber'
-    ? 'text-amber-400 hover:text-amber-300 hover:bg-amber-500/10'
-    : 'text-surface-300 hover:text-surface-200 hover:bg-surface-800/50';
-  const badgeBg = badgeColor === 'amber' ? 'bg-amber-500' : 'bg-primary-500';
-
-  return (
-    <button
-      onClick={() => onViewChange(view)}
-      title={collapsed ? label : undefined}
-      className={`w-full flex items-center gap-2 px-3 py-[5px] rounded-lg transition-colors ${isActive ? activeClass : inactiveClass} ${collapsed ? 'justify-center' : ''}`}
-    >
-      {badge != null && badge > 0 ? (
-        <div className="relative">
-          {icon}
-          <span className={`absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 ${badgeBg} rounded-full text-[10px] font-bold text-white flex items-center justify-center`}>
-            {badge}
-          </span>
-        </div>
-      ) : icon}
-      {!collapsed && (
-        <span className={fontWeight === 'medium' ? 'text-sm font-medium' : 'text-sm'}>{label}</span>
-      )}
-    </button>
-  );
 }
 
 function GlobalAdminSidebarNavItem({
@@ -658,10 +685,6 @@ export function Sidebar({
   currentChatId,
   onNewChat,
   organization,
-  members,
-  creditsDisplay,
-  onOpenOrgPanel,
-  onOpenBilling,
   onCreateNewOrg,
   onOpenProfilePanel,
   isMobile = false,
@@ -673,42 +696,9 @@ export function Sidebar({
   const adminPanelTab = useAppStore((state) => state.adminPanelTab);
   const setAdminPanelTab = useAppStore((state) => state.setAdminPanelTab);
   const isGlobalAdmin = useIsGlobalAdmin();
-  const isOrgAdmin = useIsOrgAdmin();
   const activeTasksByConversation = useActiveTasksByConversation();
   const storedWidth = useAppStore((state) => state.sidebarWidth);
   const widthPx = collapsed ? 64 : storedWidth;
-
-  // Draggable divider between nav and chat history
-  const [navHeight, setNavHeight] = useState<number | null>(null);
-  const isDraggingDividerRef = useRef(false);
-  const startYRef = useRef(0);
-  const startNavHeightRef = useRef(0);
-  const navRef = useRef<HTMLDivElement>(null);
-
-  const handleNavDividerMouseDown = useCallback((e: React.MouseEvent): void => {
-    e.preventDefault();
-    isDraggingDividerRef.current = true;
-    startYRef.current = e.clientY;
-    startNavHeightRef.current = navRef.current?.getBoundingClientRect().height ?? 200;
-    document.body.style.cursor = 'ns-resize';
-    document.body.style.userSelect = 'none';
-
-    const onMouseMove = (ev: MouseEvent): void => {
-      if (!isDraggingDividerRef.current) return;
-      const delta = ev.clientY - startYRef.current;
-      const newHeight = Math.min(500, Math.max(80, startNavHeightRef.current + delta));
-      setNavHeight(newHeight);
-    };
-    const onMouseUp = (): void => {
-      isDraggingDividerRef.current = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-    };
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-  }, []);
 
   const orderedChats = useMemo(() => {
     if (pinnedChatIds.length === 0) {
@@ -740,85 +730,29 @@ export function Sidebar({
         )}
         <OrgSwitcherSection
           organization={organization}
-          members={members}
-          creditsDisplay={creditsDisplay}
-          onOpenOrgPanel={onOpenOrgPanel}
-          onOpenBilling={onOpenBilling}
           onCreateNewOrg={onCreateNewOrg}
           isMobile={isMobile}
           currentView={currentView}
           onViewChange={onViewChange}
+          connectedSourcesCount={connectedSourcesCount}
+          workflowCount={workflowCount}
+          pendingChangesCount={pendingChangesCount}
         />
       </div>
 
       {currentView !== 'admin' && (
       <>
-      {/* Navigation Tabs — scrollable pane */}
-      <div
-        ref={navRef}
-        className="overflow-y-auto scrollbar-thin flex-shrink-0"
-        style={navHeight != null ? { height: navHeight } : undefined}
-      >
-        <nav className="px-2 space-y-0.5">
-          <NavItem view="home" label="Home" collapsed={collapsed} currentView={currentView} onViewChange={onViewChange} icon={
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-            </svg>
-          } />
-          <NavItem view="data-sources" label="Connectors" badge={connectedSourcesCount} collapsed={collapsed} currentView={currentView} onViewChange={onViewChange} icon={
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
-            </svg>
-          } />
-          <NavItem view="data" label="Search Data" collapsed={collapsed} currentView={currentView} onViewChange={onViewChange} icon={
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-            </svg>
-          } />
-          <NavItem view="workflows" label="Workflows" badge={workflowCount} collapsed={collapsed} currentView={currentView} onViewChange={onViewChange} icon={
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-          } />
-          <NavItem view="apps" label="Apps" activeViews={['apps', 'app-view']} collapsed={collapsed} currentView={currentView} onViewChange={onViewChange} icon={
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
-          } />
-          <NavItem view="documents" label="Documents" activeViews={['documents', 'artifact-view']} collapsed={collapsed} currentView={currentView} onViewChange={onViewChange} icon={
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-          } />
-          {pendingChangesCount > 0 && (
-            <NavItem view="pending-changes" label="Changes" badge={pendingChangesCount} badgeColor="amber" colorTheme="amber" fontWeight="medium" collapsed={collapsed} currentView={currentView} onViewChange={onViewChange} icon={
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-              </svg>
-            } />
-          )}
-          {isOrgAdmin && (
-            <NavItem view="activity-log" label="Activity" collapsed={collapsed} currentView={currentView} onViewChange={onViewChange} icon={
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-              </svg>
-            } />
-          )}
-          <NavItem view="org-settings" label="Settings" collapsed={collapsed} currentView={currentView} onViewChange={onViewChange} icon={
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-          } />
-        </nav>
-      </div>
-
-      {/* Draggable divider between nav and chat history */}
-      <div
-        onMouseDown={handleNavDividerMouseDown}
-        className="mx-3 h-1.5 cursor-ns-resize flex-shrink-0 group flex items-center justify-center"
-      >
-        <div className="w-full border-t border-surface-800 group-hover:border-surface-600 group-active:border-primary-500 transition-colors" />
+      <div className="px-2 py-2 flex-shrink-0 border-b border-surface-800">
+        <button
+          type="button"
+          onClick={onNewChat}
+          className={`w-full flex items-center gap-2 px-3 py-[5px] rounded-lg bg-primary-600 hover:bg-primary-700 text-white font-medium text-sm transition-colors ${collapsed ? 'justify-center' : ''}`}
+        >
+          <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          {!collapsed && <span>New Chat</span>}
+        </button>
       </div>
 
       {/* Recent chats (single list) */}
@@ -855,20 +789,6 @@ export function Sidebar({
       )}
 
       {/* New Chat Button */}
-      {currentView !== 'admin' && (
-        <div className="px-2 py-1">
-          <button
-            onClick={onNewChat}
-            className={`w-full flex items-center gap-2 px-3 py-[5px] rounded-lg bg-primary-600 hover:bg-primary-700 text-white font-medium text-sm transition-colors ${collapsed ? 'justify-center' : ''}`}
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            {!collapsed && <span>New Chat</span>}
-          </button>
-        </div>
-      )}
-
       {/* Bottom Section */}
       <div className="mt-auto border-t border-surface-800">
         {/* User Profile + Help */}

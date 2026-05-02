@@ -5,8 +5,8 @@
  * - Collapsible left sidebar (icons when collapsed)
  * - Slide-out drawer on mobile
  * - New Chat button
- * - Connectors tab with badge
- * - Chats tab with recent conversations
+ * - Org switcher dropdown includes workspace links (Connectors, Apps, etc.)
+ * - Recent conversations in sidebar
  * - Organization & Profile sections at bottom
  * 
  * Also manages global WebSocket connection for background task updates.
@@ -41,7 +41,7 @@ const DocumentsGallery = lazy(() => import('./documents/DocumentsGallery').then(
 import { APP_NAME, LOGO_PATH, RELEASE_STAGE } from '../lib/brand';
 import { ProfilePanel } from './ProfilePanel';
 import { useAppStore, useChatStore, useUIStore, useMasquerade, useIntegrations, useIsSwitchingOrg, useIsGlobalAdmin, useIsOrgAdmin, type ActiveTask, type AdminPanelTab, type ToolCallData, type ChatMessage, type ContentBlock, type View, type Participant } from '../store';
-import { useTeamMembers, useWebSocket } from '../hooks';
+import { useWebSocket } from '../hooks';
 import { apiRequest } from '../lib/api';
 
 // Re-export types from store for backwards compatibility
@@ -267,7 +267,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
   });
   const workflowCount = workflows.length;
 
-  // Billing status for credits display in sidebar
+  // Billing status (OrganizationPanel credits tab + masquerade banner)
   const { data: billingStatus } = useQuery({
     queryKey: ['billing', organization?.id],
     queryFn: async () => {
@@ -303,12 +303,6 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
     window.addEventListener('pending-changes-updated', handle);
     return () => window.removeEventListener('pending-changes-updated', handle);
   }, [fetchPendingCount, orgId]);
-
-  // React Query: Get team members for member count (single source of truth)
-  const { data: teamData } = useTeamMembers(
-    organization?.id ?? null,
-    user?.id ?? null
-  );
 
   // Get actions separately (they're stable and don't need shallow comparison)
   const setSidebarCollapsed = useAppStore((state) => state.setSidebarCollapsed);
@@ -1900,10 +1894,6 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
           currentChatId={currentChatId}
           onNewChat={startNewChat}
           organization={organization}
-          members={teamData?.members ?? []}
-          creditsDisplay={billingStatus ? { balance: billingStatus.credits_balance, included: billingStatus.credits_included } : null}
-          onOpenOrgPanel={() => { setOrgPanelTab('team'); setShowOrgPanel(true); }}
-          onOpenBilling={() => { setOrgPanelTab('billing'); setShowOrgPanel(true); }}
           onCreateNewOrg={onCreateNewOrg}
           onOpenProfilePanel={() => setShowProfilePanel(true)}
           isMobile={isMobile}
