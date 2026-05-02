@@ -72,7 +72,7 @@ function HelpButton(): JSX.Element {
           onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
         >
           <div
-            className="bg-surface-900 border border-surface-700 rounded-xl shadow-xl max-w-md w-full p-6"
+            className="bg-surface-900 rounded-xl shadow-2xl ring-1 ring-white/10 max-w-md w-full p-6"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-4">
@@ -340,7 +340,7 @@ function OrgSwitcherSection({
           <div
             ref={dropdownContentRef}
             role="menu"
-            className="fixed bg-surface-800 border border-surface-700 rounded-lg shadow-xl max-h-[min(85vh,640px)] overflow-y-auto z-[9999]"
+            className="fixed bg-surface-800 rounded-lg shadow-2xl ring-1 ring-white/10 max-h-[min(85vh,640px)] overflow-y-auto z-[9999]"
             style={{ top: dropdownRect.top, left: dropdownRect.left, width: dropdownRect.width }}
           >
             <div className="py-1">
@@ -373,7 +373,7 @@ function OrgSwitcherSection({
                   </button>
                 </div>
               ))}
-              <div className="border-t border-surface-700 my-1" />
+              <div className="h-2 shrink-0" aria-hidden />
               <div className="flex items-center justify-between px-3 py-2.5">
                 <span className="text-sm text-surface-400">New Team</span>
                 <button
@@ -386,7 +386,7 @@ function OrgSwitcherSection({
               </div>
               {isGlobalAdmin && (
                 <>
-                  <div className="border-t border-surface-700 my-1" />
+                  <div className="h-2 shrink-0" aria-hidden />
                   <button
                     type="button"
                     onClick={handleEnterGlobalAdmin}
@@ -410,7 +410,7 @@ function OrgSwitcherSection({
               )}
               {!isAdminConsole && (
                 <>
-                  <div className="border-t border-surface-700 my-1" />
+                  <div className="h-2 shrink-0" aria-hidden />
                   <div className="py-1" role="group" aria-label="Workspace">
                     <OrgDropdownWorkspaceRow
                       label="Home"
@@ -492,7 +492,7 @@ function OrgSwitcherSection({
                         </svg>
                       }
                     />
-                    <div className="border-t border-surface-700 my-1" />
+                    <div className="h-2 shrink-0" aria-hidden />
                     {isOrgAdmin && (
                       <OrgDropdownWorkspaceRow
                         label="Activity"
@@ -713,10 +713,10 @@ export function Sidebar({
   return (
     <aside
       style={{ width: widthPx }}
-      className="h-full bg-surface-900 border-r border-surface-800 flex flex-col transition-all duration-200 ease-in-out flex-shrink-0 overflow-hidden"
+      className="h-full bg-surface-900 flex flex-col transition-all duration-200 ease-in-out flex-shrink-0 overflow-hidden"
     >
       {/* Header: Organization identity */}
-      <div className="border-b border-surface-800 relative min-w-0 overflow-hidden flex-shrink-0">
+      <div className="relative min-w-0 overflow-hidden flex-shrink-0">
         {isMobile && (
           <button
             onClick={onCloseMobile}
@@ -742,7 +742,7 @@ export function Sidebar({
 
       {currentView !== 'admin' && (
       <>
-      <div className="px-2 py-2 flex-shrink-0 border-b border-surface-800">
+      <div className="px-2 py-2 flex-shrink-0">
         <button
           type="button"
           onClick={onNewChat}
@@ -788,12 +788,10 @@ export function Sidebar({
         </div>
       )}
 
-      {/* New Chat Button */}
       {/* Bottom Section */}
-      <div className="mt-auto border-t border-surface-800">
-        {/* User Profile + Help */}
+      <div className="mt-auto">
         {user && (
-          <div className="flex items-center border-t border-surface-800">
+          <div className="flex items-center">
             <button
               onClick={onOpenProfilePanel}
               className={`flex-1 min-w-0 flex items-center gap-3 px-3 py-3 hover:bg-surface-800/50 transition-colors ${collapsed ? 'justify-center' : ''}`}
@@ -1307,8 +1305,8 @@ function ChannelPersonalityPanel({
   return (
     <>
       <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
-      <div className="fixed right-0 top-0 bottom-0 w-full max-w-md bg-surface-900 border-l border-surface-800 z-50 flex flex-col shadow-2xl">
-        <header className="flex items-center justify-between px-6 py-4 border-b border-surface-800">
+      <div className="fixed right-0 top-0 bottom-0 w-full max-w-md bg-surface-900 z-50 flex flex-col shadow-2xl">
+        <header className="flex items-center justify-between px-6 py-4">
           <h2 className="font-semibold text-surface-100 truncate">{channelName}</h2>
           <button
             onClick={onClose}
