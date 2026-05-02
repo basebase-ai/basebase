@@ -2873,7 +2873,7 @@ export function Chat({
                       autoFocus={chatId === null}
                     />
 
-                    <div className="flex items-center justify-between gap-2 border-t border-surface-700/40 px-1.5 py-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2 px-1.5 pt-0 pb-1 min-w-0">
                       <div className="flex min-w-0 items-center gap-1.5">
                         {attachButton}
                         {modelLabel}
