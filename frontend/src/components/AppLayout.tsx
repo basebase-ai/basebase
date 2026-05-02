@@ -5,8 +5,8 @@
  * - Collapsible left sidebar (icons when collapsed)
  * - Slide-out drawer on mobile
  * - New Chat button
- * - Connectors tab with badge
- * - Chats tab with recent conversations
+ * - Org switcher dropdown includes workspace links (Connectors, Apps, etc.)
+ * - Recent conversations in sidebar
  * - Organization & Profile sections at bottom
  * 
  * Also manages global WebSocket connection for background task updates.
@@ -41,7 +41,7 @@ const DocumentsGallery = lazy(() => import('./documents/DocumentsGallery').then(
 import { APP_NAME, LOGO_PATH, RELEASE_STAGE } from '../lib/brand';
 import { ProfilePanel } from './ProfilePanel';
 import { useAppStore, useChatStore, useUIStore, useMasquerade, useIntegrations, useIsSwitchingOrg, useIsGlobalAdmin, useIsOrgAdmin, type ActiveTask, type AdminPanelTab, type ToolCallData, type ChatMessage, type ContentBlock, type View, type Participant } from '../store';
-import { useTeamMembers, useWebSocket } from '../hooks';
+import { useWebSocket } from '../hooks';
 import { apiRequest } from '../lib/api';
 
 // Re-export types from store for backwards compatibility
@@ -267,7 +267,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
   });
   const workflowCount = workflows.length;
 
-  // Billing status for credits display in sidebar
+  // Billing status (OrganizationPanel credits tab + masquerade banner)
   const { data: billingStatus } = useQuery({
     queryKey: ['billing', organization?.id],
     queryFn: async () => {
@@ -303,12 +303,6 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
     window.addEventListener('pending-changes-updated', handle);
     return () => window.removeEventListener('pending-changes-updated', handle);
   }, [fetchPendingCount, orgId]);
-
-  // React Query: Get team members for member count (single source of truth)
-  const { data: teamData } = useTeamMembers(
-    organization?.id ?? null,
-    user?.id ?? null
-  );
 
   // Get actions separately (they're stable and don't need shallow comparison)
   const setSidebarCollapsed = useAppStore((state) => state.setSidebarCollapsed);
@@ -1815,10 +1809,10 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
   };
 
   return (
-    <div className="h-full flex flex-col bg-surface-950 overflow-hidden">
+    <div className="h-full flex flex-col bg-surface-900 overflow-hidden">
       {/* Masquerade Banner */}
       {masquerade && (
-        <div className="bg-amber-500/20 dark:bg-amber-500/20 border-b border-amber-500/30 px-4 py-2 flex items-center justify-between flex-shrink-0">
+        <div className="bg-amber-500/20 dark:bg-amber-500/20 px-4 py-2 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -1844,7 +1838,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
       <div className="flex-1 flex flex-col md:flex-row min-h-0 overflow-hidden">
       {/* Mobile Header */}
       {isMobile && (
-        <header className="h-14 bg-surface-900 border-b border-surface-800 flex items-center justify-between px-4 flex-shrink-0">
+        <header className="h-14 bg-surface-950 flex items-center justify-between px-4 flex-shrink-0">
           <button
             onClick={() => setMobileSidebarOpen(true)}
             className="p-2 -ml-2 rounded-lg text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors"
@@ -1900,10 +1894,6 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
           currentChatId={currentChatId}
           onNewChat={startNewChat}
           organization={organization}
-          members={teamData?.members ?? []}
-          creditsDisplay={billingStatus ? { balance: billingStatus.credits_balance, included: billingStatus.credits_included } : null}
-          onOpenOrgPanel={() => { setOrgPanelTab('team'); setShowOrgPanel(true); }}
-          onOpenBilling={() => { setOrgPanelTab('billing'); setShowOrgPanel(true); }}
           onCreateNewOrg={onCreateNewOrg}
           onOpenProfilePanel={() => setShowProfilePanel(true)}
           isMobile={isMobile}
@@ -1924,7 +1914,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
       <main className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
         {orgAccessError ? (
           <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-            <div className="max-w-md rounded-lg border border-surface-600 bg-surface-900/80 p-6 shadow-lg">
+            <div className="max-w-md rounded-lg bg-surface-900/80 p-6 shadow-2xl ring-1 ring-white/10">
               <h2 className="text-lg font-semibold text-surface-100">
                 You don&apos;t have access to this organization
               </h2>
@@ -1948,7 +1938,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
           <>
         {/* Release Stage Banner */}
         {RELEASE_STAGE.stage && showReleaseBanner && (
-          <div className="flex-shrink-0 px-4 md:px-6 py-3 bg-primary-500/10 border-b border-primary-500/20">
+          <div className="flex-shrink-0 px-4 md:px-6 py-3 bg-primary-500/10">
             <div className="flex items-center justify-between gap-3 max-w-7xl mx-auto">
               <p className="text-sm text-surface-300 min-w-0 flex-1 leading-relaxed">
                 <span className="text-primary-400 font-semibold mr-2">

@@ -113,7 +113,7 @@ interface ToolApprovalState {
 const AGENT_AVATAR_PATH: string = '/basebase_logo_reverse-256.png';
 const CHAT_MSG_ROW: string =
   'group/msg flex items-start gap-3 px-5 -mx-5 hover:bg-black/[0.035] dark:hover:bg-surface-800/40 transition-colors';
-const CHAT_MSG_AVATAR: string = 'flex-shrink-0 !w-9 !h-9 !rounded-lg mt-px';
+const CHAT_MSG_AVATAR: string = 'flex-shrink-0 !w-9 !h-9 !rounded-full mt-px';
 const CHAT_MSG_AVATAR_SPACER: string = 'w-9 flex-shrink-0 mt-px';
 const CHAT_MSG_NAME: string =
   'text-[15px] font-bold leading-tight text-surface-50 dark:text-surface-50 tracking-[-0.015em]';
@@ -1974,17 +1974,17 @@ export function Chat({
           <div className="h-5 w-48 rounded bg-surface-800 animate-pulse" />
         </header>
 
-        <div className="flex-1 overflow-hidden p-3 md:p-6">
+        <div className="flex-1 overflow-hidden px-4 py-3 md:p-5">
           <div className="space-y-6">
-            <div className="flex gap-3">
-              <div className="w-7 h-7 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-0.5" />
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-px" />
               <div className="space-y-2 flex-1 max-w-[65%]">
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-4/5" />
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-3/5" />
               </div>
             </div>
-            <div className="flex gap-3">
-              <div className="w-7 h-7 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-0.5" />
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-px" />
               <div className="space-y-2 flex-1 max-w-[80%]">
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-full" style={{ animationDelay: '75ms' }} />
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-11/12" style={{ animationDelay: '150ms' }} />
@@ -1992,14 +1992,14 @@ export function Chat({
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-5/6" style={{ animationDelay: '300ms' }} />
               </div>
             </div>
-            <div className="flex gap-3">
-              <div className="w-7 h-7 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-0.5" />
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-px" />
               <div className="space-y-2 flex-1 max-w-[55%]">
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-full" style={{ animationDelay: '375ms' }} />
               </div>
             </div>
-            <div className="flex gap-3">
-              <div className="w-7 h-7 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-0.5" />
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-px" />
               <div className="space-y-2 flex-1 max-w-[75%]">
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-full" style={{ animationDelay: '450ms' }} />
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-5/6" style={{ animationDelay: '525ms' }} />
@@ -2009,7 +2009,7 @@ export function Chat({
           </div>
         </div>
 
-        <div className="flex-shrink-0 border-t border-surface-800 p-3 md:p-4">
+        <div className="flex-shrink-0 border-t border-surface-800 px-4 md:px-5 pb-4 pt-1">
           <div>
             <div className="h-11 rounded-xl bg-surface-800 animate-pulse" />
           </div>
@@ -2504,7 +2504,7 @@ export function Chat({
                 />
               </div>
             )}
-            <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto overflow-x-hidden p-3 md:p-5">
+            <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto overflow-x-hidden px-4 py-3 md:p-5">
             {!userId && (
               <div className="mb-3 rounded-lg border border-amber-600/50 bg-amber-900/20 px-3 py-2 text-sm text-amber-200">
                 User context is missing — artifacts and apps may not save correctly. Please refresh or re-sign in.
@@ -2650,7 +2650,7 @@ export function Chat({
       </div>
 
       {/* Composer */}
-      <div className="px-3 md:px-5 pb-4 pt-1">
+      <div className="px-4 md:px-5 pb-4 pt-1">
         <div className="relative">
           <div
             className={`absolute left-0 bottom-full mb-1 min-w-[14rem] max-w-sm max-h-44 overflow-y-auto rounded-lg border border-surface-700 bg-surface-900 shadow-lg z-50 ${
@@ -2873,7 +2873,7 @@ export function Chat({
                       autoFocus={chatId === null}
                     />
 
-                    <div className="flex items-center justify-between gap-2 border-t border-surface-700/40 px-1.5 py-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2 px-1.5 pt-0 pb-1 min-w-0">
                       <div className="flex min-w-0 items-center gap-1.5">
                         {attachButton}
                         {modelLabel}

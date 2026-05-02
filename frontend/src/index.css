@@ -1,16 +1,22 @@
-/* Surface scale via CSS variables: :root = light (inverted mapping), .dark = dark UI */
+/*
+ * Surface scale via CSS variables: :root = light, .dark = dark UI.
+ * Light theme maps design tokens onto Tailwind surface-* usage:
+ *   paper (#f6f3ec) → page (surface-950), paper-2 (#fbf8f1) → cards (surface-900),
+ *   paper-dim (#efeadf) → muted / inline code shells (surface-800),
+ *   rule (#d9d2c2) → hairlines (surface-700). Darker steps are derived for text.
+ */
 :root {
-  --surface-50: #09090b;
-  --surface-100: #18181b;
-  --surface-200: #27272a;
-  --surface-300: #3f3f46;
-  --surface-400: #52525b;
-  --surface-500: #71717a;
-  --surface-600: #a1a1aa;
-  --surface-700: #d4d4d8;
-  --surface-800: #e4e4e7;
-  --surface-900: #f4f4f5;
-  --surface-950: #fafafa;
+  --surface-50: #171513;
+  --surface-100: #3c3832;
+  --surface-200: #554e47;
+  --surface-300: #6e665d;
+  --surface-400: #887e71;
+  --surface-500: #a39687;
+  --surface-600: #bfb4a5;
+  --surface-700: #d9d2c2;
+  --surface-800: #f6f2e8;
+  --surface-900: #ffffff;
+  --surface-950: #fdfcf8;
   color-scheme: light;
 }
 

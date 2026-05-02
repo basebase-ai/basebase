@@ -516,7 +516,7 @@ export function DailyDigestGrid({ digestDate, onDigestDateChange }: DailyDigestG
       ) : null}
 
       {error ? (
-        <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-red-300 text-sm">{error}</div>
+        <div className="px-1 py-2 text-sm text-red-500">{error}</div>
       ) : null}
 
       {loading ? (

@@ -14,6 +14,7 @@ from api.routes.public import (
     _public_preview_title,
     share_router,
 )
+from config import settings
 from api.routes.artifacts import _generate_chart_html, get_artifact
 from starlette.routing import Match
 from services.public_previews import build_preview_html, decode_data_url_image, render_card_png
@@ -136,7 +137,8 @@ def test_public_preview_title_falls_back_when_artifact_title_missing() -> None:
     assert title == "Shared Document · Basebase"
 
 
-def test_public_origin_prefers_forwarded_proxy_headers() -> None:
+def test_public_origin_prefers_forwarded_proxy_headers(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "BACKEND_PUBLIC_URL", "")
     request = SimpleNamespace(
         headers={"x-forwarded-proto": "https", "x-forwarded-host": "app.basebase.com"},
         url=SimpleNamespace(scheme="http", netloc="internal:8000"),
