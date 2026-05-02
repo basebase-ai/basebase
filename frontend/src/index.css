@@ -1,19 +1,22 @@
 /*
  * Surface scale via CSS variables: :root = light, .dark = dark UI.
- * Light theme uses a warm “vellum” ramp (cream paper, brown-gray text) similar to Claude’s calm UI.
+ * Light theme maps design tokens onto Tailwind surface-* usage:
+ *   paper (#f6f3ec) → page (surface-950), paper-2 (#fbf8f1) → cards (surface-900),
+ *   paper-dim (#efeadf) → muted / inline code shells (surface-800),
+ *   rule (#d9d2c2) → hairlines (surface-700). Darker steps are derived for text.
  */
 :root {
-  --surface-50: #1a1714;
-  --surface-100: #3d3834;
-  --surface-200: #524a44;
-  --surface-300: #6b6159;
-  --surface-400: #857a71;
-  --surface-500: #9e9288;
-  --surface-600: #b8aea4;
-  --surface-700: #d4cbc2;
-  --surface-800: #e8e0d6;
-  --surface-900: #f3ece4;
-  --surface-950: #faf6ef;
+  --surface-50: #171513;
+  --surface-100: #3c3832;
+  --surface-200: #554e47;
+  --surface-300: #6e665d;
+  --surface-400: #887e71;
+  --surface-500: #a39687;
+  --surface-600: #bfb4a5;
+  --surface-700: #d9d2c2;
+  --surface-800: #efeadf;
+  --surface-900: #fbf8f1;
+  --surface-950: #f6f3ec;
   color-scheme: light;
 }
 
