@@ -822,7 +822,7 @@ function ChatAccordion({
   const isSectionCollapsed = (sectionKey: string): boolean => {
     const explicit = collapsedSections[sectionKey];
     if (typeof explicit === 'boolean') return explicit;
-    return sectionKey !== 'direct';
+    return false;
   };
 
   const toggleSection = (sectionKey: string): void => {
@@ -831,7 +831,7 @@ function ChatAccordion({
       [sectionKey]:
         typeof prev[sectionKey] === 'boolean'
           ? !prev[sectionKey]
-          : sectionKey === 'direct',
+          : true,
     }));
   };
 
@@ -1016,7 +1016,7 @@ function SidebarSectionHeader({
   onOptionsClick?: () => void;
 }): JSX.Element {
   return (
-    <div className="group/section px-1 pt-1.5 pb-0.5 flex items-center gap-1">
+    <div className="group/section flex items-center gap-1 px-1 pt-1.5 pb-0.5">
       <button
         type="button"
         onClick={onToggle}
@@ -1024,8 +1024,11 @@ function SidebarSectionHeader({
         aria-expanded={!collapsed}
         aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${title}`}
       >
+        <h3 className="truncate text-[10px] uppercase tracking-wider text-surface-500/80 font-medium flex-1">
+          {title}
+        </h3>
         <svg
-          className={`w-3 h-3 text-surface-500 transition-transform ${collapsed ? '' : 'rotate-180'}`}
+          className={`w-3 h-3 text-surface-500/60 transition-transform shrink-0 ${collapsed ? '' : 'rotate-180'}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -1033,12 +1036,11 @@ function SidebarSectionHeader({
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
-        <h3 className="truncate text-[10px] uppercase tracking-wider text-surface-500 font-semibold">{title}</h3>
       </button>
       {onOptionsClick && (
         <button
           type="button"
-          className="hidden group-hover/section:inline-flex p-0.5 rounded text-surface-500 hover:bg-surface-800/60 hover:text-surface-300 transition-colors"
+          className="invisible group-hover/section:visible p-0.5 rounded text-surface-500 hover:bg-surface-800/60 hover:text-surface-300 transition-colors"
           aria-label={`${title} options`}
           onClick={onOptionsClick}
         >
