@@ -660,11 +660,11 @@ export function Sidebar({
       )}
 
       {/* Bottom Section */}
-      <div className="mt-auto">
+      <div className="mt-auto bg-surface-900/40">
         {user && (
           <button
             onClick={onOpenProfilePanel}
-            className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-surface-800/50 transition-colors ${collapsed ? 'justify-center' : ''}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-surface-800/60 transition-colors ${collapsed ? 'justify-center' : ''}`}
           >
             <Avatar user={user} size="md" />
             {!collapsed && (
@@ -689,10 +689,10 @@ function formatRelativeTime(date: Date): string {
   const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
+  if (diffMins < 1) return 'now';
+  if (diffMins < 60) return `${diffMins}m`;
+  if (diffHours < 24) return `${diffHours}h`;
+  if (diffDays < 7) return `${diffDays}d`;
   return date.toLocaleDateString();
 }
 
@@ -822,7 +822,7 @@ function ChatAccordion({
   const isSectionCollapsed = (sectionKey: string): boolean => {
     const explicit = collapsedSections[sectionKey];
     if (typeof explicit === 'boolean') return explicit;
-    return sectionKey !== 'direct';
+    return false;
   };
 
   const toggleSection = (sectionKey: string): void => {
@@ -831,33 +831,38 @@ function ChatAccordion({
       [sectionKey]:
         typeof prev[sectionKey] === 'boolean'
           ? !prev[sectionKey]
-          : sectionKey === 'direct',
+          : true,
     }));
   };
 
-  const renderChatItem = (chat: ChatSummary, itemKey: string): JSX.Element => {
-    const hasActiveTask = chat.id in activeTasksByConversation;
-    const isUnread = unreadConversationIds.has(chat.id);
+  const renderChatItem = (chat: ChatSummary, itemKey: string, options?: { suppressLockIcon?: boolean }): JSX.Element => {
+    const hasActiveTask: boolean = chat.id in activeTasksByConversation;
+    const isUnread: boolean = unreadConversationIds.has(chat.id);
+    const suppressLockIcon: boolean = options?.suppressLockIcon ?? false;
+
+    const isActive: boolean = currentChatId === chat.id;
+    const hasParticipants: boolean =
+      chat.scope === 'shared' && (chat.participants?.length ?? 0) > 0;
 
     return (
       <div
         key={itemKey}
-        className={`relative w-full text-left px-2 py-1 rounded-md transition-colors cursor-pointer leading-tight ${
-          currentChatId === chat.id
+        className={`group/chat relative w-full text-left px-2 py-1.5 rounded-md transition-colors cursor-pointer leading-tight min-h-[32px] flex items-center ${
+          isActive
             ? 'bg-surface-800 text-surface-100'
-            : 'text-surface-400 hover:text-surface-200 hover:bg-surface-800/50'
+            : 'text-surface-300 hover:text-surface-100 hover:bg-surface-800/70'
         }`}
         onClick={() => onSelectChat(chat.id)}
         onMouseEnter={() => {
-          if (currentChatId === chat.id) return;
+          if (isActive) return;
           hoverTimerRef.current = setTimeout(() => prefetchConversation(chat.id), 100);
         }}
         onMouseLeave={() => {
           if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
         }}
       >
-        <div className="flex items-center gap-1">
-          {chat.scope === 'private' && (
+        <div className="flex-1 min-w-0 flex items-center gap-1.5">
+          {chat.scope === 'private' && !suppressLockIcon && (
             <span className="flex shrink-0 text-surface-500" title="Private">
               <ScopeLockIcon className="w-3 h-3" />
             </span>
@@ -867,12 +872,12 @@ function ChatAccordion({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
           )}
-          <div className="truncate text-sm flex-1 leading-tight">
+          <div className="truncate text-[15px] flex-1 leading-tight">
             {chat.title}
           </div>
           {isUnread && (
             <span
-              className="h-3 w-3 shrink-0 rounded-full bg-primary-500 [background-image:none]"
+              className="h-2.5 w-2.5 shrink-0 rounded-full bg-primary-500 [background-image:none]"
               title="Unread"
               aria-label="Unread"
             />
@@ -884,32 +889,36 @@ function ChatAccordion({
             </svg>
           )}
         </div>
-        <div className="flex items-center gap-1.5 mt-1.5 leading-none">
-          {chat.scope === 'shared' && chat.participants && chat.participants.length > 0 && (
+        {/* Hover metadata: absolute so it never affects row height or width. */}
+        <div
+          className={`hidden group-hover/chat:flex absolute right-2 top-1/2 -translate-y-1/2 items-center gap-1.5 leading-none rounded-md pl-3 pr-1 ${
+            isActive ? 'bg-surface-800' : 'bg-surface-800/85'
+          }`}
+        >
+          <span className="text-xs text-surface-500">
+            {formatRelativeTime(chat.lastMessageAt)}
+          </span>
+          {hasParticipants && (
             <div className="flex -space-x-1">
-              {chat.participants.slice(0, 3).map((p, idx) => (
+              {chat.participants!.slice(0, 3).map((p, idx) => (
                 <Avatar
                   key={p.id}
                   user={p}
                   size="xs"
                   bordered
-                  className="!w-4 !h-4 !text-[8px]"
                   style={{ zIndex: 3 - idx }}
                 />
               ))}
-              {chat.participants.length > 3 && (
+              {chat.participants!.length > 3 && (
                 <div
-                  className="w-4 h-4 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[8px] font-medium text-surface-300"
-                  title={`${chat.participants.length - 3} more`}
+                  className="w-5 h-5 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[10px] font-medium text-surface-300"
+                  title={`${chat.participants!.length - 3} more`}
                 >
-                  +{chat.participants.length - 3}
+                  +{chat.participants!.length - 3}
                 </div>
               )}
             </div>
           )}
-          <span className="text-xs text-surface-500">
-            {formatRelativeTime(chat.lastMessageAt)}
-          </span>
         </div>
       </div>
     );
@@ -937,7 +946,7 @@ function ChatAccordion({
                   collapsed={isSectionCollapsed('direct')}
                   onToggle={() => toggleSection('direct')}
                 />
-                {!isSectionCollapsed('direct') && groupedSidebarChats.direct.map((chat) => renderChatItem(chat, `direct-${chat.id}`))}
+                {!isSectionCollapsed('direct') && groupedSidebarChats.direct.map((chat) => renderChatItem(chat, `direct-${chat.id}`, { suppressLockIcon: true }))}
               </>
             )}
             {groupedSidebarChats.channels.map((channel) => (
@@ -1007,38 +1016,49 @@ function SidebarSectionHeader({
   onOptionsClick?: () => void;
 }): JSX.Element {
   return (
-    <div className="px-1 pt-2 pb-1 flex items-center gap-1">
+    <div className="group/section flex items-center gap-1 px-1 pt-1.5 pb-0.5 min-h-[26px]">
       <button
         type="button"
         onClick={onToggle}
-        className="flex-1 min-w-0 px-1 py-0.5 rounded-md hover:bg-surface-800/60 transition-colors flex items-center gap-1.5 text-left"
+        className="flex-1 min-w-0 px-1 py-0 rounded-md hover:bg-surface-800/60 transition-colors text-left"
         aria-expanded={!collapsed}
         aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${title}`}
       >
-        <svg
-          className={`w-3 h-3 text-surface-500 transition-transform ${collapsed ? '' : 'rotate-90'}`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-        </svg>
-        <h3 className="truncate text-[10px] uppercase tracking-wider text-surface-500 font-semibold">{title}</h3>
+        <h3 className="truncate text-[10px] uppercase tracking-wider text-primary-500/85 font-semibold">
+          {title}
+        </h3>
       </button>
       {onOptionsClick && (
         <button
           type="button"
-          className="p-1 rounded-md text-surface-500 hover:bg-surface-800/60 hover:text-surface-300 transition-colors"
+          className="invisible group-hover/section:visible p-0.5 rounded text-surface-500 hover:bg-surface-800/60 hover:text-surface-300 transition-colors shrink-0"
           aria-label={`${title} options`}
           onClick={onOptionsClick}
         >
-          <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="5" cy="12" r="1.8" />
             <circle cx="12" cy="12" r="1.8" />
             <circle cx="19" cy="12" r="1.8" />
           </svg>
         </button>
       )}
+      <button
+        type="button"
+        onClick={onToggle}
+        className="shrink-0 p-0.5 rounded text-primary-500/60 hover:text-primary-500 hover:bg-surface-800/60 transition-colors"
+        aria-label={collapsed ? `Expand ${title}` : `Collapse ${title}`}
+        aria-expanded={!collapsed}
+      >
+        <svg
+          className={`w-3 h-3 transition-transform ${collapsed ? '' : 'rotate-180'}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          aria-hidden
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
     </div>
   );
 }
