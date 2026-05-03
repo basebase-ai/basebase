@@ -660,11 +660,11 @@ export function Sidebar({
       )}
 
       {/* Bottom Section */}
-      <div className="mt-auto">
+      <div className="mt-auto bg-surface-900/40">
         {user && (
           <button
             onClick={onOpenProfilePanel}
-            className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-surface-800/50 transition-colors ${collapsed ? 'justify-center' : ''}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-surface-800/60 transition-colors ${collapsed ? 'justify-center' : ''}`}
           >
             <Avatar user={user} size="md" />
             {!collapsed && (
@@ -835,9 +835,10 @@ function ChatAccordion({
     }));
   };
 
-  const renderChatItem = (chat: ChatSummary, itemKey: string): JSX.Element => {
-    const hasActiveTask = chat.id in activeTasksByConversation;
-    const isUnread = unreadConversationIds.has(chat.id);
+  const renderChatItem = (chat: ChatSummary, itemKey: string, options?: { suppressLockIcon?: boolean }): JSX.Element => {
+    const hasActiveTask: boolean = chat.id in activeTasksByConversation;
+    const isUnread: boolean = unreadConversationIds.has(chat.id);
+    const suppressLockIcon: boolean = options?.suppressLockIcon ?? false;
 
     const isActive: boolean = currentChatId === chat.id;
     const hasParticipants: boolean =
@@ -849,7 +850,7 @@ function ChatAccordion({
         className={`group/chat relative w-full text-left px-2 py-1.5 rounded-md transition-colors cursor-pointer leading-tight ${
           isActive
             ? 'bg-surface-800 text-surface-100'
-            : 'text-surface-400 hover:text-surface-200 hover:bg-surface-800/50'
+            : 'text-surface-400 hover:text-surface-200 hover:bg-surface-800/70'
         }`}
         onClick={() => onSelectChat(chat.id)}
         onMouseEnter={() => {
@@ -861,7 +862,7 @@ function ChatAccordion({
         }}
       >
         <div className="flex items-center gap-1.5 min-w-0">
-          {chat.scope === 'private' && (
+          {chat.scope === 'private' && !suppressLockIcon && (
             <span className="flex shrink-0 text-surface-500" title="Private">
               <ScopeLockIcon className="w-3 h-3" />
             </span>
@@ -940,7 +941,7 @@ function ChatAccordion({
                   collapsed={isSectionCollapsed('direct')}
                   onToggle={() => toggleSection('direct')}
                 />
-                {!isSectionCollapsed('direct') && groupedSidebarChats.direct.map((chat) => renderChatItem(chat, `direct-${chat.id}`))}
+                {!isSectionCollapsed('direct') && groupedSidebarChats.direct.map((chat) => renderChatItem(chat, `direct-${chat.id}`, { suppressLockIcon: true }))}
               </>
             )}
             {groupedSidebarChats.channels.map((channel) => (
@@ -1010,28 +1011,29 @@ function SidebarSectionHeader({
   onOptionsClick?: () => void;
 }): JSX.Element {
   return (
-    <div className="px-1 pt-2 pb-1 flex items-center gap-1">
+    <div className="group/section px-1 pt-1.5 pb-0.5 flex items-center gap-1">
       <button
         type="button"
         onClick={onToggle}
-        className="flex-1 min-w-0 px-1 py-0.5 rounded-md hover:bg-surface-800/60 transition-colors flex items-center gap-1.5 text-left"
+        className="flex-1 min-w-0 px-1 py-0 rounded-md hover:bg-surface-800/60 transition-colors flex items-center gap-1.5 text-left"
         aria-expanded={!collapsed}
         aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${title}`}
       >
         <svg
-          className={`w-3 h-3 text-surface-500 transition-transform ${collapsed ? '' : 'rotate-90'}`}
+          className={`w-3 h-3 text-surface-500 transition-transform ${collapsed ? '' : 'rotate-180'}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
+          aria-hidden
         >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
         <h3 className="truncate text-[10px] uppercase tracking-wider text-surface-500 font-semibold">{title}</h3>
       </button>
       {onOptionsClick && (
         <button
           type="button"
-          className="p-1 rounded-md text-surface-500 hover:bg-surface-800/60 hover:text-surface-300 transition-colors"
+          className="hidden group-hover/section:inline-flex p-1 rounded-md text-surface-500 hover:bg-surface-800/60 hover:text-surface-300 transition-colors"
           aria-label={`${title} options`}
           onClick={onOptionsClick}
         >
