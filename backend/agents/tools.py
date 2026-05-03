@@ -703,7 +703,7 @@ def _build_cross_user_connector_warning(
     """Return a user-facing warning when we used a teammate's connector."""
     if not requester_user_id:
         return None
-    if connector_slug in {"slack", "teams"}:
+    if connector_slug in {"slack", "teams", "apps", "web_search"}:
         return None
 
     raw_integration_user_id: Any = getattr(connector_instance, "user_id", None)
