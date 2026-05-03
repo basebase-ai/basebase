@@ -2590,10 +2590,16 @@ async def update_organization(
 
 
 @router.get("/llm-options")
-async def get_llm_options() -> dict[str, str | dict[str, str]]:
-    """Return model→provider map from ALL_MODEL_STRINGS."""
-    from services.llm_provider import get_model_provider_map
-    return {"models": get_model_provider_map()}
+async def get_llm_options() -> dict[str, str | dict[str, str] | dict[str, int] | int]:
+    """Return LLM model metadata for settings and chat context UI."""
+    from services.llm_provider import get_model_max_tokens_map, get_model_provider_map
+
+    default_max_tokens: int = 200_000
+    return {
+        "models": get_model_provider_map(),
+        "model_max_tokens": get_model_max_tokens_map(default_max_tokens=default_max_tokens),
+        "default_max_tokens": default_max_tokens,
+    }
 
 
 @router.get("/organizations/{org_id}", response_model=OrganizationResponse)
