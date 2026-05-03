@@ -888,32 +888,37 @@ function ChatAccordion({
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
           )}
-          <div className="hidden group-hover/chat:flex items-center gap-1.5 leading-none flex-shrink-0">
-            <span className="text-xs text-surface-500">
-              {formatRelativeTime(chat.lastMessageAt)}
-            </span>
-            {hasParticipants && (
-              <div className="flex -space-x-1">
-                {chat.participants!.slice(0, 3).map((p, idx) => (
-                  <Avatar
-                    key={p.id}
-                    user={p}
-                    size="xs"
-                    bordered
-                    style={{ zIndex: 3 - idx }}
-                  />
-                ))}
-                {chat.participants!.length > 3 && (
-                  <div
-                    className="w-5 h-5 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[10px] font-medium text-surface-300"
-                    title={`${chat.participants!.length - 3} more`}
-                  >
-                    +{chat.participants!.length - 3}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+        </div>
+        {/* Hover metadata: absolute so it never affects row height or width. */}
+        <div
+          className={`hidden group-hover/chat:flex absolute right-2 top-1/2 -translate-y-1/2 items-center gap-1.5 leading-none rounded-md pl-3 pr-1 ${
+            isActive ? 'bg-surface-800' : 'bg-surface-800/85'
+          }`}
+        >
+          <span className="text-xs text-surface-500">
+            {formatRelativeTime(chat.lastMessageAt)}
+          </span>
+          {hasParticipants && (
+            <div className="flex -space-x-1">
+              {chat.participants!.slice(0, 3).map((p, idx) => (
+                <Avatar
+                  key={p.id}
+                  user={p}
+                  size="xs"
+                  bordered
+                  style={{ zIndex: 3 - idx }}
+                />
+              ))}
+              {chat.participants!.length > 3 && (
+                <div
+                  className="w-5 h-5 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[10px] font-medium text-surface-300"
+                  title={`${chat.participants!.length - 3} more`}
+                >
+                  +{chat.participants!.length - 3}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1033,11 +1038,11 @@ function SidebarSectionHeader({
       {onOptionsClick && (
         <button
           type="button"
-          className="hidden group-hover/section:inline-flex p-1 rounded-md text-surface-500 hover:bg-surface-800/60 hover:text-surface-300 transition-colors"
+          className="hidden group-hover/section:inline-flex p-0.5 rounded text-surface-500 hover:bg-surface-800/60 hover:text-surface-300 transition-colors"
           aria-label={`${title} options`}
           onClick={onOptionsClick}
         >
-          <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="5" cy="12" r="1.8" />
             <circle cx="12" cy="12" r="1.8" />
             <circle cx="19" cy="12" r="1.8" />
