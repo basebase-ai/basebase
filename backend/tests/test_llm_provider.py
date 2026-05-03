@@ -135,3 +135,20 @@ def test_resolve_llm_config_infers_provider_from_model_prefix_when_allowlist_omi
     assert config.provider == "openai"
     assert config.primary_model == "gpt-5.5"
     assert config.cheap_model == "gpt-5.5-mini"
+
+
+def test_get_model_max_tokens_map_uses_explicit_windows_and_defaults(monkeypatch) -> None:
+    from services import llm_provider
+
+    monkeypatch.setattr(
+        llm_provider.settings,
+        "ALL_MODEL_STRINGS",
+        "claude-opus-4-6:anthropic,gpt-5.5:openai,qwen3.6-plus:alibaba,random-model:openai",
+    )
+
+    max_tokens_map = llm_provider.get_model_max_tokens_map(default_max_tokens=200_000)
+
+    assert max_tokens_map["claude-opus-4-6"] == 1_000_000
+    assert max_tokens_map["gpt-5.5"] == 1_000_000
+    assert max_tokens_map["qwen3.6-plus"] == 1_000_000
+    assert max_tokens_map["random-model"] == 200_000

@@ -303,6 +303,24 @@ def get_model_provider_map() -> dict[str, str]:
     return _parse_model_map()
 
 
+def get_model_max_tokens_map(default_max_tokens: int = 200_000) -> dict[str, int]:
+    """Return model→context-window map for UI context progress calculations.
+
+    Models not explicitly listed should use ``default_max_tokens`` on the client.
+    """
+    raw_model_map: dict[str, str] = _parse_model_map()
+    explicit_windows: dict[str, int] = {
+        "claude-opus-4-6": 1_000_000,
+        "gpt-5.5": 1_000_000,
+        "gpt5.5": 1_000_000,
+        "qwen3.6-plus": 1_000_000,
+    }
+    return {
+        model_name: explicit_windows.get(model_name, default_max_tokens)
+        for model_name in raw_model_map
+    }
+
+
 def get_allowed_models() -> list[str]:
     """Return the allowlist of model names from ALL_MODEL_STRINGS.
 

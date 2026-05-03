@@ -105,6 +105,9 @@ interface ToolApprovalState {
   result: WsToolApprovalResult | null;
 }
 
+const DEFAULT_MODEL_MAX_TOKENS = 200_000;
+const ONE_MILLION_TOKEN_MODELS = new Set<string>(['claude-opus-4-6', 'gpt-5.5', 'gpt5.5', 'qwen3.6-plus']);
+
 /**
  * Slack-like message thread typography & layout.
  * NOTE: :root light mode uses an inverted surface scale (see index.css): low numbers = dark ink,
@@ -492,6 +495,8 @@ export function Chat({
   const [currentAttachmentId, setCurrentAttachmentId] = useState<string | null>(null);
   const [currentAttachmentMeta, setCurrentAttachmentMeta] = useState<{ filename: string; mimeType: string } | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [modelMaxTokensMap, setModelMaxTokensMap] = useState<Record<string, number>>({});
+  const [defaultModelMaxTokens, setDefaultModelMaxTokens] = useState<number>(DEFAULT_MODEL_MAX_TOKENS);
 
   // App preview panel state
   const [previewAppId, setPreviewAppId] = useState<string | null>(null);
@@ -515,6 +520,32 @@ export function Chat({
   const [headerTitleDraft, setHeaderTitleDraft] = useState('');
   const headerTitleInputRef = useRef<HTMLInputElement>(null);
   const scopePatchInFlightRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadModelWindows = async (): Promise<void> => {
+      const { data, error } = await apiRequest<{
+        model_max_tokens?: Record<string, number>;
+        default_max_tokens?: number;
+      }>('/auth/llm-options', { cache: 'no-store' });
+      if (cancelled || error) return;
+      setModelMaxTokensMap(data?.model_max_tokens ?? {});
+      setDefaultModelMaxTokens(data?.default_max_tokens ?? DEFAULT_MODEL_MAX_TOKENS);
+    };
+    void loadModelWindows();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const activeModelMaxTokens: number = useMemo(() => {
+    const modelName = activeModelName?.trim();
+    if (!modelName) return defaultModelMaxTokens;
+    if (modelMaxTokensMap[modelName] != null) return modelMaxTokensMap[modelName];
+    const normalizedModel = modelName.toLowerCase();
+    if (ONE_MILLION_TOKEN_MODELS.has(normalizedModel)) return 1_000_000;
+    return defaultModelMaxTokens;
+  }, [activeModelName, defaultModelMaxTokens, modelMaxTokensMap]);
   const [conversationParticipants, setConversationParticipants] = useState<Array<{
     id: string;
     name: string | null;
@@ -2200,9 +2231,9 @@ export function Chat({
             </span>
           )}
           {(() => {
-            const contextPct = (conversationState?.contextTokens ?? 0) / 200_000;
+            const contextPct = (conversationState?.contextTokens ?? 0) / activeModelMaxTokens;
             return conversationState?.contextTokens != null ? (
-              <div className="flex items-center gap-1.5 ml-2" title={`${Math.round(contextPct * 100)}% context used (${(conversationState.contextTokens / 1000).toFixed(0)}k / 200k tokens)`}>
+              <div className="flex items-center gap-1.5 ml-2" title={`${Math.round(contextPct * 100)}% context used (${(conversationState.contextTokens / 1000).toFixed(0)}k / ${(activeModelMaxTokens / 1000).toFixed(0)}k tokens)`}>
                 <div className="w-16 h-1.5 bg-surface-700 rounded-full overflow-hidden">
                   <div
                     className={`h-full rounded-full transition-all ${
