@@ -847,10 +847,10 @@ function ChatAccordion({
     return (
       <div
         key={itemKey}
-        className={`group/chat relative w-full text-left px-2 py-1.5 rounded-md transition-colors cursor-pointer leading-tight ${
+        className={`group/chat relative w-full text-left px-2 py-1.5 rounded-md transition-colors cursor-pointer leading-tight min-h-[32px] flex items-center ${
           isActive
             ? 'bg-surface-800 text-surface-100'
-            : 'text-surface-400 hover:text-surface-200 hover:bg-surface-800/70'
+            : 'text-surface-300 hover:text-surface-100 hover:bg-surface-800/70'
         }`}
         onClick={() => onSelectChat(chat.id)}
         onMouseEnter={() => {
@@ -861,7 +861,7 @@ function ChatAccordion({
           if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
         }}
       >
-        <div className="flex items-center gap-1.5 min-w-0">
+        <div className="flex-1 min-w-0 flex items-center gap-1.5">
           {chat.scope === 'private' && !suppressLockIcon && (
             <span className="flex shrink-0 text-surface-500" title="Private">
               <ScopeLockIcon className="w-3 h-3" />
@@ -1016,31 +1016,22 @@ function SidebarSectionHeader({
   onOptionsClick?: () => void;
 }): JSX.Element {
   return (
-    <div className="group/section flex items-center gap-1 px-1 pt-1.5 pb-0.5">
+    <div className="group/section flex items-center gap-1 px-1 pt-1.5 pb-0.5 min-h-[26px]">
       <button
         type="button"
         onClick={onToggle}
-        className="flex-1 min-w-0 px-1 py-0 rounded-md hover:bg-surface-800/60 transition-colors flex items-center gap-1.5 text-left"
+        className="flex-1 min-w-0 px-1 py-0 rounded-md hover:bg-surface-800/60 transition-colors text-left"
         aria-expanded={!collapsed}
         aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${title}`}
       >
-        <h3 className="truncate text-[10px] uppercase tracking-wider text-surface-500/80 font-medium flex-1">
+        <h3 className="truncate text-[10px] uppercase tracking-wider text-primary-500/85 font-semibold">
           {title}
         </h3>
-        <svg
-          className={`w-3 h-3 text-surface-500/60 transition-transform shrink-0 ${collapsed ? '' : 'rotate-180'}`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          aria-hidden
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
       </button>
       {onOptionsClick && (
         <button
           type="button"
-          className="invisible group-hover/section:visible p-0.5 rounded text-surface-500 hover:bg-surface-800/60 hover:text-surface-300 transition-colors"
+          className="invisible group-hover/section:visible p-0.5 rounded text-surface-500 hover:bg-surface-800/60 hover:text-surface-300 transition-colors shrink-0"
           aria-label={`${title} options`}
           onClick={onOptionsClick}
         >
@@ -1051,6 +1042,23 @@ function SidebarSectionHeader({
           </svg>
         </button>
       )}
+      <button
+        type="button"
+        onClick={onToggle}
+        className="shrink-0 p-0.5 rounded text-primary-500/60 hover:text-primary-500 hover:bg-surface-800/60 transition-colors"
+        aria-label={collapsed ? `Expand ${title}` : `Collapse ${title}`}
+        aria-expanded={!collapsed}
+      >
+        <svg
+          className={`w-3 h-3 transition-transform ${collapsed ? '' : 'rotate-180'}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          aria-hidden
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
     </div>
   );
 }
