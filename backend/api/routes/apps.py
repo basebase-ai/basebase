@@ -28,6 +28,7 @@ from models.database import get_session, get_admin_session
 from models.organization import Organization
 from models.user import User
 from models.visibility import normalize_visibility
+from models.workflow import Workflow
 from services.app_query_runner import (
     AppQueryResponse as QueryResponse,
     json_serial,
@@ -35,6 +36,7 @@ from services.app_query_runner import (
     validate_sql_is_select,
 )
 from services.org_admin import user_is_org_admin
+from services.workflow_pause import get_workflow_execution_pause_until
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +76,17 @@ class EmbedTokenResponse(BaseModel):
     embed_url: str
     token: str
     expires_at: str
+
+
+class TriggerAppWorkflowRequest(BaseModel):
+    trigger_data: dict[str, Any] | None = None
+
+
+class TriggerAppWorkflowResponse(BaseModel):
+    status: str
+    task_id: str
+    workflow_id: str
+    triggered_by_user_id: str
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +239,84 @@ async def execute_app_query(
             params=params,
             session=session,
         )
+
+
+@router.post("/{app_id}/workflows/{workflow_id}/trigger", response_model=TriggerAppWorkflowResponse)
+async def trigger_app_workflow(
+    app_id: str,
+    workflow_id: str,
+    body: TriggerAppWorkflowRequest | None = None,
+    auth: AuthContext = Depends(require_organization),
+) -> TriggerAppWorkflowResponse:
+    """Trigger a workflow from an app as the currently logged-in user."""
+    trigger_data: dict[str, Any] | None = (body or TriggerAppWorkflowRequest()).trigger_data
+
+    try:
+        app_uuid = UUID(app_id)
+        workflow_uuid = UUID(workflow_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid ID format") from exc
+
+    assert auth.organization_id_str is not None
+    async with get_session(
+        organization_id=auth.organization_id_str,
+        user_id=auth.user_id_str,
+    ) as session:
+        app_result = await session.execute(select(App).where(App.id == app_uuid))
+        app: App | None = app_result.scalar_one_or_none()
+        if app is None or str(app.organization_id) != auth.organization_id_str:
+            raise HTTPException(status_code=404, detail="App not found")
+
+        workflow_result = await session.execute(
+            select(Workflow).where(
+                Workflow.id == workflow_uuid,
+                Workflow.organization_id == app.organization_id,
+            )
+        )
+        workflow: Workflow | None = workflow_result.scalar_one_or_none()
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        if workflow.archived_at is not None:
+            raise HTTPException(status_code=400, detail="Archived workflows cannot be triggered")
+        if not workflow.is_enabled:
+            raise HTTPException(status_code=400, detail="Workflow is disabled")
+
+    pause_until = await get_workflow_execution_pause_until()
+    if pause_until is not None:
+        logger.warning(
+            "[Apps API] Workflow trigger blocked by workflow execution pause app_id=%s workflow_id=%s organization_id=%s pause_until=%s",
+            app_id,
+            workflow_id,
+            auth.organization_id_str,
+            pause_until.isoformat(),
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=f"Workflow execution temporarily paused until {pause_until.isoformat()}",
+        )
+
+    from workers.tasks.workflows import execute_workflow
+
+    task = execute_workflow.delay(
+        workflow_id=workflow_id,
+        triggered_by="app",
+        trigger_data=trigger_data,
+        conversation_id=None,
+        organization_id=auth.organization_id_str,
+        triggered_by_user_id=auth.user_id_str,
+    )
+    logger.info(
+        "[Apps API] Queued workflow from app app_id=%s workflow_id=%s user_id=%s",
+        app_id,
+        workflow_id,
+        auth.user_id_str,
+    )
+    return TriggerAppWorkflowResponse(
+        status="queued",
+        task_id=task.id,
+        workflow_id=workflow_id,
+        triggered_by_user_id=auth.user_id_str or "",
+    )
 
 
 # ---------------------------------------------------------------------------
