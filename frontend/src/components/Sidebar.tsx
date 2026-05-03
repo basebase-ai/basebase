@@ -889,11 +889,11 @@ function ChatAccordion({
             </svg>
           )}
         </div>
-        {/* Hover metadata: absolute so it never affects row height or width. */}
+        {/* Hover metadata: absolute so it never affects row height or width.
+            Uses a gradient mask so longer titles fade out under the cluster
+            instead of bleeding through. */}
         <div
-          className={`hidden group-hover/chat:flex absolute right-2 top-1/2 -translate-y-1/2 items-center gap-1.5 leading-none rounded-md pl-3 pr-1 ${
-            isActive ? 'bg-surface-800' : 'bg-surface-800/85'
-          }`}
+          className="hidden group-hover/chat:flex absolute right-0 top-0 bottom-0 items-center gap-1.5 leading-none pl-8 pr-3 rounded-r-md bg-gradient-to-l from-surface-800 from-60% to-transparent"
         >
           <span className="text-xs text-surface-500">
             {formatRelativeTime(chat.lastMessageAt)}
