@@ -839,24 +839,28 @@ function ChatAccordion({
     const hasActiveTask = chat.id in activeTasksByConversation;
     const isUnread = unreadConversationIds.has(chat.id);
 
+    const isActive: boolean = currentChatId === chat.id;
+    const hasParticipants: boolean =
+      chat.scope === 'shared' && (chat.participants?.length ?? 0) > 0;
+
     return (
       <div
         key={itemKey}
-        className={`relative w-full text-left px-2 py-1 rounded-md transition-colors cursor-pointer leading-tight ${
-          currentChatId === chat.id
+        className={`group/chat relative w-full text-left px-2 py-1.5 rounded-md transition-colors cursor-pointer leading-tight ${
+          isActive
             ? 'bg-surface-800 text-surface-100'
             : 'text-surface-400 hover:text-surface-200 hover:bg-surface-800/50'
         }`}
         onClick={() => onSelectChat(chat.id)}
         onMouseEnter={() => {
-          if (currentChatId === chat.id) return;
+          if (isActive) return;
           hoverTimerRef.current = setTimeout(() => prefetchConversation(chat.id), 100);
         }}
         onMouseLeave={() => {
           if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
         }}
       >
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5 min-w-0">
           {chat.scope === 'private' && (
             <span className="flex shrink-0 text-surface-500" title="Private">
               <ScopeLockIcon className="w-3 h-3" />
@@ -867,12 +871,12 @@ function ChatAccordion({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
           )}
-          <div className="truncate text-sm flex-1 leading-tight">
+          <div className="truncate text-[15px] flex-1 leading-tight">
             {chat.title}
           </div>
           {isUnread && (
             <span
-              className="h-3 w-3 shrink-0 rounded-full bg-primary-500 [background-image:none]"
+              className="h-2.5 w-2.5 shrink-0 rounded-full bg-primary-500 [background-image:none]"
               title="Unread"
               aria-label="Unread"
             />
@@ -883,33 +887,33 @@ function ChatAccordion({
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
           )}
-        </div>
-        <div className="flex items-center gap-1.5 mt-1.5 leading-none">
-          {chat.scope === 'shared' && chat.participants && chat.participants.length > 0 && (
-            <div className="flex -space-x-1">
-              {chat.participants.slice(0, 3).map((p, idx) => (
-                <Avatar
-                  key={p.id}
-                  user={p}
-                  size="xs"
-                  bordered
-                  className="!w-4 !h-4 !text-[8px]"
-                  style={{ zIndex: 3 - idx }}
-                />
-              ))}
-              {chat.participants.length > 3 && (
-                <div
-                  className="w-4 h-4 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[8px] font-medium text-surface-300"
-                  title={`${chat.participants.length - 3} more`}
-                >
-                  +{chat.participants.length - 3}
-                </div>
-              )}
-            </div>
-          )}
-          <span className="text-xs text-surface-500">
-            {formatRelativeTime(chat.lastMessageAt)}
-          </span>
+          <div className="flex items-center gap-1.5 leading-none flex-shrink-0 opacity-0 group-hover/chat:opacity-100 transition-opacity">
+            <span className="text-xs text-surface-500">
+              {formatRelativeTime(chat.lastMessageAt)}
+            </span>
+            {hasParticipants && (
+              <div className="flex -space-x-1">
+                {chat.participants!.slice(0, 3).map((p, idx) => (
+                  <Avatar
+                    key={p.id}
+                    user={p}
+                    size="xs"
+                    bordered
+                    className="!w-4 !h-4 !text-[8px]"
+                    style={{ zIndex: 3 - idx }}
+                  />
+                ))}
+                {chat.participants!.length > 3 && (
+                  <div
+                    className="w-4 h-4 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[8px] font-medium text-surface-300"
+                    title={`${chat.participants!.length - 3} more`}
+                  >
+                    +{chat.participants!.length - 3}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
