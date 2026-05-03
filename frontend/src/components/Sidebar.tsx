@@ -888,37 +888,34 @@ function ChatAccordion({
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
           )}
-        </div>
-        {/* Hover metadata: absolute so it never affects row height or width.
-            Uses a gradient mask so longer titles fade out under the cluster
-            instead of bleeding through. */}
-        <div
-          className="hidden group-hover/chat:flex absolute right-0 top-0 bottom-0 items-center gap-1.5 leading-none pl-8 pr-3 rounded-r-md bg-gradient-to-l from-surface-800 from-60% to-transparent"
-        >
-          <span className="text-xs text-surface-500">
-            {formatRelativeTime(chat.lastMessageAt)}
-          </span>
-          {hasParticipants && (
-            <div className="flex -space-x-1">
-              {chat.participants!.slice(0, 3).map((p, idx) => (
-                <Avatar
-                  key={p.id}
-                  user={p}
-                  size="xs"
-                  bordered
-                  style={{ zIndex: 3 - idx }}
-                />
-              ))}
-              {chat.participants!.length > 3 && (
-                <div
-                  className="w-5 h-5 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[10px] font-medium text-surface-300"
-                  title={`${chat.participants!.length - 3} more`}
-                >
-                  +{chat.participants!.length - 3}
-                </div>
-              )}
-            </div>
-          )}
+          {/* Hover metadata: in flow so it pushes the title to truncate.
+              Row min-height keeps avatar height from shifting the row. */}
+          <div className="hidden group-hover/chat:flex items-center gap-1.5 leading-none flex-shrink-0">
+            <span className="text-xs text-surface-500">
+              {formatRelativeTime(chat.lastMessageAt)}
+            </span>
+            {hasParticipants && (
+              <div className="flex -space-x-1">
+                {chat.participants!.slice(0, 3).map((p, idx) => (
+                  <Avatar
+                    key={p.id}
+                    user={p}
+                    size="xs"
+                    bordered
+                    style={{ zIndex: 3 - idx }}
+                  />
+                ))}
+                {chat.participants!.length > 3 && (
+                  <div
+                    className="w-5 h-5 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[10px] font-medium text-surface-300"
+                    title={`${chat.participants!.length - 3} more`}
+                  >
+                    +{chat.participants!.length - 3}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
