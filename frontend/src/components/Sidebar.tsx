@@ -899,13 +899,12 @@ function ChatAccordion({
                     user={p}
                     size="xs"
                     bordered
-                    className="!w-4 !h-4 !text-[8px]"
                     style={{ zIndex: 3 - idx }}
                   />
                 ))}
                 {chat.participants!.length > 3 && (
                   <div
-                    className="w-4 h-4 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[8px] font-medium text-surface-300"
+                    className="w-5 h-5 rounded-full border border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-[10px] font-medium text-surface-300"
                     title={`${chat.participants!.length - 3} more`}
                   >
                     +{chat.participants!.length - 3}
