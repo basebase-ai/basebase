@@ -2256,9 +2256,9 @@ export function Chat({
           })()}
         </div>
         <div className="flex items-center gap-3">
-          {/* Shared: participant avatars only (team-wide visibility; no invite) */}
-          {conversationScope === 'shared' && conversationParticipants.length > 0 && (
-            <div className="flex items-center gap-2">
+          {/* Conversation participants + invite/remove control */}
+          <div className="flex items-center gap-2">
+            {conversationParticipants.length > 0 && (
               <div className="flex -space-x-2">
                 {conversationParticipants.slice(0, 4).map((p, idx) => (
                   <div key={p.id} title={p.name || p.email} style={{ zIndex: 4 - idx }}>
@@ -2274,41 +2274,37 @@ export function Chat({
                   </div>
                 )}
               </div>
-            </div>
-          )}
-          {/* Private: avatars + add people */}
-          {conversationScope === 'private' && (
-            <div className="flex items-center gap-2">
-              {conversationParticipants.length > 0 && (
-                <div className="flex -space-x-2">
-                  {conversationParticipants.slice(0, 4).map((p, idx) => (
-                    <div key={p.id} title={p.name || p.email} style={{ zIndex: 4 - idx }}>
-                      <Avatar user={p} size="sm" bordered className="border-2 border-surface-900" />
-                    </div>
-                  ))}
-                  {conversationParticipants.length > 4 && (
-                    <div
-                      className="w-6 h-6 rounded-full border-2 border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-xs font-medium text-surface-300"
-                      title={`${conversationParticipants.length - 4} more participants`}
-                    >
-                      +{conversationParticipants.length - 4}
-                    </div>
-                  )}
-                </div>
-              )}
-              <button
-                type="button"
-                disabled={!userId}
-                onClick={() => setShowInviteModal(true)}
-                className="p-1.5 rounded-md text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-                title={userId ? 'Add or remove people' : 'Sign in to add or remove people'}
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-                </svg>
-              </button>
-            </div>
-          )}
+            )}
+            <button
+              type="button"
+              disabled={!userId}
+              onClick={() => setShowInviteModal(true)}
+              className="p-1.5 rounded-md text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+              title={userId ? 'Add or remove people' : 'Sign in to add or remove people'}
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+              </svg>
+            </button>
+          </div>
+          <button
+            type="button"
+            disabled={!chatId}
+            onClick={() => void handleShareChatLink()}
+            className="p-1.5 rounded-md text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+            title={chatId ? 'Share chat' : 'Start the conversation to share'}
+          >
+            {shareChatLinkCopied ? (
+              <svg className="w-5 h-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.882 13.781 9 14.268 9 14.784A2.784 2.784 0 016.216 17.57a2.784 2.784 0 01-2.785-2.785A2.784 2.784 0 016.216 12c.516 0 1.003.118 1.442.316m8.126-2.658A2.784 2.784 0 0018.57 6.874a2.784 2.784 0 00-2.785-2.785A2.784 2.784 0 0013 6.874c0 .516.118 1.003.316 1.442M8.658 13.342l6.684-3.684m0 0a2.784 2.784 0 001.442.316A2.784 2.784 0 0020.57 7.19 2.784 2.784 0 0017.785 4.405a2.784 2.784 0 00-2.785 2.785c0 .516.118 1.003.316 1.442m-6.684 3.684A2.784 2.784 0 006.216 12a2.784 2.784 0 00-2.785 2.785A2.784 2.784 0 006.216 17.57a2.784 2.784 0 002.785-2.785c0-.516-.118-1.003-.316-1.442z" />
+              </svg>
+            )}
+          </button>
+
           <ConnectionStatus state={connectionState} />
           <div className="relative flex-shrink-0" ref={chatHeaderMenuRef}>
             <button
@@ -2423,16 +2419,6 @@ export function Chat({
                     </button>
                   </>
                 ) : null}
-                <div className="my-1 border-t border-surface-800" role="separator" />
-                <button
-                  type="button"
-                  role="menuitem"
-                  disabled={!chatId}
-                  className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                  onClick={() => void handleShareChatLink()}
-                >
-                  Share chat
-                </button>
                 {chatId && canDeleteConversation ? (
                   <>
                     <div className="my-1 border-t border-surface-800" role="separator" />
