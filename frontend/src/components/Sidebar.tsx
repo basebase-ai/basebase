@@ -20,6 +20,7 @@ import { APP_NAME, LOGO_PATH } from '../lib/brand';
 const CHANNEL_PERSONALITY_MAX_LENGTH = 1000;
 const CHANNEL_PERSONALITY_TEXTAREA_BASE_HEIGHT_PX = 160;
 const CHANNEL_PERSONALITY_TEXTAREA_MAX_HEIGHT_PX = Math.round(CHANNEL_PERSONALITY_TEXTAREA_BASE_HEIGHT_PX * 1.5);
+const SIDEBAR_COLLAPSED_SECTIONS_STORAGE_KEY = 'sidebar_collapsed_sections_v1';
 
 /** Shield icon for global admin console identity in the org switcher. */
 function GlobalAdminShieldIcon({ className }: { className?: string }): JSX.Element {
@@ -631,7 +632,7 @@ function ChatAccordion({
 }): JSX.Element | null {
   const isOrgAdmin: boolean = useIsOrgAdmin();
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({ hub: true });
   const [channelPersonalityTarget, setChannelPersonalityTarget] = useState<{
     key: string;
     label: string;
@@ -646,6 +647,33 @@ function ChatAccordion({
   useEffect(() => {
     return () => { if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(SIDEBAR_COLLAPSED_SECTIONS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const normalized: Record<string, boolean> = { hub: true };
+        for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+          if (typeof value === 'boolean') normalized[key] = value;
+        }
+        setCollapsedSections(normalized);
+      }
+    } catch (error) {
+      console.warn('[Sidebar] Failed to load collapsed section preferences', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_SECTIONS_STORAGE_KEY, JSON.stringify(collapsedSections));
+    } catch (error) {
+      console.warn('[Sidebar] Failed to persist collapsed section preferences', error);
+    }
+  }, [collapsedSections]);
 
   const groupedSidebarChats = useMemo(() => {
     const pinnedSet = new Set(pinnedChatIds);
