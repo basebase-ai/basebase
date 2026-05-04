@@ -31,7 +31,7 @@ class _FakeTask:
 
 
 @pytest.mark.asyncio
-async def test_apps_connector_trigger_workflow_queues_with_current_user(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_apps_connector_trigger_workflow_uses_envelope_user_not_connector_owner(monkeypatch: pytest.MonkeyPatch) -> None:
     org_id = "00000000-0000-0000-0000-000000000001"
     user_id = "00000000-0000-0000-0000-000000000002"
     app_id = "00000000-0000-0000-0000-000000000003"
@@ -76,6 +76,7 @@ async def test_apps_connector_trigger_workflow_queues_with_current_user(monkeypa
     assert result["triggered_by_user_id"] == "00000000-0000-0000-0000-000000000005"
     assert captured["triggered_by"] == "app"
     assert captured["triggered_by_user_id"] == "00000000-0000-0000-0000-000000000005"
+    assert captured["triggered_by_user_id"] != user_id
 
 
 @pytest.mark.asyncio

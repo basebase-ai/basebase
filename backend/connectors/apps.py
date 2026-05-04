@@ -330,10 +330,12 @@ class AppsConnector(BaseConnector):
             triggered_by_user_id=str(request_user_uuid),
         )
         logger.info(
-            "[AppsConnector] Queued workflow trigger via apps connector app_id=%s workflow_id=%s user_id=%s task_id=%s",
+            "[AppsConnector] Queued workflow trigger via apps connector app_id=%s workflow_id=%s triggered_user_id=%s connector_owner_user_id=%s delegated_actor_user_id=%s task_id=%s",
             app_id_raw,
             workflow_id_raw,
             request_user_uuid,
+            self.user_id,
+            delegated_actor,
             task.id,
         )
         return {
