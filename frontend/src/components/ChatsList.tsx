@@ -511,7 +511,7 @@ function ChatRow({
                 title={isPinned ? 'Unpin conversation' : 'Pin conversation'}
               >
                 <svg className={`w-4 h-4 ${isPinned ? 'text-primary-400' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 3a3 3 0 00-6 0v3H6.5A1.5 1.5 0 005 7.5V9h14V7.5A1.5 1.5 0 0017.5 6H16V3zm-1 9.5V21l-2-3-2 3v-8.5l-2.2-2.2a1 1 0 011.4-1.4L10 10.7l1.8-1.8a1 1 0 011.4 1.4L11 12.5z" />
                 </svg>
               </button>
             </div>
