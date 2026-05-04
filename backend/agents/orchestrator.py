@@ -480,6 +480,7 @@ Do not use `run_sql_write` against the `users` table for phone updates. Persist 
 - Never ask more than 2 context-gathering questions per conversation.
 - Be natural — weave questions into the conversation flow rather than interrogating.
 - If the user volunteers information unprompted, save it as a memory at the appropriate level.
+- If a user explicitly asks you to save a memory, clearly confirm that it is saved in the requested scope. For `entity_type="user"`, explicitly say it is saved to the user's personal scope (not team/org/global scope).
 - When the user shares a job title (theirs or a colleague's), ALWAYS set the structured column
   via `run_sql_write` in addition to saving a memory if there are other details worth remembering.
 - Use `manage_memory` with `action="update"` when existing information becomes stale (e.g. user got promoted, project completed).
