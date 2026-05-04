@@ -191,6 +191,28 @@ def test_query_read_file_by_url_returns_base64_for_binary(monkeypatch) -> None:
     assert "Binary file returned as base64" in result["file"]["note"]
 
 
+def test_query_read_file_rejects_non_slack_url(monkeypatch) -> None:
+    connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
+    called = {"download": False}
+
+    async def _fake_download_file(url_private: str) -> bytes:
+        called["download"] = True
+        return b"should_not_download"
+
+    monkeypatch.setattr(connector, "download_file", _fake_download_file)
+
+    result = asyncio.run(connector.query("read_file:https://evil.example.com/steal"))
+    assert "only supports Slack-hosted https URLs" in result["error"]
+    assert called["download"] is False
+
+
+def test_download_file_rejects_non_slack_url() -> None:
+    connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
+
+    with pytest.raises(ValueError, match="non-Slack URL"):
+        asyncio.run(connector.download_file("https://evil.example.com/steal"))
+
+
 def test_query_read_file_from_message_permalink_downloads_attached_files(monkeypatch) -> None:
     connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
 

@@ -16,7 +16,7 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from sqlalchemy import func, select
@@ -31,6 +31,7 @@ _SLACK_MESSAGE_PERMALINK_RE: re.Pattern[str] = re.compile(
 )
 _MARKDOWN_TABLE_CODE_BLOCK_TEMPLATE: str = "```\n{table}\n```"
 _markdown_logger = logging.getLogger(__name__)
+_SLACK_ALLOWED_FILE_HOST_SUFFIXES: tuple[str, ...] = ("slack.com",)
 
 
 def _clean_table_lines(raw: str) -> str:
@@ -1343,6 +1344,13 @@ Returns normalized messages for one channel since a cutoff (does not write to th
                     message_ts=message_ts,
                     permalink=normalized_ref,
                 )
+            if not self._is_allowed_slack_file_url(normalized_ref):
+                return {
+                    "error": (
+                        "read_file only supports Slack-hosted https URLs "
+                        "(for example, files.slack.com url_private links)."
+                    )
+                }
             download_url = normalized_ref
         else:
             file_data = await self._make_request("GET", "files.info", params={"file": normalized_ref})
@@ -1405,6 +1413,22 @@ Returns normalized messages for one channel since a cutoff (does not write to th
                 "note": "Binary file returned as base64 because text extraction is not supported for this mime type.",
             },
         }
+
+    def _is_allowed_slack_file_url(self, file_url: str) -> bool:
+        """Return True when URL is https and hosted on an allowed Slack domain."""
+        try:
+            parsed = urlparse(file_url.strip())
+        except Exception:
+            return False
+
+        if parsed.scheme.lower() != "https":
+            return False
+
+        hostname = (parsed.hostname or "").lower().rstrip(".")
+        return any(
+            hostname == suffix or hostname.endswith(f".{suffix}")
+            for suffix in _SLACK_ALLOWED_FILE_HOST_SUFFIXES
+        )
 
     def _parse_slack_message_permalink(self, url: str) -> tuple[str, str] | None:
         """Return ``(channel_id, message_ts)`` when URL is a Slack message permalink."""
@@ -1795,15 +1819,39 @@ Returns normalized messages for one channel since a cutoff (does not write to th
             httpx.HTTPStatusError: If the download request fails.
             ValueError: If the response body is empty.
         """
+        if not self._is_allowed_slack_file_url(url_private):
+            raise ValueError("Refusing to download non-Slack URL for file content")
+
         headers: dict[str, str] = await self._get_headers()
         # Remove Content-Type for raw file download
         headers.pop("Content-Type", None)
 
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            response: httpx.Response = await client.get(
-                url_private, headers=headers, timeout=60.0,
-            )
-            response.raise_for_status()
+        current_url: str = url_private
+        max_redirects: int = 5
+        async with httpx.AsyncClient(follow_redirects=False) as client:
+            for _ in range(max_redirects + 1):
+                response: httpx.Response = await client.get(
+                    current_url, headers=headers, timeout=60.0,
+                )
+                if response.is_redirect:
+                    location: str | None = response.headers.get("location")
+                    if not location:
+                        raise ValueError(
+                            f"Redirect without location while downloading Slack file: {current_url}"
+                        )
+                    next_url: str = urljoin(str(response.url), location)
+                    if not self._is_allowed_slack_file_url(next_url):
+                        raise ValueError(
+                            "Refusing redirect to non-Slack host while downloading file"
+                        )
+                    current_url = next_url
+                    continue
+                response.raise_for_status()
+                break
+            else:
+                raise ValueError(
+                    f"Too many redirects while downloading Slack file: {url_private}"
+                )
 
         data: bytes = response.content
         if not data:
