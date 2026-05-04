@@ -3246,6 +3246,7 @@ function MessageWithBlocks({
   onToolCancel,
   onToolClick,
   onRetry,
+  currentUserId,
 }: {
   message: ChatMessage;
   isGroupedWithPrevious?: boolean;
