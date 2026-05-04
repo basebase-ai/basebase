@@ -272,7 +272,7 @@ function OrgPanel({
       {!isAdminConsole && (
         <>
           <div className="text-[11px] uppercase tracking-wider text-surface-500 px-2 pt-4 pb-1 font-medium">
-            Workspace
+            Hub
           </div>
           <div className="space-y-0.5" role="group" aria-label="Workspace navigation">
             <OrgDropdownWorkspaceRow
@@ -606,9 +606,11 @@ export function Sidebar({
 
             <ChatAccordion
               collapsed={collapsed}
+              currentView={currentView}
               orderedChats={orderedChats}
               currentChatId={currentChatId}
               activeTasksByConversation={activeTasksByConversation}
+              onViewChange={onViewChange}
               onSelectChat={(id) => {
                 onSelectChat(id);
                 if (isMobile) onCloseMobile?.();
@@ -712,15 +714,19 @@ function normalizeChannelIdForMemory(source: string | null | undefined, channelK
 /** Recent chats: shared + private in one list (recency), pinned first; lock marks private. Row actions live in the chat ⋮ menu. */
 function ChatAccordion({
   collapsed,
+  currentView,
   orderedChats,
   currentChatId,
   activeTasksByConversation,
+  onViewChange,
   onSelectChat,
 }: {
   collapsed: boolean;
+  currentView: View;
   orderedChats: ChatSummary[];
   currentChatId: string | null;
   activeTasksByConversation: Record<string, string>;
+  onViewChange: (view: View) => void;
   onSelectChat: (id: string) => void;
 }): JSX.Element | null {
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -924,6 +930,35 @@ function ChatAccordion({
   return (
     <div className="flex-1 flex flex-col min-h-0 px-3 pt-1 pb-px">
       <div className="flex-1 overflow-y-auto scrollbar-thin space-y-0 min-h-0">
+        <div className="mb-1">
+          <SidebarSectionHeader
+            title="Hub"
+            collapsed={isSectionCollapsed('hub')}
+            onToggle={() => toggleSection('hub')}
+          />
+          {!isSectionCollapsed('hub') && (
+            <div className="space-y-0.5 mb-1">
+              {[
+                { label: 'Settings', view: 'org-settings' as View },
+                { label: 'Workflows', view: 'workflows' as View },
+                { label: 'Apps', view: 'apps' as View },
+              ].map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => onViewChange(item.view)}
+                  className={`w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors ${
+                    currentView === item.view
+                      ? 'bg-surface-800 text-surface-100'
+                      : 'text-surface-300 hover:text-surface-100 hover:bg-surface-800/70'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         {groupedSidebarChats.flattenCount > 0 ? (
           <>
             {groupedSidebarChats.pinned.length > 0 && (

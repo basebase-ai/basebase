@@ -2310,6 +2310,23 @@ export function Chat({
             </div>
           )}
           <ConnectionStatus state={connectionState} />
+          {chatId ? (
+            <button
+              type="button"
+              onClick={handleMenuTogglePin}
+              className={`p-1.5 rounded-md transition-colors ${
+                isCurrentChatPinned
+                  ? 'text-amber-300 bg-amber-500/10 hover:bg-amber-500/20'
+                  : 'text-surface-400 hover:text-surface-200 hover:bg-surface-800'
+              }`}
+              title={isCurrentChatPinned ? 'Unpin chat' : 'Pin chat'}
+              aria-label={isCurrentChatPinned ? 'Unpin chat' : 'Pin chat'}
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3l14 14M9 7l8 8m-2-10l3 3-4 4 3 7-7-3-4 4-3-3 4-4-3-7 7 3 4-4z" />
+              </svg>
+            </button>
+          ) : null}
           <div className="relative flex-shrink-0" ref={chatHeaderMenuRef}>
             <button
               type="button"
