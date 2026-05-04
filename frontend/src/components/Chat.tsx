@@ -2394,35 +2394,6 @@ export function Chat({
                     ) : null}
                   </>
                 ) : null}
-                {canToggleChatScope ? (
-                  <>
-                    <div className="my-1 border-t border-surface-800" role="separator" />
-                    <button
-                      type="button"
-                      role="menuitem"
-                      disabled={scopeToggleSaving || conversationScope === 'shared'}
-                      className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                      onClick={() => {
-                        setChatHeaderMenuOpen(false);
-                        void handleMakeShared();
-                      }}
-                    >
-                      Make shared
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      disabled={scopeToggleSaving || conversationScope === 'private'}
-                      className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                      onClick={() => {
-                        setChatHeaderMenuOpen(false);
-                        void handleMakePrivate();
-                      }}
-                    >
-                      Make private
-                    </button>
-                  </>
-                ) : null}
                 <div className="my-1 border-t border-surface-800" role="separator" />
                 <button
                   type="button"
