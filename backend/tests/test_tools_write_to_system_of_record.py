@@ -111,4 +111,5 @@ def test_write_on_connector_apps_create_passes_conversation_owner_as_override(mo
     assert result["status"] == "success"
     assert captured["operation"] == "create"
     assert isinstance(captured["data"], dict)
-    assert captured["data"][" app created by"] == "00000000-0000-0000-0000-000000000099"  # type: ignore[index]
+    assert captured["data"]["_app_owner_auth_envelope"]["token"]  # type: ignore[index]
+    assert captured["data"]["_app_owner_auth_envelope"]["sig"]  # type: ignore[index]

@@ -556,11 +556,19 @@ class AppsConnector(BaseConnector):
         conversation_uuid: UUID | None = None
         visibility: str = "team"
         owner_override_raw: Any = data.get(" app created by")
+        owner_auth_envelope: dict[str, Any] | None = data.get("_app_owner_auth_envelope")
         owner_override_id: str | None = None
+        owner_override_from_signed_payload: bool = False
         if owner_override_raw is not None:
             owner_override_id = str(owner_override_raw).strip()
             if not owner_override_id:
                 owner_override_id = None
+        if owner_override_id is None:
+            owner_override_id, _delegated_actor = _decode_apps_auth_envelope(
+                owner_auth_envelope,
+                expected_org=self.organization_id,
+            )
+            owner_override_from_signed_payload = owner_override_id is not None
 
         logger.info(
             "[AppsConnector] Creating app with ownership context: org_id=%s message_id=%s conversation_id=%s connector_user_id=%s owner_override_present=%s",
@@ -575,8 +583,9 @@ class AppsConnector(BaseConnector):
             try:
                 user_uuid = UUID(owner_override_id)
                 logger.info(
-                    "[AppsConnector] Using explicit app owner override from request payload: user_id=%s",
+                    "[AppsConnector] Using explicit app owner override from request payload: user_id=%s signed_payload=%s",
                     user_uuid,
+                    owner_override_from_signed_payload,
                 )
             except (ValueError, TypeError, AttributeError):
                 logger.warning(

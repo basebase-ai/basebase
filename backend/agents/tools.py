@@ -1111,15 +1111,21 @@ async def _write_on_connector(
             )
             if envelope is not None:
                 data["_auth_envelope"] = envelope
-        if operation == "create" and not data.get(" app created by"):
+        if operation == "create" and "_app_owner_auth_envelope" not in data:
             conversation_owner_id = await _resolve_conversation_owner_user_id(
                 organization_id=organization_id,
                 conversation_id=ctx_apps.get("conversation_id"),
             )
             if conversation_owner_id:
-                data[" app created by"] = conversation_owner_id
+                owner_envelope = _build_apps_auth_envelope(
+                    authenticated_user_id=conversation_owner_id,
+                    organization_id=organization_id,
+                    delegated_actor_user_id=user_id,
+                )
+                if owner_envelope is not None:
+                    data["_app_owner_auth_envelope"] = owner_envelope
                 logger.info(
-                    "[Tools] write_on_connector(apps.create): passing conversation owner as app override owner: conversation_id=%s owner_user_id=%s",
+                    "[Tools] write_on_connector(apps.create): passing signed conversation owner override: conversation_id=%s owner_user_id=%s",
                     ctx_apps.get("conversation_id"),
                     conversation_owner_id,
                 )
