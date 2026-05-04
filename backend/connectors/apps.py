@@ -226,6 +226,7 @@ class AppsConnector(BaseConnector):
     async def _trigger_workflow(self, data: dict[str, Any]) -> dict[str, Any]:
         app_id_raw: str | None = data.get("app_id")
         workflow_id_raw: str | None = data.get("workflow_id")
+        request_user_id_raw: str | None = data.get("user_id")
         trigger_data: dict[str, Any] | None = data.get("trigger_data")
 
         if not app_id_raw:
@@ -233,11 +234,15 @@ class AppsConnector(BaseConnector):
         if not workflow_id_raw:
             return {"error": "workflow_id is required for trigger_workflow operation"}
 
+        if not request_user_id_raw:
+            return {"error": "user_id is required for trigger_workflow operation"}
+
         try:
             app_uuid = UUID(app_id_raw)
             workflow_uuid = UUID(workflow_id_raw)
-        except ValueError:
-            return {"error": "Invalid app_id or workflow_id format (must be valid UUIDs)"}
+            request_user_uuid = UUID(request_user_id_raw)
+        except (TypeError, ValueError):
+            return {"error": "Invalid app_id, workflow_id, or user_id format (must be valid UUIDs)"}
 
         async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
             app_result = await session.execute(select(App).where(App.id == app_uuid))
@@ -274,13 +279,13 @@ class AppsConnector(BaseConnector):
             trigger_data=trigger_data if isinstance(trigger_data, dict) else None,
             conversation_id=None,
             organization_id=self.organization_id,
-            triggered_by_user_id=self.user_id,
+            triggered_by_user_id=str(request_user_uuid),
         )
         logger.info(
             "[AppsConnector] Queued workflow trigger via apps connector app_id=%s workflow_id=%s user_id=%s task_id=%s",
             app_id_raw,
             workflow_id_raw,
-            self.user_id,
+            request_user_uuid,
             task.id,
         )
         return {
@@ -288,7 +293,7 @@ class AppsConnector(BaseConnector):
             "task_id": task.id,
             "app_id": app_id_raw,
             "workflow_id": workflow_id_raw,
-            "triggered_by_user_id": self.user_id,
+            "triggered_by_user_id": str(request_user_uuid),
         }
 
     @staticmethod

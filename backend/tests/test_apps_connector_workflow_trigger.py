@@ -62,11 +62,32 @@ async def test_apps_connector_trigger_workflow_queues_with_current_user(monkeypa
     connector = AppsConnector(organization_id=org_id, user_id=user_id)
     result = await connector.write(
         "trigger_workflow",
-        {"app_id": app_id, "workflow_id": workflow_id, "trigger_data": {"from": "test"}},
+        {
+            "app_id": app_id,
+            "workflow_id": workflow_id,
+            "user_id": "00000000-0000-0000-0000-000000000005",
+            "trigger_data": {"from": "test"},
+        },
     )
 
     assert result["status"] == "queued"
     assert result["task_id"] == "task-xyz"
-    assert result["triggered_by_user_id"] == user_id
+    assert result["triggered_by_user_id"] == "00000000-0000-0000-0000-000000000005"
     assert captured["triggered_by"] == "app"
-    assert captured["triggered_by_user_id"] == user_id
+    assert captured["triggered_by_user_id"] == "00000000-0000-0000-0000-000000000005"
+
+
+@pytest.mark.asyncio
+async def test_apps_connector_trigger_workflow_requires_request_user_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    org_id = "00000000-0000-0000-0000-000000000001"
+    connector = AppsConnector(organization_id=org_id, user_id="00000000-0000-0000-0000-000000000002")
+
+    result = await connector.write(
+        "trigger_workflow",
+        {
+            "app_id": "00000000-0000-0000-0000-000000000003",
+            "workflow_id": "00000000-0000-0000-0000-000000000004",
+        },
+    )
+
+    assert result == {"error": "user_id is required for trigger_workflow operation"}
