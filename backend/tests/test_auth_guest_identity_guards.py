@@ -8,6 +8,16 @@ from fastapi import HTTPException
 from api.routes import auth
 
 
+def _auth_ctx(user_id: UUID, org_id: UUID):
+    return auth.AuthContext(
+        user_id=user_id,
+        organization_id=org_id,
+        email="requester@example.com",
+        role="member",
+        is_global_admin=False,
+    )
+
+
 class _FakeMembershipResult:
     def scalar_one_or_none(self) -> object:
         return True  # Simulate active org membership
@@ -67,6 +77,7 @@ def test_link_identity_rejects_guest_target(monkeypatch):
             auth.link_identity(
                 org_id=str(org_id),
                 request=auth.LinkIdentityRequest(target_user_id=str(target_user_id), mapping_id=str(mapping_id)),
+                auth=_auth_ctx(requester_id, org_id),
                 user_id=str(requester_id),
             )
         )
@@ -99,6 +110,7 @@ def test_unlink_identity_rejects_guest_mapping(monkeypatch):
             auth.unlink_identity(
                 org_id=str(org_id),
                 request=auth.UnlinkIdentityRequest(mapping_id=str(mapping_id)),
+                auth=_auth_ctx(requester_id, org_id),
                 user_id=str(requester_id),
             )
         )
