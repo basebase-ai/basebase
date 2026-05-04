@@ -556,7 +556,6 @@ export function Chat({
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [chatHeaderMenuOpen, setChatHeaderMenuOpen] = useState<boolean>(false);
   const [showSummaryPanel, setShowSummaryPanel] = useState<boolean>(false);
-  const [shareChatLinkCopied, setShareChatLinkCopied] = useState<boolean>(false);
   const chatHeaderMenuRef = useRef<HTMLDivElement>(null);
   const [newConversationScope, setNewConversationScope] = useState<'private' | 'shared'>('shared');
   /** True while PATCH /scope is in flight (optimistic UI already applied). */
@@ -1661,23 +1660,10 @@ export function Chat({
   }, [messages]);
 
   const handleMenuCopyConversation = useCallback(async (): Promise<void> => {
-    setShareChatLinkCopied(false);
     await handleCopyConversation();
     setChatHeaderMenuOpen(false);
   }, [handleCopyConversation]);
 
-  const handleShareChatLink = useCallback(async (): Promise<void> => {
-    if (!chatId) return;
-    setCopySuccess(false);
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      setShareChatLinkCopied(true);
-      setChatHeaderMenuOpen(false);
-      window.setTimeout(() => setShareChatLinkCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy share link:', err);
-    }
-  }, [chatId]);
 
   useEffect(() => {
     if (!chatHeaderMenuOpen) return;
@@ -1697,7 +1683,6 @@ export function Chat({
       document.removeEventListener('keydown', onKeyDown);
     };
   }, [chatHeaderMenuOpen]);
-
   // Check if the current user can rename this conversation
   const canRenameHeader = chatId && (
     conversationScope === 'private' || conversationCreatorId === userId
@@ -2256,28 +2241,8 @@ export function Chat({
           })()}
         </div>
         <div className="flex items-center gap-3">
-          {/* Shared: participant avatars only (team-wide visibility; no invite) */}
-          {conversationScope === 'shared' && conversationParticipants.length > 0 && (
-            <div className="flex items-center gap-2">
-              <div className="flex -space-x-2">
-                {conversationParticipants.slice(0, 4).map((p, idx) => (
-                  <div key={p.id} title={p.name || p.email} style={{ zIndex: 4 - idx }}>
-                    <Avatar user={p} size="sm" bordered className="border-2 border-surface-900" />
-                  </div>
-                ))}
-                {conversationParticipants.length > 4 && (
-                  <div
-                    className="w-6 h-6 rounded-full border-2 border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-xs font-medium text-surface-300"
-                    title={`${conversationParticipants.length - 4} more participants`}
-                  >
-                    +{conversationParticipants.length - 4}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-          {/* Private: avatars + add people */}
-          {conversationScope === 'private' && (
+          {/* Participants + add people */}
+          {chatId && (
             <div className="flex items-center gap-2">
               {conversationParticipants.length > 0 && (
                 <div className="flex -space-x-2">
@@ -2334,15 +2299,13 @@ export function Chat({
               title={
                 copySuccess
                   ? 'Conversation copied'
-                  : shareChatLinkCopied
-                    ? 'Link copied'
-                    : 'Chat options'
+                  : 'Chat options'
               }
               aria-haspopup="menu"
               aria-expanded={chatHeaderMenuOpen}
               onClick={() => setChatHeaderMenuOpen((o) => !o)}
             >
-              {copySuccess || shareChatLinkCopied ? (
+              {copySuccess ? (
                 <svg className="w-5 h-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
@@ -2411,16 +2374,6 @@ export function Chat({
                     ) : null}
                   </>
                 ) : null}
-                <div className="my-1 border-t border-surface-800" role="separator" />
-                <button
-                  type="button"
-                  role="menuitem"
-                  disabled={!chatId}
-                  className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                  onClick={() => void handleShareChatLink()}
-                >
-                  Share chat
-                </button>
                 {chatId && canDeleteConversation ? (
                   <>
                     <div className="my-1 border-t border-surface-800" role="separator" />
