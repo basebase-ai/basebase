@@ -5,6 +5,16 @@ from uuid import UUID
 from api.routes import auth
 
 
+def _auth_ctx(user_id: UUID, org_id: UUID):
+    return auth.AuthContext(
+        user_id=user_id,
+        organization_id=org_id,
+        email="requester@example.com",
+        role="member",
+        is_global_admin=False,
+    )
+
+
 class _FakeScalars:
     def __init__(self, rows):
         self._rows = rows
@@ -27,9 +37,13 @@ class _FakeExecuteResult:
     def scalars(self):
         return _FakeScalars(self._rows)
 
+    def scalar_one_or_none(self):
+        return True
+
 
 class _FakeSession:
-    def __init__(self, target_user, mapping, related_rows):
+    def __init__(self, requester_user, target_user, mapping, related_rows):
+        self.requester_user = requester_user
         self.target_user = target_user
         self.mapping = mapping
         self.related_rows = related_rows
@@ -37,6 +51,8 @@ class _FakeSession:
         self.committed = False
 
     async def get(self, _model, model_id):
+        if model_id == self.requester_user.id:
+            return self.requester_user
         if model_id == self.target_user.id:
             return self.target_user
         if model_id == self.mapping.id:
@@ -45,7 +61,7 @@ class _FakeSession:
 
     async def execute(self, _query):
         self.execute_calls += 1
-        if self.execute_calls == 1:
+        if self.execute_calls <= 2:
             return _FakeMembershipResult()
         return _FakeExecuteResult(self.related_rows)
 
@@ -93,7 +109,8 @@ def test_link_identity_links_related_slack_mappings(monkeypatch):
         match_source="unmatched",
     )
 
-    fake_session = _FakeSession(target_user, selected_mapping, [related_mapping])
+    requester_user = SimpleNamespace(id=requester_id, organization_id=org_id, email="requester@example.com")
+    fake_session = _FakeSession(requester_user, target_user, selected_mapping, [related_mapping])
     monkeypatch.setattr(auth, "get_session", lambda **kwargs: _FakeSessionContext(fake_session))
 
     result = asyncio.run(
@@ -103,6 +120,7 @@ def test_link_identity_links_related_slack_mappings(monkeypatch):
                 target_user_id=str(target_user_id),
                 mapping_id=str(selected_mapping_id),
             ),
+            auth=_auth_ctx(requester_id, org_id),
             user_id=str(requester_id),
         )
     )
@@ -116,7 +134,7 @@ def test_link_identity_links_related_slack_mappings(monkeypatch):
     assert related_mapping.user_id == target_user_id
     assert related_mapping.revtops_email == "owner@acme.com"
     assert related_mapping.match_source == "admin_manual_link"
-    assert fake_session.execute_calls == 2  # 1 membership check + 1 related-mapping query
+    assert fake_session.execute_calls == 3  # requester membership + target membership + related-mapping query
     assert fake_session.committed
 
 
@@ -138,7 +156,8 @@ def test_link_identity_non_slack_does_not_attempt_related_linking(monkeypatch):
         match_source="unmatched",
     )
 
-    fake_session = _FakeSession(target_user, selected_mapping, [])
+    requester_user = SimpleNamespace(id=requester_id, organization_id=org_id, email="requester@example.com")
+    fake_session = _FakeSession(requester_user, target_user, selected_mapping, [])
     monkeypatch.setattr(auth, "get_session", lambda **kwargs: _FakeSessionContext(fake_session))
 
     result = asyncio.run(
@@ -148,6 +167,7 @@ def test_link_identity_non_slack_does_not_attempt_related_linking(monkeypatch):
                 target_user_id=str(target_user_id),
                 mapping_id=str(selected_mapping_id),
             ),
+            auth=_auth_ctx(requester_id, org_id),
             user_id=str(requester_id),
         )
     )
@@ -155,5 +175,5 @@ def test_link_identity_non_slack_does_not_attempt_related_linking(monkeypatch):
     assert result == {"status": "linked"}
     assert selected_mapping.user_id == target_user_id
     assert selected_mapping.match_source == "admin_manual_link"
-    assert fake_session.execute_calls == 1  # only the membership check
+    assert fake_session.execute_calls == 2  # requester membership + target membership
     assert fake_session.committed

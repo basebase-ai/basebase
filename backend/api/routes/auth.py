@@ -1613,6 +1613,7 @@ async def get_organization_members(
 async def link_identity(
     org_id: str,
     request: LinkIdentityRequest,
+    auth: AuthContext = Depends(get_current_auth),
     user_id: Optional[str] = None,
 ) -> dict[str, str]:
     """Manually link an unmatched identity mapping to a user.
@@ -1621,8 +1622,11 @@ async def link_identity(
     """
     from models.external_identity_mapping import ExternalIdentityMapping
 
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    if user_id is not None and user_id != auth.user_id_str:
+        raise HTTPException(
+            status_code=403, detail="user_id does not match authenticated user"
+        )
+    requester_uuid = auth.user_id
 
     try:
         org_uuid = UUID(org_id)
@@ -1632,6 +1636,10 @@ async def link_identity(
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
     async with get_session(organization_id=str(org_uuid)) as session:
+        requester: User | None = await session.get(User, requester_uuid)
+        if not requester or await _get_org_membership(session, requester_uuid, org_uuid) is None:
+            raise HTTPException(status_code=403, detail="Not authorized to modify this organization")
+
         # Verify target user belongs to this org (membership or guest home org)
         target_user: User | None = await session.get(User, target_uuid)
         if not target_user:
@@ -1652,7 +1660,7 @@ async def link_identity(
                 org_uuid,
                 target_uuid,
                 mapping_uuid,
-                user_id,
+                requester_uuid,
             )
             raise HTTPException(status_code=403, detail="Guest user identities cannot be manually linked")
 
@@ -1771,6 +1779,7 @@ async def link_identity(
 async def unlink_identity(
     org_id: str,
     request: UnlinkIdentityRequest,
+    auth: AuthContext = Depends(get_current_auth),
     user_id: Optional[str] = None,
 ) -> dict[str, str]:
     """Unlink an identity mapping from a user in the org.
@@ -1781,12 +1790,14 @@ async def unlink_identity(
     """
     from models.external_identity_mapping import ExternalIdentityMapping
 
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    if user_id is not None and user_id != auth.user_id_str:
+        raise HTTPException(
+            status_code=403, detail="user_id does not match authenticated user"
+        )
+    requester_uuid = auth.user_id
 
     try:
         org_uuid = UUID(org_id)
-        requester_uuid = UUID(user_id)
         mapping_uuid = UUID(request.mapping_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
