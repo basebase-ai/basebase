@@ -337,10 +337,19 @@ async def subscribe(
             now = datetime.now(timezone.utc)
             org.subscription_tier = body.tier
             org.subscription_status = "active"
+            old_balance: int = org.credits_balance
             org.credits_included = plan.get("credits_included", 100)
             org.credits_balance = org.credits_included
             org.current_period_start = now
             org.current_period_end = now + timedelta(days=30)
+            from services.credits import record_grant
+            await record_grant(
+                session,
+                organization_id=org.id,
+                amount=org.credits_balance - old_balance,
+                balance_after=org.credits_balance,
+                reason=f"free_tier_signup:{body.tier}",
+            )
             await session.commit()
             return {"status": "ok", "subscription_id": "free"}
 
@@ -421,7 +430,18 @@ async def subscribe(
 
         org.subscription_status = sub.status or "active"
         if sub.status == "active":
+            old_balance: int = org.credits_balance
             org.credits_balance = org.credits_included
+            from services.credits import record_grant
+            await record_grant(
+                session,
+                organization_id=org.id,
+                amount=org.credits_balance - old_balance,
+                balance_after=org.credits_balance,
+                reason=f"paid_subscription:{body.tier}",
+                reference_type="stripe_subscription",
+                reference_id=sub.id,
+            )
             period_end = getattr(sub, "current_period_end", None)
             period_start = getattr(sub, "current_period_start", None)
             if period_end:
@@ -920,6 +940,7 @@ async def _handle_invoice_paid(invoice: Any) -> None:
                 org.credits_balance,
                 credits_included * (cap - 1),
             )
+        old_balance: int = org.credits_balance
         org.credits_balance = credits_included + rollover
         org.credits_included = credits_included
         org.current_period_start = datetime.fromtimestamp(
@@ -927,6 +948,16 @@ async def _handle_invoice_paid(invoice: Any) -> None:
         )
         org.current_period_end = datetime.fromtimestamp(
             invoice.get("period_end", 0), tz=timezone.utc
+        )
+        from services.credits import record_grant
+        await record_grant(
+            session,
+            organization_id=org.id,
+            amount=org.credits_balance - old_balance,
+            balance_after=org.credits_balance,
+            reason=f"subscription_renewal:{effective_tier or 'unknown'}",
+            reference_type="stripe_invoice",
+            reference_id=invoice.get("id"),
         )
         await session.commit()
 
