@@ -7,8 +7,13 @@ the agent can query (read) and write (create, update, test_query).
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
 import logging
 import re
+import time
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -42,7 +47,7 @@ USAGE_GUIDE: str = """# Apps Connector Usage Guide
 - **create**: Create a new app. Requires title, queries, frontend_code.
 - **update**: Update an existing app. Requires app_id, plus queries and/or frontend_code to change.
 - **test_query**: Run a query and return sample data to verify correctness. Requires app_id, query_name.
-- **trigger_workflow**: Trigger a workflow from an app as the current user. Requires app_id, workflow_id, user_id.
+- **trigger_workflow**: Trigger a workflow from an app as the current user. Requires app_id, workflow_id.
 
 ## Recommended workflow
 1. Create the app with operation="create"
@@ -117,6 +122,48 @@ For Revenue by Region (with params), use useAppQuery('revenue_data', { start_dat
 """
 
 
+
+
+def _decode_apps_auth_envelope(envelope: dict[str, Any] | None, *, expected_org: str) -> tuple[str | None, str | None]:
+    """Validate signed server auth envelope and return (request_user_id, delegated_actor)."""
+    if not isinstance(envelope, dict):
+        return None, "Missing auth envelope"
+    token = envelope.get("token")
+    sig = envelope.get("sig")
+    if not isinstance(token, str) or not isinstance(sig, str):
+        return None, "Invalid auth envelope"
+
+    def _b64decode(v: str) -> bytes:
+        padding = '=' * (-len(v) % 4)
+        return base64.urlsafe_b64decode(v + padding)
+
+    try:
+        body = _b64decode(token)
+        sent_sig = _b64decode(sig)
+    except Exception:
+        return None, "Invalid auth envelope encoding"
+
+    expected_sig = hmac.new(settings.SECRET_KEY.encode("utf-8"), body, hashlib.sha256).digest()
+    if not hmac.compare_digest(sent_sig, expected_sig):
+        return None, "Invalid auth envelope signature"
+
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except Exception:
+        return None, "Invalid auth envelope payload"
+
+    now = int(time.time())
+    exp = payload.get("exp")
+    org = payload.get("org")
+    sub = payload.get("sub")
+    delegated_actor = payload.get("delegated_actor")
+    if not isinstance(exp, int) or exp < now:
+        return None, "Auth envelope expired"
+    if not isinstance(org, str) or org != expected_org:
+        return None, "Auth envelope organization mismatch"
+    if not isinstance(sub, str):
+        return None, "Auth envelope missing subject"
+    return sub, delegated_actor if isinstance(delegated_actor, str) else None
 class AppsConnector(BaseConnector):
     """Create, read, update, and test interactive mini-apps (React + SQL)."""
 
@@ -169,12 +216,11 @@ class AppsConnector(BaseConnector):
             WriteOperation(
                 name="trigger_workflow",
                 entity_type="workflow",
-                description="Trigger a workflow for an app as the currently logged-in user. Requires app_id, workflow_id, and user_id.",
+                description="Trigger a workflow for an app as the currently logged-in user. Requires app_id and workflow_id; user context is attached by server auth envelope.",
                 parameters=[
                     {"name": "app_id", "type": "string", "required": True, "description": "UUID of the app"},
                     {"name": "workflow_id", "type": "string", "required": True, "description": "UUID of the workflow to trigger"},
-                    {"name": "user_id", "type": "string", "required": True, "description": "UUID of the currently authenticated user triggering the workflow"},
-                    {"name": "trigger_data", "type": "object", "required": False, "description": "Optional trigger payload passed to the workflow run"},
+                                        {"name": "trigger_data", "type": "object", "required": False, "description": "Optional trigger payload passed to the workflow run"},
                 ],
             ),
         ],
@@ -227,7 +273,7 @@ class AppsConnector(BaseConnector):
     async def _trigger_workflow(self, data: dict[str, Any]) -> dict[str, Any]:
         app_id_raw: str | None = data.get("app_id")
         workflow_id_raw: str | None = data.get("workflow_id")
-        request_user_id_raw: str | None = data.get("user_id")
+        auth_envelope: dict[str, Any] | None = data.get("_auth_envelope")
         trigger_data: dict[str, Any] | None = data.get("trigger_data")
 
         if not app_id_raw:
@@ -235,15 +281,16 @@ class AppsConnector(BaseConnector):
         if not workflow_id_raw:
             return {"error": "workflow_id is required for trigger_workflow operation"}
 
+        request_user_id_raw, delegated_actor = _decode_apps_auth_envelope(auth_envelope, expected_org=self.organization_id)
         if not request_user_id_raw:
-            return {"error": "user_id is required for trigger_workflow operation"}
+            return {"error": "Missing or invalid authenticated user context for trigger_workflow"}
 
         try:
             app_uuid = UUID(app_id_raw)
             workflow_uuid = UUID(workflow_id_raw)
             request_user_uuid = UUID(request_user_id_raw)
         except (TypeError, ValueError):
-            return {"error": "Invalid app_id, workflow_id, or user_id format (must be valid UUIDs)"}
+            return {"error": "Invalid app_id or workflow_id format (must be valid UUIDs)"}
 
         async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
             app_result = await session.execute(select(App).where(App.id == app_uuid))
@@ -295,6 +342,7 @@ class AppsConnector(BaseConnector):
             "app_id": app_id_raw,
             "workflow_id": workflow_id_raw,
             "triggered_by_user_id": str(request_user_uuid),
+            "delegated_actor_user_id": delegated_actor,
         }
 
     @staticmethod

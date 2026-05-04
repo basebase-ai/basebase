@@ -6,7 +6,7 @@ from uuid import UUID
 
 import pytest
 
-from connectors.apps import AppsConnector
+from connectors.apps import AppsConnector, _decode_apps_auth_envelope
 
 
 class _ScalarResult:
@@ -58,6 +58,7 @@ async def test_apps_connector_trigger_workflow_queues_with_current_user(monkeypa
     monkeypatch.setattr("connectors.apps.get_session", _fake_session)
     monkeypatch.setattr("connectors.apps.get_workflow_execution_pause_until", _no_pause)
     monkeypatch.setitem(__import__("sys").modules, "workers.tasks.workflows", SimpleNamespace(execute_workflow=_FakeExecuteWorkflow))
+    monkeypatch.setattr("connectors.apps._decode_apps_auth_envelope", lambda _env, expected_org: ("00000000-0000-0000-0000-000000000005", None))
 
     connector = AppsConnector(organization_id=org_id, user_id=user_id)
     result = await connector.write(
@@ -65,7 +66,7 @@ async def test_apps_connector_trigger_workflow_queues_with_current_user(monkeypa
         {
             "app_id": app_id,
             "workflow_id": workflow_id,
-            "user_id": "00000000-0000-0000-0000-000000000005",
+            "_auth_envelope": {"token": "", "sig": ""},
             "trigger_data": {"from": "test"},
         },
     )
@@ -78,7 +79,7 @@ async def test_apps_connector_trigger_workflow_queues_with_current_user(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_apps_connector_trigger_workflow_requires_request_user_id(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_apps_connector_trigger_workflow_requires_auth_envelope(monkeypatch: pytest.MonkeyPatch) -> None:
     org_id = "00000000-0000-0000-0000-000000000001"
     connector = AppsConnector(organization_id=org_id, user_id="00000000-0000-0000-0000-000000000002")
 
@@ -90,4 +91,10 @@ async def test_apps_connector_trigger_workflow_requires_request_user_id(monkeypa
         },
     )
 
-    assert result == {"error": "user_id is required for trigger_workflow operation"}
+    assert result == {"error": "Missing or invalid authenticated user context for trigger_workflow"}
+
+
+def test_decode_apps_auth_envelope_rejects_missing() -> None:
+    user_id, delegated = _decode_apps_auth_envelope(None, expected_org="00000000-0000-0000-0000-000000000001")
+    assert user_id is None
+    assert delegated == "Missing auth envelope"
