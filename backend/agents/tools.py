@@ -14,9 +14,13 @@ write_on_connector, run_on_connector) which dispatch to the appropriate connecto
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import re
+import time
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -1046,6 +1050,27 @@ async def _query_on_connector(
         )
 
 
+
+
+def _build_apps_auth_envelope(*, authenticated_user_id: str | None, organization_id: str, delegated_actor_user_id: str | None = None, ttl_seconds: int = 300) -> dict[str, Any] | None:
+    """Build signed auth envelope for apps workflow triggers (server-only internal field)."""
+    if not authenticated_user_id:
+        return None
+    now = int(time.time())
+    exp = now + max(60, min(ttl_seconds, 300))
+    payload: dict[str, Any] = {
+        "sub": authenticated_user_id,
+        "org": organization_id,
+        "iat": now,
+        "exp": exp,
+    }
+    if delegated_actor_user_id and delegated_actor_user_id != authenticated_user_id:
+        payload["delegated_actor"] = delegated_actor_user_id
+    body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    sig = hmac.new(settings.SECRET_KEY.encode("utf-8"), body, hashlib.sha256).digest()
+    token = base64.urlsafe_b64encode(body).decode("utf-8").rstrip("=")
+    signature = base64.urlsafe_b64encode(sig).decode("utf-8").rstrip("=")
+    return {"v": 1, "token": token, "sig": signature, "alg": "HS256"}
 async def _write_on_connector(
     params: dict[str, Any],
     organization_id: str,
@@ -1078,6 +1103,14 @@ async def _write_on_connector(
             data["conversation_id"] = ctx_apps["conversation_id"]
         if ctx_apps.get("message_id"):
             data["message_id"] = str(ctx_apps["message_id"]) if ctx_apps["message_id"] else None
+        if operation == "trigger_workflow":
+            envelope = _build_apps_auth_envelope(
+                authenticated_user_id=user_id,
+                organization_id=organization_id,
+                delegated_actor_user_id=None,
+            )
+            if envelope is not None:
+                data["_auth_envelope"] = envelope
         if operation == "create" and not data.get(" app created by"):
             conversation_owner_id = await _resolve_conversation_owner_user_id(
                 organization_id=organization_id,
