@@ -267,6 +267,16 @@ export function SandpackAppRenderer({
         const requestId = data.requestId;
         const workflowId = data.workflowId;
         const payloadAppId = data.appId;
+        const expectedSource = iframeRef.current?.contentWindow ?? null;
+        const expectedOrigin = window.location.origin;
+
+        if (event.source !== expectedSource || event.origin !== expectedOrigin) {
+          console.warn("[Apps iframe bridge] Rejected workflow trigger from unexpected sender", {
+            origin: event.origin,
+            hasExpectedSource: event.source === expectedSource,
+          });
+          return;
+        }
 
         if (!requestId || !workflowId || !payloadAppId || payloadAppId !== appId) {
           (event.source as Window | null)?.postMessage({
