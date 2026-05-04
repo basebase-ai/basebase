@@ -98,6 +98,53 @@ export function useAppQuery(queryName, params, options) {
   return { data, columns, loading, error, refetch };
 }
 
+
+
+// ---------------------------------------------------------------------------
+// triggerWorkflow – request host window to enqueue a workflow from this app
+// ---------------------------------------------------------------------------
+export function triggerWorkflow(workflowId, triggerData) {
+  const requestId = (globalThis.crypto && globalThis.crypto.randomUUID)
+    ? globalThis.crypto.randomUUID()
+    : (Date.now().toString(36) + Math.random().toString(36).slice(2));
+
+  return new Promise((resolve, reject) => {
+    let timeoutId = null;
+
+    const cleanup = () => {
+      window.removeEventListener("message", onMessage);
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+
+    const onMessage = (event) => {
+      const payload = event && event.data ? event.data : null;
+      if (!payload || payload.type !== "app-trigger-workflow-result" || payload.requestId !== requestId) return;
+      cleanup();
+      if (payload.ok) resolve(payload.result || { status: "queued" });
+      else reject(new Error(payload.error || "Failed to trigger workflow"));
+    };
+
+    window.addEventListener("message", onMessage);
+    timeoutId = setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out waiting for workflow trigger response"));
+    }, 15000);
+
+    try {
+      window.parent.postMessage({
+        type: "app-trigger-workflow",
+        requestId,
+        appId: APP_ID,
+        workflowId,
+        triggerData: triggerData && typeof triggerData === "object" ? triggerData : undefined,
+      }, "*");
+    } catch (err) {
+      cleanup();
+      reject(err instanceof Error ? err : new Error("Failed to post message to parent"));
+    }
+  });
+}
+
 // ---------------------------------------------------------------------------
 // useDateRange – convert named periods to { start, end } ISO date strings
 // ---------------------------------------------------------------------------
