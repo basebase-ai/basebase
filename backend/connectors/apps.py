@@ -29,6 +29,8 @@ from models.conversation import Conversation
 from models.database import get_session
 from models.external_identity_mapping import ExternalIdentityMapping
 from models.organization import Organization
+from models.workflow import Workflow
+from services.workflow_pause import get_workflow_execution_pause_until
 from services.public_preview_warmup import warm_public_preview_cache
 from services.slack_identity import get_alternate_slack_user_ids_for_identity
 
@@ -40,6 +42,7 @@ USAGE_GUIDE: str = """# Apps Connector Usage Guide
 - **create**: Create a new app. Requires title, queries, frontend_code.
 - **update**: Update an existing app. Requires app_id, plus queries and/or frontend_code to change.
 - **test_query**: Run a query and return sample data to verify correctness. Requires app_id, query_name.
+- **trigger_workflow**: Trigger a workflow from an app as the current user. Requires app_id, workflow_id.
 
 ## Recommended workflow
 1. Create the app with operation="create"
@@ -163,6 +166,16 @@ class AppsConnector(BaseConnector):
                     {"name": "limit", "type": "integer", "required": False, "description": "Max rows to return (default 5, max 50)"},
                 ],
             ),
+            WriteOperation(
+                name="trigger_workflow",
+                entity_type="workflow",
+                description="Trigger a workflow for an app as the currently logged-in user. Requires app_id and workflow_id.",
+                parameters=[
+                    {"name": "app_id", "type": "string", "required": True, "description": "UUID of the app"},
+                    {"name": "workflow_id", "type": "string", "required": True, "description": "UUID of the workflow to trigger"},
+                    {"name": "trigger_data", "type": "object", "required": False, "description": "Optional trigger payload passed to the workflow run"},
+                ],
+            ),
         ],
         description="Create and update interactive mini-apps with React + SQL queries.",
         usage_guide=USAGE_GUIDE,
@@ -206,7 +219,77 @@ class AppsConnector(BaseConnector):
             return await self._update(data)
         if operation == "test_query":
             return await self._test_query(data)
-        return {"error": f"Unknown operation: {operation}. Use 'create', 'update', or 'test_query'."}
+        if operation == "trigger_workflow":
+            return await self._trigger_workflow(data)
+        return {"error": f"Unknown operation: {operation}. Use 'create', 'update', 'test_query', or 'trigger_workflow'."}
+
+    async def _trigger_workflow(self, data: dict[str, Any]) -> dict[str, Any]:
+        app_id_raw: str | None = data.get("app_id")
+        workflow_id_raw: str | None = data.get("workflow_id")
+        trigger_data: dict[str, Any] | None = data.get("trigger_data")
+
+        if not app_id_raw:
+            return {"error": "app_id is required for trigger_workflow operation"}
+        if not workflow_id_raw:
+            return {"error": "workflow_id is required for trigger_workflow operation"}
+
+        try:
+            app_uuid = UUID(app_id_raw)
+            workflow_uuid = UUID(workflow_id_raw)
+        except ValueError:
+            return {"error": "Invalid app_id or workflow_id format (must be valid UUIDs)"}
+
+        async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
+            app_result = await session.execute(select(App).where(App.id == app_uuid))
+            app = app_result.scalar_one_or_none()
+            if app is None:
+                return {"error": f"App not found: {app_id_raw}"}
+
+            workflow_result = await session.execute(
+                select(Workflow).where(
+                    Workflow.id == workflow_uuid,
+                    Workflow.organization_id == app.organization_id,
+                )
+            )
+            workflow = workflow_result.scalar_one_or_none()
+            if workflow is None:
+                return {"error": f"Workflow not found: {workflow_id_raw}"}
+            if workflow.archived_at is not None:
+                return {"error": "Archived workflows cannot be triggered"}
+            if not workflow.is_enabled:
+                return {"error": "Workflow is disabled"}
+
+        pause_until = await get_workflow_execution_pause_until()
+        if pause_until is not None:
+            return {
+                "error": f"Workflow execution temporarily paused until {pause_until.isoformat()}",
+                "status": "paused",
+            }
+
+        from workers.tasks.workflows import execute_workflow
+
+        task = execute_workflow.delay(
+            workflow_id=workflow_id_raw,
+            triggered_by="app",
+            trigger_data=trigger_data if isinstance(trigger_data, dict) else None,
+            conversation_id=None,
+            organization_id=self.organization_id,
+            triggered_by_user_id=self.user_id,
+        )
+        logger.info(
+            "[AppsConnector] Queued workflow trigger via apps connector app_id=%s workflow_id=%s user_id=%s task_id=%s",
+            app_id_raw,
+            workflow_id_raw,
+            self.user_id,
+            task.id,
+        )
+        return {
+            "status": "queued",
+            "task_id": task.id,
+            "app_id": app_id_raw,
+            "workflow_id": workflow_id_raw,
+            "triggered_by_user_id": self.user_id,
+        }
 
     @staticmethod
     def _validate_queries(queries: dict[str, Any]) -> str | None:
