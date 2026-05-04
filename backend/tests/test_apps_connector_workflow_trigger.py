@@ -40,8 +40,11 @@ async def test_apps_connector_trigger_workflow_uses_envelope_user_not_connector_
     app_obj = SimpleNamespace(id=UUID(app_id), organization_id=UUID(org_id))
     workflow_obj = SimpleNamespace(id=UUID(workflow_id), organization_id=UUID(org_id), archived_at=None, is_enabled=True)
 
+    session_kwargs: dict[str, str] = {}
+
     @asynccontextmanager
     async def _fake_session(**_kwargs):
+        session_kwargs.update(_kwargs)
         yield _FakeSession(app_obj, workflow_obj)
 
     async def _no_pause():
@@ -77,6 +80,7 @@ async def test_apps_connector_trigger_workflow_uses_envelope_user_not_connector_
     assert captured["triggered_by"] == "app"
     assert captured["triggered_by_user_id"] == "00000000-0000-0000-0000-000000000005"
     assert captured["triggered_by_user_id"] != user_id
+    assert session_kwargs["user_id"] == "00000000-0000-0000-0000-000000000005"
 
 
 @pytest.mark.asyncio

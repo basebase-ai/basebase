@@ -292,7 +292,7 @@ class AppsConnector(BaseConnector):
         except (TypeError, ValueError):
             return {"error": "Invalid app_id or workflow_id format (must be valid UUIDs)"}
 
-        async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
+        async with get_session(organization_id=self.organization_id, user_id=str(request_user_uuid)) as session:
             app_result = await session.execute(select(App).where(App.id == app_uuid))
             app = app_result.scalar_one_or_none()
             if app is None:
