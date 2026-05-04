@@ -2543,8 +2543,7 @@ export function Chat({
                           status: block.status === 'complete' ? 'complete' : 'running',
                         })}
                         onRetry={handleRetry}
-                        currentUserId={userId}
-                      />
+                                    />
                     </div>
                   );
                 })}
@@ -2918,7 +2917,6 @@ export function Chat({
           teamMembers={teamMembersData?.members ?? []}
           participants={conversationParticipants}
           existingParticipantIds={new Set(conversationParticipants.map((p) => p.id))}
-          currentUserId={userId}
           onClose={() => setShowInviteModal(false)}
           onParticipantsAdded={(participants) => {
             setConversationParticipants((prev) => {
@@ -2977,7 +2975,6 @@ function InviteParticipantModal({
   teamMembers,
   participants,
   existingParticipantIds,
-  currentUserId,
   onClose,
   onParticipantsAdded,
   onParticipantRemoved,
@@ -2986,7 +2983,6 @@ function InviteParticipantModal({
   teamMembers: readonly TeamMember[];
   participants: readonly ConversationParticipant[];
   existingParticipantIds: ReadonlySet<string>;
-  currentUserId: string;
   onClose: () => void;
   onParticipantsAdded: (participants: InvitedParticipant[]) => void;
   onParticipantRemoved: (participantId: string) => void;
@@ -3000,7 +2996,7 @@ function InviteParticipantModal({
   const selectableMembers: readonly TeamMember[] = useMemo(() => {
     const q: string = searchQuery.trim().toLowerCase();
     const filtered: TeamMember[] = teamMembers.filter(
-      (member) => member.id !== currentUserId && !existingParticipantIds.has(member.id),
+      (member) => !existingParticipantIds.has(member.id),
     );
     const matched: TeamMember[] = filtered.filter((member) => {
       if (q.length === 0) return true;
@@ -3012,7 +3008,7 @@ function InviteParticipantModal({
       const bn: string = (b.name ?? b.email).toLowerCase();
       return an.localeCompare(bn);
     });
-  }, [teamMembers, existingParticipantIds, currentUserId, searchQuery]);
+  }, [teamMembers, existingParticipantIds, searchQuery]);
 
   const toggleSelected = useCallback((memberId: string): void => {
     setSelectedIds((prev) => {
@@ -3135,7 +3131,7 @@ function InviteParticipantModal({
             ) : (
               <ul className="divide-y divide-surface-800">
                 {participants.map((participant) => {
-                  const canRemove: boolean = participant.id !== currentUserId;
+                  const canRemove: boolean = true;
                   const isRemoving: boolean = removingParticipantId === participant.id;
                   return (
                     <li key={participant.id} className="flex items-center gap-3 px-3 py-2.5">
@@ -3151,7 +3147,7 @@ function InviteParticipantModal({
                         disabled={!canRemove || isRemoving || isLoading}
                         onClick={() => void handleRemoveParticipant(participant.id)}
                         className="px-2 py-1 text-xs font-medium rounded-md text-red-300 hover:text-red-200 hover:bg-red-950/40 disabled:opacity-40 disabled:cursor-not-allowed"
-                        title={canRemove ? 'Remove from conversation' : 'You cannot remove yourself here'}
+                        title="Remove from conversation"
                       >
                         {isRemoving ? 'Removing…' : 'Remove'}
                       </button>
@@ -3250,7 +3246,6 @@ function MessageWithBlocks({
   onToolCancel,
   onToolClick,
   onRetry,
-  currentUserId,
 }: {
   message: ChatMessage;
   isGroupedWithPrevious?: boolean;
