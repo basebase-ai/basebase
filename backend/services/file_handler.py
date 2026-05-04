@@ -77,6 +77,8 @@ DOCX_MIME: str = "application/vnd.openxmlformats-officedocument.wordprocessingml
 
 PPTX_MIME: str = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
+PDF_PPTX_TEXT_TRUNCATION_CHARS: int = 250_000
+
 
 @dataclass
 class StoredFile:
@@ -327,7 +329,7 @@ def pdf_to_text_block(sf: StoredFile) -> dict[str, Any]:
         logger.warning("PDF text extraction failed for %s: %s", sf.filename, exc)
         text = f"[Attached PDF '{sf.filename}' could not be extracted — {exc}]"
 
-    max_chars: int = 200_000
+    max_chars: int = PDF_PPTX_TEXT_TRUNCATION_CHARS
     if len(text) > max_chars:
         text = text[:max_chars] + f"\n\n[Truncated — showing first {max_chars:,} characters of {len(text):,} total]"
 
@@ -418,14 +420,15 @@ def _pptx_to_text_block(sf: StoredFile) -> dict[str, Any]:
         parts: list[str] = []
         with zipfile.ZipFile(io.BytesIO(sf.data)) as zf:
             slide_names: list[str] = sorted(
-                name for name in zf.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+                (name for name in zf.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml")),
+                key=_pptx_slide_sort_key,
             )
             for name in slide_names:
                 parts.append(zf.read(name).decode("utf-8"))
 
         xml: str = "\n\n".join(parts)
 
-        max_chars: int = 200_000
+        max_chars: int = PDF_PPTX_TEXT_TRUNCATION_CHARS
         if len(xml) > max_chars:
             xml = xml[:max_chars] + f"\n\n[Truncated — showing first {max_chars:,} characters of {len(xml):,} total]"
 
@@ -480,3 +483,13 @@ def _best_effort_text_block(sf: StoredFile) -> dict[str, Any]:
 def _is_text_mime(mime: str) -> bool:
     """Check if a MIME type is text-like."""
     return mime in TEXT_MIMES or mime.startswith("text/")
+
+
+def _pptx_slide_sort_key(name: str) -> tuple[int, str]:
+    """Sort PowerPoint slide XML names in numeric slide order."""
+    stem: str = name.rsplit("/", 1)[-1]
+    numeric_part: str = stem[len("slide"):].split(".", 1)[0]
+    try:
+        return (int(numeric_part), name)
+    except ValueError:
+        return (10**9, name)
