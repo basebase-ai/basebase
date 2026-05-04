@@ -246,7 +246,14 @@ export function SandpackAppRenderer({
   // Listen for error / token-expired messages from the iframe
   useEffect(() => {
     const handler = (event: MessageEvent): void => {
-      const data = event.data as { type?: string; error?: string } | null;
+      const data = event.data as {
+        type?: string;
+        error?: string;
+        requestId?: string;
+        appId?: string;
+        workflowId?: string;
+        triggerData?: Record<string, unknown>;
+      } | null;
       if (data?.type === "app-error" && data.error && onError) {
         onError(data.error);
       }
@@ -255,6 +262,61 @@ export function SandpackAppRenderer({
         try { sessionStorage.removeItem(`app_token_${appId}`); } catch { /* ignore */ }
         setTokenData(null);
         setTokenRetry((n: number) => n + 1);
+      }
+      if (data?.type === "app-trigger-workflow") {
+        const requestId = data.requestId;
+        const workflowId = data.workflowId;
+        const payloadAppId = data.appId;
+
+        if (!requestId || !workflowId || !payloadAppId || payloadAppId !== appId) {
+          (event.source as Window | null)?.postMessage({
+            type: "app-trigger-workflow-result",
+            requestId,
+            ok: false,
+            error: "Invalid workflow trigger payload",
+          }, "*");
+          return;
+        }
+
+        void (async () => {
+          try {
+            console.info("[Apps iframe bridge] Trigger workflow request", { appId: payloadAppId, workflowId, requestId });
+            const response = await apiRequest<{
+              status: string;
+              task_id: string;
+              workflow_id: string;
+              triggered_by_user_id: string;
+            }>(`/apps/${payloadAppId}/workflows/${workflowId}/trigger`, {
+              method: "POST",
+              body: JSON.stringify({
+                trigger_data: data.triggerData && typeof data.triggerData === "object" ? data.triggerData : undefined,
+              }),
+            });
+            if (response.error || !response.data) {
+              (event.source as Window | null)?.postMessage({
+                type: "app-trigger-workflow-result",
+                requestId,
+                ok: false,
+                error: response.error ?? "Failed to queue workflow",
+              }, "*");
+              return;
+            }
+            (event.source as Window | null)?.postMessage({
+              type: "app-trigger-workflow-result",
+              requestId,
+              ok: true,
+              result: response.data,
+            }, "*");
+          } catch (err) {
+            console.error("[Apps iframe bridge] Trigger workflow failed", err);
+            (event.source as Window | null)?.postMessage({
+              type: "app-trigger-workflow-result",
+              requestId,
+              ok: false,
+              error: err instanceof Error ? err.message : "Failed to trigger workflow",
+            }, "*");
+          }
+        })();
       }
     };
     window.addEventListener("message", handler);
