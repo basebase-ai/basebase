@@ -4,10 +4,11 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, select
 
+from api.auth_middleware import AuthContext, require_organization
 from models.database import get_session
 from models.memory import Memory
 
@@ -101,6 +102,18 @@ def _build_memory_response(memory: Memory) -> MemoryResponse:
         created_at=f"{memory.created_at.isoformat()}Z" if memory.created_at else None,
         updated_at=f"{memory.updated_at.isoformat()}Z" if memory.updated_at else None,
     )
+
+
+def _require_path_org_access(organization_id: str, auth: AuthContext) -> UUID:
+    """Validate the path organization_id matches authenticated organization scope."""
+    try:
+        path_org_uuid = UUID(organization_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid ID format")
+
+    if auth.organization_id != path_org_uuid:
+        raise HTTPException(status_code=403, detail="Organization access denied")
+    return path_org_uuid
 
 
 @router.get("/{organization_id}", response_model=MemoryDashboardResponse)
@@ -239,16 +252,18 @@ async def delete_user_memory(organization_id: str, memory_id: str, user_id: str)
 
 
 @router.get("/{organization_id}/channel", response_model=MemoryResponse | None)
-async def get_channel_memory(organization_id: str, source: str, channel_id: str) -> MemoryResponse | None:
+async def get_channel_memory(
+    organization_id: str,
+    source: str,
+    channel_id: str,
+    auth: AuthContext = Depends(require_organization),
+) -> MemoryResponse | None:
     """Get channel personality memory by source + normalized channel identifier."""
-    try:
-        org_uuid = UUID(organization_id)
-        normalized_channel_id = normalize_channel_scope_channel_id(source, channel_id)
-        normalized_source = source.strip().lower()
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid ID format")
+    org_uuid = _require_path_org_access(organization_id, auth)
+    normalized_channel_id = normalize_channel_scope_channel_id(source, channel_id)
+    normalized_source = source.strip().lower()
 
-    async with get_session(organization_id=organization_id) as session:
+    async with get_session(organization_id=str(auth.organization_id), user_id=str(auth.user_id)) as session:
         result = await session.execute(
             select(Memory)
             .where(
@@ -287,6 +302,7 @@ async def upsert_channel_memory(
     source: str,
     channel_id: str,
     request: UpdateMemoryRequest,
+    auth: AuthContext = Depends(require_organization),
 ) -> MemoryResponse:
     """Create/update channel personality memory by source + channel identifier."""
     content = request.content.strip()
@@ -294,14 +310,11 @@ async def upsert_channel_memory(
         raise HTTPException(status_code=400, detail="content is required")
     validate_memory_content(content, CHANNEL_PERSONALITY_CATEGORY)
 
-    try:
-        org_uuid = UUID(organization_id)
-        normalized_source = source.strip().lower()
-        normalized_channel_id = normalize_channel_scope_channel_id(source, channel_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid ID format")
+    org_uuid = _require_path_org_access(organization_id, auth)
+    normalized_source = source.strip().lower()
+    normalized_channel_id = normalize_channel_scope_channel_id(source, channel_id)
 
-    async with get_session(organization_id=organization_id) as session:
+    async with get_session(organization_id=str(auth.organization_id), user_id=str(auth.user_id)) as session:
         result = await session.execute(
             select(Memory).where(
                 Memory.organization_id == org_uuid,
@@ -325,7 +338,7 @@ async def upsert_channel_memory(
                 scope_type="channel",
                 scope_source=normalized_source,
                 scope_channel_id=normalized_channel_id,
-                created_by_user_id=None,
+                created_by_user_id=auth.user_id,
             )
             session.add(memory)
             action = "created"
@@ -344,16 +357,18 @@ async def upsert_channel_memory(
 
 
 @router.delete("/{organization_id}/channel")
-async def delete_channel_memory(organization_id: str, source: str, channel_id: str) -> dict[str, str]:
+async def delete_channel_memory(
+    organization_id: str,
+    source: str,
+    channel_id: str,
+    auth: AuthContext = Depends(require_organization),
+) -> dict[str, str]:
     """Delete channel personality memory by source + channel identifier."""
-    try:
-        org_uuid = UUID(organization_id)
-        normalized_source = source.strip().lower()
-        normalized_channel_id = normalize_channel_scope_channel_id(source, channel_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid ID format")
+    org_uuid = _require_path_org_access(organization_id, auth)
+    normalized_source = source.strip().lower()
+    normalized_channel_id = normalize_channel_scope_channel_id(source, channel_id)
 
-    async with get_session(organization_id=organization_id) as session:
+    async with get_session(organization_id=str(auth.organization_id), user_id=str(auth.user_id)) as session:
         result = await session.execute(
             select(Memory).where(
                 Memory.organization_id == org_uuid,
