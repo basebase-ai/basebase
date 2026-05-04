@@ -8,13 +8,18 @@ from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 
 
+SAFE_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+
+
 def decode_data_url_image(data_url: str | None) -> tuple[bytes, str] | None:
     if not data_url or not data_url.startswith("data:image/"):
         return None
     marker = ";base64,"
     if marker not in data_url:
         return None
-    mime_type = data_url[5:data_url.index(marker)]
+    mime_type = data_url[5:data_url.index(marker)].lower()
+    if mime_type not in SAFE_IMAGE_MIME_TYPES:
+        return None
     encoded = data_url[data_url.index(marker) + len(marker):]
     try:
         return base64.b64decode(encoded, validate=True), mime_type
