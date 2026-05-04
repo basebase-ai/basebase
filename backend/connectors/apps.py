@@ -42,7 +42,7 @@ USAGE_GUIDE: str = """# Apps Connector Usage Guide
 - **create**: Create a new app. Requires title, queries, frontend_code.
 - **update**: Update an existing app. Requires app_id, plus queries and/or frontend_code to change.
 - **test_query**: Run a query and return sample data to verify correctness. Requires app_id, query_name.
-- **trigger_workflow**: Trigger a workflow from an app as the current user. Requires app_id, workflow_id.
+- **trigger_workflow**: Trigger a workflow from an app as the current user. Requires app_id, workflow_id, user_id.
 
 ## Recommended workflow
 1. Create the app with operation="create"
@@ -169,10 +169,11 @@ class AppsConnector(BaseConnector):
             WriteOperation(
                 name="trigger_workflow",
                 entity_type="workflow",
-                description="Trigger a workflow for an app as the currently logged-in user. Requires app_id and workflow_id.",
+                description="Trigger a workflow for an app as the currently logged-in user. Requires app_id, workflow_id, and user_id.",
                 parameters=[
                     {"name": "app_id", "type": "string", "required": True, "description": "UUID of the app"},
                     {"name": "workflow_id", "type": "string", "required": True, "description": "UUID of the workflow to trigger"},
+                    {"name": "user_id", "type": "string", "required": True, "description": "UUID of the currently authenticated user triggering the workflow"},
                     {"name": "trigger_data", "type": "object", "required": False, "description": "Optional trigger payload passed to the workflow run"},
                 ],
             ),
