@@ -11,7 +11,7 @@
 
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import type { View, ChatSummary, OrganizationInfo } from './AppLayout';
-import { useAppStore, useAuthStore, useChatStore, useIsGlobalAdmin, useActiveTasksByConversation, type UserOrganization, type AdminPanelTab } from '../store';
+import { useAppStore, useAuthStore, useChatStore, useIsGlobalAdmin, useIsOrgAdmin, useActiveTasksByConversation, type UserOrganization, type AdminPanelTab } from '../store';
 import { apiRequest } from '../lib/api';
 import { Avatar } from './Avatar';
 import { ScopeLockIcon } from './ScopeVisibilityIcons';
@@ -155,12 +155,16 @@ function OrgPanel({
   currentView,
   onViewChange,
   onCreateNewOrg,
+  connectedSourcesCount,
+  workflowCount,
   pendingChangesCount,
   onClosePanel,
 }: {
   currentView: View;
   onViewChange: (view: View) => void;
   onCreateNewOrg: () => void;
+  connectedSourcesCount: number;
+  workflowCount: number;
   pendingChangesCount: number;
   onClosePanel: () => void;
 }): JSX.Element {
@@ -198,6 +202,9 @@ function OrgPanel({
     onClosePanel();
     onViewChange(view);
   }, [onClosePanel, onViewChange]);
+
+  void connectedSourcesCount;
+  void workflowCount;
 
   return (
     <div className="h-full overflow-y-auto scrollbar-thin px-2 pb-2" role="menu" aria-label="Workspace menu">
@@ -290,6 +297,8 @@ interface SidebarProps {
   onToggleCollapse: () => void;
   currentView: View;
   onViewChange: (view: View) => void;
+  connectedSourcesCount: number;
+  workflowCount: number;
   pendingChangesCount: number;
   recentChats: ChatSummary[];
   onSelectChat: (id: string) => void;
@@ -405,6 +414,8 @@ export function Sidebar({
   // onToggleCollapse — kept in SidebarProps for future re-introduction
   currentView,
   onViewChange,
+  connectedSourcesCount,
+  workflowCount,
   pendingChangesCount,
   recentChats,
   onSelectChat,
@@ -618,6 +629,7 @@ function ChatAccordion({
   onViewChange: (view: View) => void;
   onSelectChat: (id: string) => void;
 }): JSX.Element | null {
+  const isOrgAdmin: boolean = useIsOrgAdmin();
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
   const [channelPersonalityTarget, setChannelPersonalityTarget] = useState<{
