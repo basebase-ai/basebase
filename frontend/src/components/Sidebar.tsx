@@ -472,15 +472,16 @@ export function Sidebar({
         />
       </div>
 
-      {currentView !== 'admin' && (
-        <div className="relative flex-1 min-h-0">
-          {/* Chats layer */}
-          <div
-            className={`absolute inset-0 flex flex-col transition-opacity duration-150 ${
-              panelMode === 'chats' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-            }`}
-            aria-hidden={panelMode !== 'chats'}
-          >
+      <div className="relative flex-1 min-h-0">
+          {currentView !== 'admin' && (
+            <>
+              {/* Chats layer */}
+              <div
+                className={`absolute inset-0 flex flex-col transition-opacity duration-150 ${
+                  panelMode === 'chats' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+                }`}
+                aria-hidden={panelMode !== 'chats'}
+              >
             <div className={`px-3 py-2 flex-shrink-0 flex items-center gap-1.5 ${collapsed ? 'flex-col' : ''}`}>
               <button
                 type="button"
@@ -518,8 +519,10 @@ export function Sidebar({
               }}
             />
 
-            {collapsed && <div className="flex-1" />}
-          </div>
+              {collapsed && <div className="flex-1" />}
+            </div>
+            </>
+          )}
 
           {/* Org / workspace layer */}
           {!collapsed && (
@@ -541,7 +544,6 @@ export function Sidebar({
             </div>
           )}
         </div>
-      )}
 
       {currentView === 'admin' && isGlobalAdmin && (
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
