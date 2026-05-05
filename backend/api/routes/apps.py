@@ -256,7 +256,7 @@ async def trigger_app_workflow(
     trigger_data: dict[str, Any] | None = request_body.trigger_data
     request_id: str | None = request_body.request_id
     trigger_data_keys = sorted(trigger_data.keys()) if isinstance(trigger_data, dict) else []
-    logger.info(
+    logger.warning(
         "[Apps API] Received app workflow trigger request app_id=%s workflow_id=%s organization_id=%s user_id=%s request_id=%s trigger_data_keys=%s",
         app_id,
         workflow_id,
@@ -355,7 +355,7 @@ async def trigger_app_workflow(
         await session.commit()
         await session.refresh(run)
         run_id = str(run.id)
-        logger.info(
+        logger.warning(
             "[Apps API] Created pending workflow run from app app_id=%s workflow_id=%s run_id=%s user_id=%s request_id=%s",
             app_id,
             workflow_id,
@@ -375,7 +375,7 @@ async def trigger_app_workflow(
         triggered_by_user_id=auth.user_id_str,
         workflow_run_id=run_id,
     )
-    logger.info(
+    logger.warning(
         "[Apps API] Queued workflow from app app_id=%s workflow_id=%s run_id=%s task_id=%s user_id=%s request_id=%s",
         app_id,
         workflow_id,

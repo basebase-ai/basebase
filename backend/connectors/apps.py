@@ -275,6 +275,7 @@ class AppsConnector(BaseConnector):
         workflow_id_raw: str | None = data.get("workflow_id")
         auth_envelope: dict[str, Any] | None = data.get("_auth_envelope")
         trigger_data: dict[str, Any] | None = data.get("trigger_data")
+        request_id: str | None = data.get("request_id") if isinstance(data.get("request_id"), str) else None
 
         if not app_id_raw:
             return {"error": "app_id is required for trigger_workflow operation"}
@@ -284,6 +285,15 @@ class AppsConnector(BaseConnector):
         request_user_id_raw, delegated_actor = _decode_apps_auth_envelope(auth_envelope, expected_org=self.organization_id)
         if not request_user_id_raw:
             return {"error": "Missing or invalid authenticated user context for trigger_workflow"}
+        logger.warning(
+            "[AppsConnector] Received trigger_workflow request app_id=%s workflow_id=%s request_id=%s connector_owner_user_id=%s delegated_actor_user_id=%s trigger_data_keys=%s",
+            app_id_raw,
+            workflow_id_raw,
+            request_id,
+            self.user_id,
+            delegated_actor,
+            sorted(trigger_data.keys()) if isinstance(trigger_data, dict) else [],
+        )
 
         try:
             app_uuid = UUID(app_id_raw)
@@ -329,10 +339,11 @@ class AppsConnector(BaseConnector):
             organization_id=self.organization_id,
             triggered_by_user_id=str(request_user_uuid),
         )
-        logger.info(
-            "[AppsConnector] Queued workflow trigger via apps connector app_id=%s workflow_id=%s triggered_user_id=%s connector_owner_user_id=%s delegated_actor_user_id=%s task_id=%s",
+        logger.warning(
+            "[AppsConnector] Queued workflow trigger via apps connector app_id=%s workflow_id=%s request_id=%s triggered_user_id=%s connector_owner_user_id=%s delegated_actor_user_id=%s task_id=%s",
             app_id_raw,
             workflow_id_raw,
+            request_id,
             request_user_uuid,
             self.user_id,
             delegated_actor,
@@ -345,6 +356,7 @@ class AppsConnector(BaseConnector):
             "workflow_id": workflow_id_raw,
             "triggered_by_user_id": str(request_user_uuid),
             "delegated_actor_user_id": delegated_actor,
+            "request_id": request_id,
         }
 
     @staticmethod

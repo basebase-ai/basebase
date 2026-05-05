@@ -477,7 +477,7 @@ export function SandpackAppRenderer({
             const triggerDataKeys = data.triggerData && typeof data.triggerData === "object"
               ? Object.keys(data.triggerData).sort()
               : [];
-            console.info("[Apps iframe bridge] Trigger workflow request", {
+            console.warn("[Apps iframe bridge] Trigger workflow request", {
               appId: payloadAppId,
               workflowId,
               requestId,
@@ -498,7 +498,7 @@ export function SandpackAppRenderer({
               }),
             });
             if (response.error || !response.data) {
-              console.error("[Apps iframe bridge] Workflow trigger API rejected request", {
+              console.warn("[Apps iframe bridge] Workflow trigger API rejected request", {
                 appId: payloadAppId,
                 workflowId,
                 requestId,
@@ -512,7 +512,7 @@ export function SandpackAppRenderer({
               }, "*");
               return;
             }
-            console.info("[Apps iframe bridge] Workflow trigger queued", {
+            console.warn("[Apps iframe bridge] Workflow trigger queued", {
               appId: payloadAppId,
               workflowId,
               requestId,
@@ -526,7 +526,7 @@ export function SandpackAppRenderer({
               result: response.data,
             }, "*");
           } catch (err) {
-            console.error("[Apps iframe bridge] Trigger workflow failed", err);
+            console.warn("[Apps iframe bridge] Trigger workflow failed", err);
             (event.source as Window | null)?.postMessage({
               type: "app-trigger-workflow-result",
               requestId,
