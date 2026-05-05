@@ -2726,17 +2726,15 @@ async def delete_organization(
 async def update_guest_user(
     org_id: str,
     request: UpdateGuestUserRequest,
-    user_id: Optional[str] = None,
+    auth: AuthContext = Depends(get_current_auth),
 ) -> dict[str, bool]:
     """Enable/disable guest user fallback for unmapped Slack identities."""
     try:
         org_uuid = UUID(org_id)
-        user_uuid = UUID(user_id) if user_id else None
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
-    if not user_uuid:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    user_uuid = auth.user_id
 
     async with get_session(organization_id=org_id) as session:
         requesting_user = await session.get(User, user_uuid)
