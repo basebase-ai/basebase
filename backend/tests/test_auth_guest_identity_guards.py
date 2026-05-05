@@ -163,7 +163,13 @@ def test_update_guest_user_scopes_session_to_org(monkeypatch):
         auth.update_guest_user(
             org_id=str(org_id),
             request=auth.UpdateGuestUserRequest(enabled=True),
-            user_id=str(requester_id),
+            auth=auth.AuthContext(
+                user_id=requester_id,
+                organization_id=org_id,
+                email="admin@example.com",
+                role="admin",
+                is_global_admin=False,
+            ),
         )
     )
 
