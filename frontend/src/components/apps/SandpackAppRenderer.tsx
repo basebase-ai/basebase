@@ -456,7 +456,15 @@ export function SandpackAppRenderer({
         const requestId = data.requestId;
         const workflowId = data.workflowId;
         const payloadAppId = data.appId;
-        if (!requestId || !workflowId || !payloadAppId || payloadAppId !== appId) {
+        const payloadAppIdMatchesCurrentApp = (() => {
+          if (!payloadAppId) return false;
+          try {
+            return payloadAppId.toLowerCase() === appId.toLowerCase();
+          } catch {
+            return false;
+          }
+        })();
+        if (!requestId || !workflowId || !payloadAppIdMatchesCurrentApp) {
           console.warn("[Apps iframe bridge] Invalid workflow trigger payload", {
             requestId,
             workflowId,
