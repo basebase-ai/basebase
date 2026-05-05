@@ -304,10 +304,13 @@ def test_log_bot_dm_message_uses_admin_session_for_private_conversations(monkeyp
             return conversation_id
 
     class _FakeSession:
+        added_rows = []
+
         async def execute(self, *_args, **_kwargs):
             return _FakeResult()
 
-        def add(self, _row) -> None:
+        def add(self, row) -> None:
+            self.added_rows.append(row)
             return None
 
         async def commit(self) -> None:
@@ -331,6 +334,13 @@ def test_log_bot_dm_message_uses_admin_session_for_private_conversations(monkeyp
         "channel": "D0AA3KFETUY",
         "text": "bot reply in private convo",
         "bot_id": "B123",
+        "files": [
+            {
+                "id": "F1",
+                "name": "brief.txt",
+                "url_private_download": "https://files.slack.com/files-pri/T1-F1/download/brief.txt",
+            }
+        ],
     }
     persisted = asyncio.run(
         slack_events._log_bot_dm_message_without_processing(
@@ -343,3 +353,6 @@ def test_log_bot_dm_message_uses_admin_session_for_private_conversations(monkeyp
 
     assert persisted is True
     assert used_admin_session["value"] is True
+    assert _FakeSession.added_rows
+    stored_message = _FakeSession.added_rows[0]
+    assert "Files: brief.txt: https://files.slack.com/files-pri/T1-F1/download/brief.txt" in stored_message.content

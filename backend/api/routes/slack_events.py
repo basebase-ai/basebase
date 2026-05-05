@@ -227,6 +227,23 @@ async def _log_bot_dm_message_without_processing(
             return False
 
         content_text: str = text_body.strip() or "(bot message with attachments)"
+        if files:
+            persisted_file_links: str = _format_slack_file_links_for_storage(files)
+            if persisted_file_links:
+                content_text = f"{content_text}\n\nFiles: {persisted_file_links}"
+                logger.info(
+                    "[slack_events] Appended %d Slack file link(s) into persisted bot DM content channel=%s thread=%s",
+                    len(files),
+                    channel_id,
+                    thread_ts,
+                )
+            else:
+                logger.info(
+                    "[slack_events] Slack bot DM had %d attachment(s) but none had storable links channel=%s thread=%s",
+                    len(files),
+                    channel_id,
+                    thread_ts,
+                )
         content_blocks: list[dict[str, Any]] = [
             {
                 "type": "text",
@@ -791,6 +808,23 @@ def _extract_mentions_from_slack_text(
         else:
             mentions.append({"type": "user", "external_user_id": slack_uid})
     return mentions
+
+
+def _format_slack_file_links_for_storage(files: list[dict[str, Any]]) -> str:
+    """Build a compact human-readable list of Slack file links for persisted message text."""
+    rendered_links: list[str] = []
+    for file_data in files:
+        file_name: str = str(file_data.get("name") or file_data.get("title") or "attachment").strip() or "attachment"
+        file_url: str = str(
+            file_data.get("url_private_download")
+            or file_data.get("url_private")
+            or file_data.get("permalink")
+            or ""
+        ).strip()
+        if not file_url:
+            continue
+        rendered_links.append(f"{file_name}: {file_url}")
+    return "; ".join(rendered_links)
 
 
 def _extract_bot_user_ids(payload: dict[str, Any]) -> set[str]:
