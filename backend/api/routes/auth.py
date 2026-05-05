@@ -2350,13 +2350,10 @@ async def update_organization_member_role(
     org_id: str,
     target_user_id: str,
     request: UpdateMemberRoleRequest,
-    user_id: Optional[str] = None,
+    auth: AuthContext = Depends(get_current_auth),
 ) -> dict[str, str]:
     """Promote or demote a member. Requires org admin for this org, or global_admin."""
     from models.org_member import OrgMember
-
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
 
     if request.role not in {"admin", "member"}:
         raise HTTPException(status_code=400, detail="Role must be 'admin' or 'member'")
@@ -2364,7 +2361,7 @@ async def update_organization_member_role(
     try:
         org_uuid = UUID(org_id)
         target_uuid = UUID(target_user_id)
-        requester_uuid = UUID(user_id)
+        requester_uuid = UUID(auth.user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
