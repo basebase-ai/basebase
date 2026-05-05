@@ -616,9 +616,9 @@ class TestChokepoints:
         assert "connect to HubSpot as yourself" in str(result["warning"])
 
 
-    @pytest.mark.parametrize("connector_slug", ["apps", "web_search"])
-    def test_write_on_connector_does_not_add_warning_for_apps_or_web(self, connector_slug: str) -> None:
-        """Cross-user Apps/Web connector use should not add teammate connector warning."""
+    @pytest.mark.parametrize("connector_slug", ["apps", "web_search", "twilio", "code_sandbox", "artifacts"])
+    def test_write_on_connector_does_not_add_warning_for_org_scoped_connectors(self, connector_slug: str) -> None:
+        """Cross-user org-scoped connector use should not add teammate connector warning."""
         from agents import tools
 
         fake_instance = MagicMock()
