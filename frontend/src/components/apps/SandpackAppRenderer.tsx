@@ -29,6 +29,9 @@ interface AppApiData {
   frontend_code: string;
   frontend_code_compiled?: string | null;
 }
+interface ExternalNavigationPrompt {
+  href: string;
+}
 
 interface SandpackAppRendererProps {
   appId: string;
@@ -154,11 +157,24 @@ window.__REVTOPS_PUBLIC_MODE__ = ${opts.publicMode ? "true" : "false"};
     if (url.startsWith("/") || url.startsWith("#")) return true;
     return SAFE_SCHEMES.test(url);
   }
+  function isLikelyExternalUrl(raw) {
+    if (typeof raw !== "string") return false;
+    const url = raw.trim();
+    if (!url || url.startsWith("#") || url.startsWith("/")) return false;
+    try {
+      const parsed = new URL(url, window.location.href);
+      return parsed.origin !== window.location.origin && /^https?:/i.test(parsed.protocol);
+    } catch(_) {
+      return /^https?:/i.test(url);
+    }
+  }
   function sanitizeFeatures(features) {
     const base = (typeof features === "string" && features.trim()) ? features + "," : "";
     return base + "noopener,noreferrer";
   }
   const originalOpen = window.open ? window.open.bind(window) : null;
+  let pendingExternalHref = null;
+  let pendingExternalTarget = "_blank";
   if (originalOpen) {
     window.open = function(url, target, features) {
       if (!isSafeUrl(typeof url === "string" ? url : String(url ?? ""))) {
@@ -169,6 +185,16 @@ window.__REVTOPS_PUBLIC_MODE__ = ${opts.publicMode ? "true" : "false"};
       return opened;
     };
   }
+  window.addEventListener("message", function(ev) {
+    const data = ev && ev.data ? ev.data : null;
+    if (!data || data.type !== "external-link-navigation-decision") return;
+    if (!pendingExternalHref || typeof data.href !== "string" || data.href !== pendingExternalHref) return;
+    if (data.allow === true) {
+      originalOpen(pendingExternalHref, pendingExternalTarget, sanitizeFeatures(""));
+    }
+    pendingExternalHref = null;
+    pendingExternalTarget = "_blank";
+  });
   document.addEventListener("click", function(ev){
     const t = ev.target;
     if (!(t instanceof Element)) return;
@@ -181,6 +207,12 @@ window.__REVTOPS_PUBLIC_MODE__ = ${opts.publicMode ? "true" : "false"};
     }
     a.setAttribute("rel", "noopener noreferrer");
     if (!a.getAttribute("target")) a.setAttribute("target", "_blank");
+    if (isLikelyExternalUrl(href)) {
+      ev.preventDefault();
+      pendingExternalHref = href;
+      pendingExternalTarget = a.getAttribute("target") || "_blank";
+      try { window.parent.postMessage({ type:"external-link-navigation", href: href }, "*"); } catch(_) {}
+    }
   }, true);
 })();
 
@@ -239,6 +271,7 @@ export function SandpackAppRenderer({
   const [appCode, setAppCode] = useState<string | null>(initialCode ?? null);
   const [appCodeCompiled, setAppCodeCompiled] = useState<string | null | undefined>(initialCompiled);
   const [error, setError] = useState<string | null>(null);
+  const [externalNavPrompt, setExternalNavPrompt] = useState<ExternalNavigationPrompt | null>(null);
   const [tokenRetry, setTokenRetry] = useState<number>(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const retryingRef = useRef<boolean>(false);
@@ -298,11 +331,20 @@ export function SandpackAppRenderer({
       const data = event.data as {
         type?: string;
         error?: string;
+        href?: string;
+        requestExternalId?: string;
         requestId?: string;
         appId?: string;
         workflowId?: string;
         triggerData?: Record<string, unknown>;
       } | null;
+      if (data?.type === "external-link-navigation") {
+        const href: string = typeof data.href === "string" && data.href.length > 0 ? data.href : "";
+        if (href) {
+          setExternalNavPrompt({ href });
+        }
+        return;
+      }
       if (data?.type === "app-error" && data.error && onError) {
         onError(data.error);
       }
@@ -532,10 +574,54 @@ export function SandpackAppRenderer({
 
   return (
     <div className="w-full h-full min-h-[400px] relative">
+      {externalNavPrompt ? (
+        <div className="absolute top-2 left-2 right-2 z-20 rounded-md border border-amber-500/40 bg-zinc-900/95 px-3 py-3 text-xs text-amber-100 shadow-lg">
+          <p className="mb-2">You are leaving Basebase and opening an external link:</p>
+          <p className="mb-3 break-all text-amber-200">{externalNavPrompt.href}</p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded bg-amber-500 px-2 py-1 text-[11px] font-medium text-black hover:bg-amber-400"
+              onClick={() => {
+                const expectedSource = iframeRef.current?.contentWindow ?? null;
+                expectedSource?.postMessage(
+                  {
+                    type: "external-link-navigation-decision",
+                    href: externalNavPrompt.href,
+                    allow: true,
+                  },
+                  "*",
+                );
+                setExternalNavPrompt(null);
+              }}
+            >
+              Open link
+            </button>
+            <button
+              type="button"
+              className="rounded border border-zinc-600 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-800"
+              onClick={() => {
+                const expectedSource = iframeRef.current?.contentWindow ?? null;
+                expectedSource?.postMessage(
+                  {
+                    type: "external-link-navigation-decision",
+                    href: externalNavPrompt.href,
+                    allow: false,
+                  },
+                  "*",
+                );
+                setExternalNavPrompt(null);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
       <iframe
         ref={iframeRef}
         srcDoc={srcdoc}
-        sandbox="allow-scripts allow-same-origin allow-popups"
+        sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
         style={{
           width: "100%",
           height: "100%",
