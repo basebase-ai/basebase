@@ -101,10 +101,14 @@ export function useAppQuery(queryName, params, options) {
 
 
 // ---------------------------------------------------------------------------
-// triggerWorkflow – request host window to enqueue a workflow from this app
+// triggerWorkflow – first-class app SDK API to enqueue a workflow run from this app
 //
 // Usage:
 // await triggerWorkflow("<workflow-id>", { foo: "bar" });
+//
+// Note: Do not hand-roll window.parent.postMessage("app-trigger-workflow").
+// This helper is the supported codepath and handles request IDs, status updates,
+// validation compatibility, and timeout behavior.
 //
 // Optional status listener:
 // await triggerWorkflow("<workflow-id>", { foo: "bar" }, {
@@ -176,6 +180,7 @@ export function triggerWorkflow(workflowId, triggerData, options) {
         appId: APP_ID,
         workflowId,
         triggerData: sanitizedTriggerData,
+        transport: "sdk.triggerWorkflow",
       }, "*");
     } catch (err) {
       cleanup();

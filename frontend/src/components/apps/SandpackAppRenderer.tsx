@@ -464,6 +464,15 @@ export function SandpackAppRenderer({
             return false;
           }
         })();
+        if (data.transport !== "sdk.triggerWorkflow") {
+          console.warn("[Apps iframe bridge] Workflow trigger should use first-class SDK helper triggerWorkflow() instead of a hand-rolled postMessage", {
+            appId: payloadAppId,
+            workflowId,
+            requestId,
+            transport: data.transport,
+          });
+        }
+
         if (!requestId || !workflowId || !payloadAppIdMatchesCurrentApp) {
           console.warn("[Apps iframe bridge] Invalid workflow trigger payload", {
             requestId,
