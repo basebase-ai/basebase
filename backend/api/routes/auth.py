@@ -2361,7 +2361,7 @@ async def update_organization_member_role(
     try:
         org_uuid = UUID(org_id)
         target_uuid = UUID(target_user_id)
-        requester_uuid = UUID(auth.user_id)
+        requester_uuid = auth.user_id
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
