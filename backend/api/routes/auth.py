@@ -732,7 +732,10 @@ class SyncUserResponse(BaseModel):
 
 
 @router.post("/users/sync", response_model=SyncUserResponse)
-async def sync_user(request: SyncUserRequest) -> SyncUserResponse:
+async def sync_user(
+    request: SyncUserRequest,
+    auth: AuthContext = Depends(get_current_auth),
+) -> SyncUserResponse:
     """Sync a user from Supabase auth to our database.
     
     Called when a user authenticates via Supabase OAuth.
@@ -742,6 +745,14 @@ async def sync_user(request: SyncUserRequest) -> SyncUserResponse:
         user_uuid = UUID(request.id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid user ID")
+
+    if auth.user_id != user_uuid:
+        raise HTTPException(status_code=403, detail="User ID does not match authenticated user")
+
+    request_email = request.email.strip().lower()
+    auth_email = (auth.email or "").strip().lower()
+    if auth_email and request_email != auth_email:
+        raise HTTPException(status_code=403, detail="Email does not match authenticated user")
 
     org_uuid: Optional[UUID] = None
     if request.organization_id:
