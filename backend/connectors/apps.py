@@ -72,6 +72,25 @@ The App component receives NO props. Data is NOT passed in. You MUST call `useAp
   - period: "last_7d", "last_30d", "last_90d", "last_quarter", "this_quarter", "ytd", "last_year", "this_year"
 - Spinner — loading spinner component
 - ErrorBanner({ message }) — error display component
+- triggerWorkflow(workflowId, triggerData?, options?) → Promise<{ok, runId, taskId, requestId, workflowId}>
+
+## CRITICAL — Triggering workflows from app frontend_code
+- Always call the SDK helper: `triggerWorkflow(...)` from `@revtops/app-sdk`.
+- Do NOT hand-roll `window.parent.postMessage(...)` for workflow triggers.
+- Do NOT invent message types (for example `basebase:trigger_workflow`).
+- The SDK handles the correct host protocol (`app-trigger-workflow`), requestId correlation, and timeout handling.
+
+Example:
+```jsx
+import { triggerWorkflow } from '@revtops/app-sdk';
+
+async function onRunWorkflow() {
+  const result = await triggerWorkflow('00000000-0000-0000-0000-000000000000', { source: 'button_click' });
+  if (!result?.ok) {
+    throw new Error(result?.error || 'Workflow trigger failed');
+  }
+}
+```
 
 ## Rules
 - All SQL must be SELECT-only. No INSERT/UPDATE/DELETE.
