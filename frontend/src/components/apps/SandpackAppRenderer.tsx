@@ -141,6 +141,49 @@ window.__REVTOPS_API_BASE__  = ${JSON.stringify(opts.apiBase)};
 window.__REVTOPS_APP_ID__    = ${JSON.stringify(opts.appId)};
 window.__REVTOPS_PUBLIC_MODE__ = ${opts.publicMode ? "true" : "false"};
 
+// Harden popup behavior for untrusted app code:
+// - block javascript:/data: URLs
+// - always open with noopener,noreferrer
+// - sever opener references when possible
+(function(){
+  const SAFE_SCHEMES = /^(https?:|mailto:|tel:)/i;
+  function isSafeUrl(raw) {
+    if (typeof raw !== "string") return false;
+    const url = raw.trim();
+    if (!url) return false;
+    if (url.startsWith("/") || url.startsWith("#")) return true;
+    return SAFE_SCHEMES.test(url);
+  }
+  function sanitizeFeatures(features) {
+    const base = (typeof features === "string" && features.trim()) ? features + "," : "";
+    return base + "noopener,noreferrer";
+  }
+  const originalOpen = window.open ? window.open.bind(window) : null;
+  if (originalOpen) {
+    window.open = function(url, target, features) {
+      if (!isSafeUrl(typeof url === "string" ? url : String(url ?? ""))) {
+        return null;
+      }
+      const opened = originalOpen(url, target || "_blank", sanitizeFeatures(features));
+      try { if (opened) { opened.opener = null; } } catch(_) {}
+      return opened;
+    };
+  }
+  document.addEventListener("click", function(ev){
+    const t = ev.target;
+    if (!(t instanceof Element)) return;
+    const a = t.closest("a[href]");
+    if (!(a instanceof HTMLAnchorElement)) return;
+    const href = a.getAttribute("href") || "";
+    if (!isSafeUrl(href)) {
+      ev.preventDefault();
+      return;
+    }
+    a.setAttribute("rel", "noopener noreferrer");
+    if (!a.getAttribute("target")) a.setAttribute("target", "_blank");
+  }, true);
+})();
+
 // Global error handler → show in UI + notify parent
 window.onerror = function(msg, url, line, col, err) {
   var el = document.getElementById('root');
@@ -246,6 +289,12 @@ export function SandpackAppRenderer({
   // Listen for error / token-expired messages from the iframe
   useEffect(() => {
     const handler = (event: MessageEvent): void => {
+      const expectedSource = iframeRef.current?.contentWindow ?? null;
+      const expectedOrigin = window.location.origin;
+      if (event.source !== expectedSource || event.origin !== expectedOrigin) {
+        return;
+      }
+
       const data = event.data as {
         type?: string;
         error?: string;
@@ -267,17 +316,6 @@ export function SandpackAppRenderer({
         const requestId = data.requestId;
         const workflowId = data.workflowId;
         const payloadAppId = data.appId;
-        const expectedSource = iframeRef.current?.contentWindow ?? null;
-        const expectedOrigin = window.location.origin;
-
-        if (event.source !== expectedSource || event.origin !== expectedOrigin) {
-          console.warn("[Apps iframe bridge] Rejected workflow trigger from unexpected sender", {
-            origin: event.origin,
-            hasExpectedSource: event.source === expectedSource,
-          });
-          return;
-        }
-
         if (!requestId || !workflowId || !payloadAppId || payloadAppId !== appId) {
           (event.source as Window | null)?.postMessage({
             type: "app-trigger-workflow-result",
@@ -497,7 +535,7 @@ export function SandpackAppRenderer({
       <iframe
         ref={iframeRef}
         srcDoc={srcdoc}
-        sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        sandbox="allow-scripts allow-same-origin allow-popups"
         style={{
           width: "100%",
           height: "100%",
