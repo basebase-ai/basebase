@@ -473,15 +473,44 @@ export function Sidebar({
       </div>
 
       <div className="relative flex-1 min-h-0">
-          {currentView !== 'admin' && (
-            <>
-              {/* Chats layer */}
-              <div
-                className={`absolute inset-0 flex flex-col transition-opacity duration-150 ${
-                  panelMode === 'chats' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-                }`}
-                aria-hidden={panelMode !== 'chats'}
-              >
+        {currentView === 'admin' && isGlobalAdmin ? (
+          <div className="absolute inset-0 flex flex-col overflow-hidden">
+            {!collapsed && panelMode === 'org' ? (
+              <OrgPanel
+                currentView={currentView}
+                onViewChange={onViewChange}
+                onCreateNewOrg={onCreateNewOrg}
+                connectedSourcesCount={connectedSourcesCount}
+                workflowCount={workflowCount}
+                pendingChangesCount={pendingChangesCount}
+                onClosePanel={closePanel}
+              />
+            ) : (
+              <div className="px-2 py-2 overflow-y-auto scrollbar-thin flex-1">
+                <nav className="space-y-0.5" aria-label="Global Admin sections">
+                  {GLOBAL_ADMIN_NAV_ITEMS.map((item) => (
+                    <GlobalAdminSidebarNavItem
+                      key={item.id}
+                      label={item.label}
+                      collapsed={collapsed}
+                      active={adminPanelTab === item.id}
+                      onClick={() => setAdminPanelTab(item.id)}
+                      icon={item.icon}
+                    />
+                  ))}
+                </nav>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            {/* Chats layer */}
+            <div
+              className={`absolute inset-0 flex flex-col transition-opacity duration-150 ${
+                panelMode === 'chats' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+              }`}
+              aria-hidden={panelMode !== 'chats'}
+            >
             <div className={`px-3 py-2 flex-shrink-0 flex items-center gap-1.5 ${collapsed ? 'flex-col' : ''}`}>
               <button
                 type="button"
@@ -521,48 +550,29 @@ export function Sidebar({
 
               {collapsed && <div className="flex-1" />}
             </div>
-            </>
-          )}
 
-          {/* Org / workspace layer */}
-          {!collapsed && (
-            <div
-              className={`absolute inset-0 transition-opacity duration-150 ${
-                panelMode === 'org' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-              }`}
-              aria-hidden={panelMode !== 'org'}
-            >
-              <OrgPanel
-                currentView={currentView}
-                onViewChange={onViewChange}
-                onCreateNewOrg={onCreateNewOrg}
-                connectedSourcesCount={connectedSourcesCount}
-                workflowCount={workflowCount}
-                pendingChangesCount={pendingChangesCount}
-                onClosePanel={closePanel}
-              />
-            </div>
-          )}
-        </div>
-
-      {currentView === 'admin' && isGlobalAdmin && (
-        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-          <div className="px-2 py-2 overflow-y-auto scrollbar-thin flex-1">
-            <nav className="space-y-0.5" aria-label="Global Admin sections">
-              {GLOBAL_ADMIN_NAV_ITEMS.map((item) => (
-                <GlobalAdminSidebarNavItem
-                  key={item.id}
-                  label={item.label}
-                  collapsed={collapsed}
-                  active={adminPanelTab === item.id}
-                  onClick={() => setAdminPanelTab(item.id)}
-                  icon={item.icon}
+            {/* Org / workspace layer */}
+            {!collapsed && (
+              <div
+                className={`absolute inset-0 transition-opacity duration-150 ${
+                  panelMode === 'org' ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+                }`}
+                aria-hidden={panelMode !== 'org'}
+              >
+                <OrgPanel
+                  currentView={currentView}
+                  onViewChange={onViewChange}
+                  onCreateNewOrg={onCreateNewOrg}
+                  connectedSourcesCount={connectedSourcesCount}
+                  workflowCount={workflowCount}
+                  pendingChangesCount={pendingChangesCount}
+                  onClosePanel={closePanel}
                 />
-              ))}
-            </nav>
-          </div>
-        </div>
-      )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
       {/* Bottom Section */}
       <div className="mt-auto bg-surface-900/40">
