@@ -330,7 +330,6 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
   });
   const unmappedIdentities: IdentityMapping[] = teamData?.unmappedIdentities ?? [];
   const guestUserEnabled: boolean = Boolean(teamData?.guestUserEnabled);
-  const canLinkIdentityInOrg: boolean = members.some((member) => member.id === currentUser.id);
   const isGlobalAdmin: boolean = currentUser.roles.includes('global_admin');
   const myMembership = members.find((member) => member.id === currentUser.id);
   const isOrgAdminForCurrentOrg: boolean = Boolean(myMembership?.role === 'admin');
@@ -1011,7 +1010,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                         const bTarget = (b.externalEmail ?? b.externalUserid ?? '').toLowerCase();
                         return aTarget.localeCompare(bTarget);
                       });
-                      const canUnlinkForMember: boolean = member.id === currentUser.id || canLinkIdentityInOrg;
+                      const canUnlinkForMember: boolean = canAdministerOrg;
 
                       if (isInvited) {
                         return (
@@ -1108,7 +1107,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                                 <p className="text-sm text-surface-400 truncate">{member.email}</p>
                               </div>
                               {/* Three-dots menu */}
-                              {!isGuest && (
+                              {!isGuest && canAdministerOrg && (
                                 <div className="relative flex-shrink-0 self-center">
                                   <button
                                     type="button"
@@ -1121,16 +1120,18 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                                   </button>
                                   {isMenuOpen && (
                                     <div className="absolute right-0 top-full mt-1 w-40 rounded-lg bg-surface-700 border border-surface-600 shadow-xl z-50 py-1">
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setMenuOpenMemberId(null);
-                                          setExpandedMemberId(isExpanded ? null : member.id);
-                                        }}
-                                        className="w-full text-left px-3 py-2 text-sm text-surface-200 hover:bg-surface-600/60 transition-colors"
-                                      >
-                                        Link accounts
-                                      </button>
+                                      {canAdministerOrg && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setMenuOpenMemberId(null);
+                                            setExpandedMemberId(isExpanded ? null : member.id);
+                                          }}
+                                          className="w-full text-left px-3 py-2 text-sm text-surface-200 hover:bg-surface-600/60 transition-colors"
+                                        >
+                                          Link accounts
+                                        </button>
+                                      )}
                                       {canAdministerOrg && (
                                         <>
                                           {isGlobalAdmin ? (
@@ -1246,7 +1247,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                               )}
 
                               {/* Show unmapped identities that could be linked to this user */}
-                              {unmappedIdentities.length > 0 && (
+                              {canAdministerOrg && unmappedIdentities.length > 0 && (
                                 <div className="mt-3">
                                   <p className="text-xs text-surface-500 mb-1.5">Link an unmatched account:</p>
                                   <div className="space-y-1">

@@ -8,6 +8,16 @@ from fastapi import HTTPException
 from api.routes import auth
 
 
+def _auth_ctx(user_id: UUID, org_id: UUID) -> auth.AuthContext:
+    return auth.AuthContext(
+        user_id=user_id,
+        organization_id=org_id,
+        email="requester@example.com",
+        role="admin",
+        is_global_admin=False,
+    )
+
+
 class _FakeSession:
     def __init__(self, *, users):
         self._users = users
@@ -64,7 +74,7 @@ def test_update_role_rejects_demotion_of_global_admin(monkeypatch):
                 org_id=str(org_id),
                 target_user_id=str(target_id),
                 request=request,
-                user_id=str(requester_id),
+                auth=_auth_ctx(requester_id, org_id),
             )
         )
 

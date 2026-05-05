@@ -8,6 +8,10 @@ from fastapi import HTTPException
 from api.routes import auth
 
 
+async def _allow_admin(*_args, **_kwargs):
+    return True
+
+
 def _auth_ctx(user_id: UUID, org_id: UUID):
     return auth.AuthContext(
         user_id=user_id,
@@ -71,6 +75,7 @@ def test_link_identity_rejects_guest_target(monkeypatch):
 
     fake_session = _FakeSession(users={target_user_id: guest_user}, mapping=mapping)
     monkeypatch.setattr(auth, "get_session", lambda **kwargs: _FakeSessionContext(fake_session))
+    monkeypatch.setattr(auth, "_can_administer_org", _allow_admin)
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
@@ -104,6 +109,7 @@ def test_unlink_identity_rejects_guest_mapping(monkeypatch):
 
     fake_session = _FakeSession(users={requester_id: requester, guest_user_id: guest_user}, mapping=mapping)
     monkeypatch.setattr(auth, "get_session", lambda **kwargs: _FakeSessionContext(fake_session))
+    monkeypatch.setattr(auth, "_can_administer_org", _allow_admin)
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
@@ -176,3 +182,43 @@ def test_update_guest_user_scopes_session_to_org(monkeypatch):
     assert captured["organization_id"] == str(org_id)
     assert guest_toggle_session.committed is True
     assert result == {"enabled": True}
+
+
+def test_link_identity_rejects_non_admin_requester(monkeypatch):
+    org_id = UUID("99999999-9999-9999-9999-999999999999")
+    requester_id = UUID("88888888-8888-8888-8888-888888888888")
+    target_user_id = UUID("77777777-7777-7777-7777-777777777777")
+    mapping_id = UUID("66666666-6666-6666-6666-666666666666")
+    requester = SimpleNamespace(id=requester_id, organization_id=org_id, is_guest=False)
+    target_user = SimpleNamespace(id=target_user_id, organization_id=org_id, email="target@example.com", is_guest=False)
+    mapping = SimpleNamespace(
+        id=mapping_id,
+        organization_id=org_id,
+        source="slack",
+        external_userid="U123",
+        external_email=None,
+        user_id=None,
+        revtops_email=None,
+        match_source="unmatched",
+    )
+    fake_session = _FakeSession(users={requester_id: requester, target_user_id: target_user}, mapping=mapping)
+    monkeypatch.setattr(auth, "get_session", lambda **kwargs: _FakeSessionContext(fake_session))
+
+    async def _deny_admin(*_args, **_kwargs):
+        return False
+
+    monkeypatch.setattr(auth, "_can_administer_org", _deny_admin)
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            auth.link_identity(
+                org_id=str(org_id),
+                request=auth.LinkIdentityRequest(target_user_id=str(target_user_id), mapping_id=str(mapping_id)),
+                auth=_auth_ctx(requester_id, org_id),
+            )
+        )
+
+    assert exc.value.status_code == 403
+    assert "admin" in exc.value.detail.lower()
+    assert mapping.user_id is None
+    assert not fake_session.committed

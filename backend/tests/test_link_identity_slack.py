@@ -5,6 +5,10 @@ from uuid import UUID
 from api.routes import auth
 
 
+async def _allow_admin(*_args, **_kwargs):
+    return True
+
+
 def _auth_ctx(user_id: UUID, org_id: UUID):
     return auth.AuthContext(
         user_id=user_id,
@@ -61,7 +65,7 @@ class _FakeSession:
 
     async def execute(self, _query):
         self.execute_calls += 1
-        if self.execute_calls <= 2:
+        if self.execute_calls <= 1:
             return _FakeMembershipResult()
         return _FakeExecuteResult(self.related_rows)
 
@@ -112,6 +116,7 @@ def test_link_identity_links_related_slack_mappings(monkeypatch):
     requester_user = SimpleNamespace(id=requester_id, organization_id=org_id, email="requester@example.com")
     fake_session = _FakeSession(requester_user, target_user, selected_mapping, [related_mapping])
     monkeypatch.setattr(auth, "get_session", lambda **kwargs: _FakeSessionContext(fake_session))
+    monkeypatch.setattr(auth, "_can_administer_org", _allow_admin)
 
     result = asyncio.run(
         auth.link_identity(
@@ -134,7 +139,7 @@ def test_link_identity_links_related_slack_mappings(monkeypatch):
     assert related_mapping.user_id == target_user_id
     assert related_mapping.revtops_email == "owner@acme.com"
     assert related_mapping.match_source == "admin_manual_link"
-    assert fake_session.execute_calls == 3  # requester membership + target membership + related-mapping query
+    assert fake_session.execute_calls == 2  # target membership + related-mapping query
     assert fake_session.committed
 
 
@@ -159,6 +164,7 @@ def test_link_identity_non_slack_does_not_attempt_related_linking(monkeypatch):
     requester_user = SimpleNamespace(id=requester_id, organization_id=org_id, email="requester@example.com")
     fake_session = _FakeSession(requester_user, target_user, selected_mapping, [])
     monkeypatch.setattr(auth, "get_session", lambda **kwargs: _FakeSessionContext(fake_session))
+    monkeypatch.setattr(auth, "_can_administer_org", _allow_admin)
 
     result = asyncio.run(
         auth.link_identity(
@@ -175,5 +181,5 @@ def test_link_identity_non_slack_does_not_attempt_related_linking(monkeypatch):
     assert result == {"status": "linked"}
     assert selected_mapping.user_id == target_user_id
     assert selected_mapping.match_source == "admin_manual_link"
-    assert fake_session.execute_calls == 2  # requester membership + target membership
+    assert fake_session.execute_calls == 1  # target membership only
     assert fake_session.committed

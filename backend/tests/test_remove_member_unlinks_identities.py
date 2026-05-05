@@ -8,6 +8,16 @@ from fastapi import HTTPException
 from api.routes import auth
 
 
+def _auth_ctx(user_id: UUID, org_id: UUID) -> auth.AuthContext:
+    return auth.AuthContext(
+        user_id=user_id,
+        organization_id=org_id,
+        email="requester@example.com",
+        role="admin",
+        is_global_admin=False,
+    )
+
+
 class _ScalarResult:
     def __init__(self, value):
         self._value = value
@@ -89,7 +99,7 @@ def test_remove_member_rejects_guest_user(monkeypatch):
             auth.remove_organization_member(
                 org_id=str(org_id),
                 target_user_id=str(guest_user_id),
-                user_id=str(requester_id),
+                auth=_auth_ctx(requester_id, org_id),
             )
         )
 
@@ -131,7 +141,7 @@ def test_remove_member_unlinks_all_identities(monkeypatch):
         auth.remove_organization_member(
             org_id=str(org_id),
             target_user_id=str(target_user_id),
-            user_id=str(requester_id),
+            auth=_auth_ctx(requester_id, org_id),
         )
     )
 
@@ -170,7 +180,7 @@ def test_remove_invited_member_rejects_non_admin_requester(monkeypatch):
             auth.remove_organization_member(
                 org_id=str(org_id),
                 target_user_id=str(invited_user_id),
-                user_id=str(requester_id),
+                auth=_auth_ctx(requester_id, org_id),
             )
         )
 

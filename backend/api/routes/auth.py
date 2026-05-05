@@ -1648,8 +1648,15 @@ async def link_identity(
 
     async with get_session(organization_id=str(org_uuid)) as session:
         requester: User | None = await session.get(User, requester_uuid)
-        if not requester or await _get_org_membership(session, requester_uuid, org_uuid) is None:
-            raise HTTPException(status_code=403, detail="Not authorized to modify this organization")
+        if not requester or not await _can_administer_org(session, requester, org_uuid):
+            logger.warning(
+                "Blocked identity link by non-admin org=%s target_user=%s mapping=%s by_user=%s",
+                org_uuid,
+                target_uuid,
+                mapping_uuid,
+                requester_uuid,
+            )
+            raise HTTPException(status_code=403, detail="Org admin or global_admin required for this organization")
 
         # Verify target user belongs to this org (membership or guest home org)
         target_user: User | None = await session.get(User, target_uuid)
@@ -1797,7 +1804,7 @@ async def unlink_identity(
 
     Access rules:
     - Users can always unlink identities currently linked to themselves.
-    - Users with link-identity permission can unlink any identity in the org.
+    - Requires org admin for this organization, or global_admin.
     """
     from models.external_identity_mapping import ExternalIdentityMapping
 
@@ -1815,8 +1822,14 @@ async def unlink_identity(
 
     async with get_session(organization_id=str(org_uuid)) as session:
         requester: User | None = await session.get(User, requester_uuid)
-        if not requester or await _get_org_membership(session, requester_uuid, org_uuid) is None:
-            raise HTTPException(status_code=403, detail="Not authorized to modify this organization")
+        if not requester or not await _can_administer_org(session, requester, org_uuid):
+            logger.warning(
+                "Blocked identity unlink by non-admin org=%s mapping=%s by_user=%s",
+                org_uuid,
+                mapping_uuid,
+                requester_uuid,
+            )
+            raise HTTPException(status_code=403, detail="Org admin or global_admin required for this organization")
 
         mapping: ExternalIdentityMapping | None = await session.get(ExternalIdentityMapping, mapping_uuid)
         if not mapping or mapping.organization_id != org_uuid:
@@ -1834,9 +1847,6 @@ async def unlink_identity(
                 raise HTTPException(status_code=403, detail="Guest user identities cannot be unlinked")
 
         is_unlinking_own_identity = mapping.user_id == requester_uuid
-        can_link_identities_in_org = True  # Mirrors current link-identity access for org members.
-        if not is_unlinking_own_identity and not can_link_identities_in_org:
-            raise HTTPException(status_code=403, detail="Not authorized to unlink this identity")
 
         mapping.user_id = None
         mapping.revtops_email = None
@@ -2302,18 +2312,26 @@ async def update_organization_member(
     org_id: str,
     target_user_id: str,
     request: UpdateMemberRequest,
+    auth: AuthContext = Depends(get_current_auth),
     user_id: Optional[str] = None,
 ) -> dict[str, Optional[str]]:
     """Update a member row. Users can edit themselves; org/global admins can edit anyone in-org."""
     from models.org_member import OrgMember, ORG_MEMBER_SCOPING_STATUSES
 
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    if user_id is not None and user_id != auth.user_id_str:
+        logger.warning(
+            "Rejected member update with mismatched user_id query param org=%s target_user=%s auth_user=%s query_user=%s",
+            org_id,
+            target_user_id,
+            auth.user_id,
+            user_id,
+        )
+        raise HTTPException(status_code=403, detail="user_id does not match authenticated user")
 
     try:
         org_uuid = UUID(org_id)
         target_uuid = UUID(target_user_id)
-        requester_uuid = UUID(user_id)
+        requester_uuid = auth.user_id
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
@@ -2451,6 +2469,7 @@ async def update_organization_member_role(
 async def remove_organization_member(
     org_id: str,
     target_user_id: str,
+    auth: AuthContext = Depends(get_current_auth),
     user_id: Optional[str] = None,
 ) -> dict[str, str]:
     """Remove a member from an organization, and unlink all identities.
@@ -2460,13 +2479,20 @@ async def remove_organization_member(
     from models.org_member import OrgMember
     from models.external_identity_mapping import ExternalIdentityMapping
 
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    if user_id is not None and user_id != auth.user_id_str:
+        logger.warning(
+            "Rejected member removal with mismatched user_id query param org=%s target_user=%s auth_user=%s query_user=%s",
+            org_id,
+            target_user_id,
+            auth.user_id,
+            user_id,
+        )
+        raise HTTPException(status_code=403, detail="user_id does not match authenticated user")
 
     try:
         org_uuid = UUID(org_id)
         target_uuid = UUID(target_user_id)
-        requester_uuid = UUID(user_id)
+        requester_uuid = auth.user_id
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
@@ -2544,18 +2570,25 @@ class UpdateGuestUserRequest(BaseModel):
 async def update_organization(
     org_id: str,
     request: UpdateOrganizationRequest,
+    auth: AuthContext = Depends(get_current_auth),
     user_id: Optional[str] = None,
 ) -> OrganizationResponse:
     """Update organization settings.
 
     Requires org admin for this organization, or global_admin.
     """
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    if user_id is not None and user_id != auth.user_id_str:
+        logger.warning(
+            "Rejected organization update with mismatched user_id query param org=%s auth_user=%s query_user=%s",
+            org_id,
+            auth.user_id,
+            user_id,
+        )
+        raise HTTPException(status_code=403, detail="user_id does not match authenticated user")
 
     try:
         org_uuid = UUID(org_id)
-        user_uuid = UUID(user_id)
+        user_uuid = auth.user_id
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
