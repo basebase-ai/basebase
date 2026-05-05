@@ -4,6 +4,7 @@ import types
 from datetime import datetime
 from uuid import UUID
 
+from api.auth_middleware import AuthContext
 from api.routes import memories as memories_api
 
 fake_websockets = types.ModuleType("api.websockets")
@@ -113,6 +114,13 @@ def test_create_user_memory_commits_and_exits_session_on_create(monkeypatch) -> 
             request=memories_api.CreateMemoryRequest(
                 content="  Save this preference  ",
                 category="Global_Command",
+            ),
+            auth=AuthContext(
+                user_id=UUID("00000000-0000-0000-0000-000000000001"),
+                organization_id=UUID("00000000-0000-0000-0000-000000000010"),
+                email="user@example.com",
+                role="user",
+                is_global_admin=False,
             ),
         )
     )

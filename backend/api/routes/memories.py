@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import logging
+from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, select
 
+from api.auth_middleware import AuthContext, require_organization
 from models.database import get_session
 from models.memory import Memory
 
@@ -61,6 +63,22 @@ class UpdateMemoryRequest(BaseModel):
     content: str
 
 
+def _enforce_memory_scope(organization_id: str, auth: AuthContext, user_id: Optional[str]) -> tuple[UUID, UUID]:
+    """Use verified auth context for org/user scope and reject mismatched query params."""
+    try:
+        org_uuid = UUID(organization_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid ID format") from exc
+
+    if auth.organization_id != org_uuid:
+        raise HTTPException(status_code=403, detail="Forbidden organization scope")
+
+    if user_id is not None and user_id != auth.user_id_str:
+        raise HTTPException(status_code=403, detail="user_id does not match authenticated user")
+
+    return org_uuid, auth.user_id
+
+
 def _build_memory_response(memory: Memory) -> MemoryResponse:
     """Materialize a response model from a Memory row while session is still active."""
     return MemoryResponse(
@@ -102,15 +120,12 @@ async def list_memories(organization_id: str, user_id: str) -> MemoryDashboardRe
 @router.post("/{organization_id}/user", response_model=MemoryResponse)
 async def create_user_memory(
     organization_id: str,
-    user_id: str,
     request: CreateMemoryRequest,
+    auth: AuthContext = Depends(require_organization),
+    user_id: Optional[str] = Query(None),
 ) -> MemoryResponse:
     """Create a user-stored memory."""
-    try:
-        org_uuid = UUID(organization_id)
-        user_uuid = UUID(user_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid ID format")
+    org_uuid, user_uuid = _enforce_memory_scope(organization_id, auth, user_id)
 
     content = request.content.strip()
     if not content:
@@ -118,7 +133,7 @@ async def create_user_memory(
     category = normalize_memory_category(request.category)
     validate_memory_content(content, category)
 
-    async with get_session(organization_id=organization_id) as session:
+    async with get_session(organization_id=str(org_uuid), user_id=auth.user_id_str) as session:
         memory = Memory(
             entity_type="user",
             entity_id=user_uuid,
@@ -134,7 +149,7 @@ async def create_user_memory(
         response = _build_memory_response(memory)
         memory_id = str(memory.id)
 
-    logger.info("[Memories API] Created memory %s for user %s", memory_id, user_id)
+    logger.info("[Memories API] Created memory %s for user %s", memory_id, auth.user_id_str)
     return response
 
 
