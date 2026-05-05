@@ -149,21 +149,28 @@ window.__REVTOPS_PUBLIC_MODE__ = ${opts.publicMode ? "true" : "false"};
 // - always open with noopener,noreferrer
 // - sever opener references when possible
 (function(){
-  const SAFE_SCHEMES = /^(https?:|mailto:|tel:)/i;
+  const SAFE_SPECIAL_SCHEMES = /^(mailto:|tel:)/i;
+  function isSingleSlashPath(url) {
+    return url.startsWith("/") && !url.startsWith("//");
+  }
   function isSafeUrl(raw) {
     if (typeof raw !== "string") return false;
     const url = raw.trim();
     if (!url) return false;
-    if (url.startsWith("/") || url.startsWith("#")) return true;
-    return SAFE_SCHEMES.test(url);
+    if (url.startsWith("#") || isSingleSlashPath(url) || SAFE_SPECIAL_SCHEMES.test(url)) return true;
+    try {
+      return /^https?:$/i.test(new URL(url, window.location.href).protocol);
+    } catch(_) {
+      return false;
+    }
   }
   function isLikelyExternalUrl(raw) {
     if (typeof raw !== "string") return false;
     const url = raw.trim();
-    if (!url || url.startsWith("#") || url.startsWith("/")) return false;
+    if (!url || url.startsWith("#") || isSingleSlashPath(url)) return false;
     try {
       const parsed = new URL(url, window.location.href);
-      return parsed.origin !== window.location.origin && /^https?:/i.test(parsed.protocol);
+      return parsed.origin !== window.location.origin && /^https?:$/i.test(parsed.protocol);
     } catch(_) {
       return /^https?:/i.test(url);
     }
@@ -621,7 +628,7 @@ export function SandpackAppRenderer({
       <iframe
         ref={iframeRef}
         srcDoc={srcdoc}
-        sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
+        sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         style={{
           width: "100%",
           height: "100%",
