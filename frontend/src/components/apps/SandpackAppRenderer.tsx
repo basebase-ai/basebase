@@ -31,6 +31,7 @@ interface AppApiData {
 }
 interface ExternalNavigationPrompt {
   href: string;
+  target?: "_blank" | "_top";
 }
 
 interface SandpackAppRendererProps {
@@ -102,6 +103,17 @@ function escapeForScript(s: string): string {
   return s.replace(new RegExp(CS, "gi"), "<\\/script>");
 }
 
+const BASEBASE_HOST = "basebase.com";
+
+function normalizeHttpNavigationHref(href: string): string | null {
+  try {
+    const parsed = new URL(href, window.location.href);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---- build the srcdoc HTML ------------------------------------------------
 
 function buildSrcdocHtml(opts: {
@@ -150,30 +162,38 @@ window.__REVTOPS_PUBLIC_MODE__ = ${opts.publicMode ? "true" : "false"};
 // - sever opener references when possible
 (function(){
   const SAFE_SPECIAL_SCHEMES = /^(mailto:|tel:)/i;
+  const BASEBASE_HOST = ${JSON.stringify(BASEBASE_HOST)};
   function isSingleSlashPath(url) {
     return url.startsWith("/") && !url.startsWith("//");
+  }
+  function isBasebaseHost(hostname) {
+    return hostname === BASEBASE_HOST || hostname.endsWith("." + BASEBASE_HOST);
+  }
+  function parseHttpUrl(raw) {
+    try {
+      const parsed = new URL(raw, window.location.href);
+      return /^https?:$/i.test(parsed.protocol) ? parsed : null;
+    } catch(_) {
+      return null;
+    }
+  }
+  function shouldConfirmTopNavigation(raw) {
+    const parsed = parseHttpUrl(raw);
+    return !!parsed && parsed.origin !== window.location.origin && !isBasebaseHost(parsed.hostname);
   }
   function isSafeUrl(raw) {
     if (typeof raw !== "string") return false;
     const url = raw.trim();
     if (!url) return false;
     if (url.startsWith("#") || isSingleSlashPath(url) || SAFE_SPECIAL_SCHEMES.test(url)) return true;
-    try {
-      return /^https?:$/i.test(new URL(url, window.location.href).protocol);
-    } catch(_) {
-      return false;
-    }
+    return parseHttpUrl(url) !== null;
   }
   function isLikelyExternalUrl(raw) {
     if (typeof raw !== "string") return false;
     const url = raw.trim();
     if (!url || url.startsWith("#") || isSingleSlashPath(url)) return false;
-    try {
-      const parsed = new URL(url, window.location.href);
-      return parsed.origin !== window.location.origin && /^https?:$/i.test(parsed.protocol);
-    } catch(_) {
-      return /^https?:/i.test(url);
-    }
+    const parsed = parseHttpUrl(url);
+    return parsed ? parsed.origin !== window.location.origin : /^https?:/i.test(url);
   }
   function sanitizeFeatures(features) {
     const base = (typeof features === "string" && features.trim()) ? features + "," : "";
@@ -182,6 +202,61 @@ window.__REVTOPS_PUBLIC_MODE__ = ${opts.publicMode ? "true" : "false"};
   const originalOpen = window.open ? window.open.bind(window) : null;
   let pendingExternalHref = null;
   let pendingExternalTarget = "_blank";
+  function postExternalNavigationRequest(href, target) {
+    pendingExternalHref = href;
+    pendingExternalTarget = target;
+    try { window.parent.postMessage({ type:"external-link-navigation", href: href, target: target }, "*"); } catch(_) {}
+  }
+  function navigateTop(url) {
+    const href = typeof url === "string" ? url.trim() : String(url ?? "").trim();
+    if (!isSafeUrl(href)) return false;
+    if (shouldConfirmTopNavigation(href)) {
+      const parsed = parseHttpUrl(href);
+      postExternalNavigationRequest(parsed ? parsed.href : href, "_top");
+      return true;
+    }
+    window.top.location.href = href;
+    return true;
+  }
+  const topLocationProxy = new Proxy({}, {
+    get: function(_target, prop) {
+      if (prop === "assign" || prop === "replace") {
+        return function(url) { navigateTop(url); };
+      }
+      return window.top.location[prop];
+    },
+    set: function(_target, prop, value) {
+      if (prop === "href") return navigateTop(value);
+      window.top.location[prop] = value;
+      return true;
+    },
+  });
+  const guardedTopWindow = new Proxy({}, {
+    get: function(_target, prop) {
+      if (prop === "location") return topLocationProxy;
+      if (prop === "top" || prop === "parent" || prop === "self" || prop === "window") return guardedTopWindow;
+      const value = window.top[prop];
+      return typeof value === "function" ? value.bind(window.top) : value;
+    },
+    set: function(_target, prop, value) {
+      if (prop === "location") return navigateTop(value);
+      window.top[prop] = value;
+      return true;
+    },
+  });
+  const guardedWindow = new Proxy({}, {
+    get: function(_target, prop) {
+      if (prop === "top" || prop === "parent") return guardedTopWindow;
+      const value = window[prop];
+      return typeof value === "function" ? value.bind(window) : value;
+    },
+    set: function(_target, prop, value) {
+      if (prop === "top" || prop === "parent") return true;
+      window[prop] = value;
+      return true;
+    },
+  });
+  window.__BASEBASE_APP_GUARDED_WINDOW__ = guardedWindow;
   if (originalOpen) {
     window.open = function(url, target, features) {
       if (!isSafeUrl(typeof url === "string" ? url : String(url ?? ""))) {
@@ -216,9 +291,7 @@ window.__REVTOPS_PUBLIC_MODE__ = ${opts.publicMode ? "true" : "false"};
     if (!a.getAttribute("target")) a.setAttribute("target", "_blank");
     if (isLikelyExternalUrl(href)) {
       ev.preventDefault();
-      pendingExternalHref = href;
-      pendingExternalTarget = a.getAttribute("target") || "_blank";
-      try { window.parent.postMessage({ type:"external-link-navigation", href: href }, "*"); } catch(_) {}
+      postExternalNavigationRequest(href, a.getAttribute("target") || "_blank");
     }
   }, true);
 })();
@@ -235,6 +308,9 @@ window.onerror = function(msg, url, line, col, err) {
 ${CS}
 
 <script type="${scriptType}">
+/* ---- Guard common top-window navigation APIs used by app code ---- */
+const __basebaseWindow = globalThis.__BASEBASE_APP_GUARDED_WINDOW__ || globalThis;
+(function(window, self, top, parent) {
 /* ---- React destructured ---- */
 const { useState, useEffect, useCallback, useRef, useMemo, useReducer, useContext, createContext, Fragment } = React;
 
@@ -258,6 +334,7 @@ try {
     '<div style="color:#fca5a5;padding:1rem;font-family:monospace;font-size:12px;white-space:pre-wrap;">' + e.message + '<' + '/div>';
   try { window.parent.postMessage({ type:"app-error", error: e.message }, "*"); } catch(_){}
 }
+})(__basebaseWindow, __basebaseWindow, __basebaseWindow.top, __basebaseWindow.parent);
 ${CS}
 </body>
 </html>`;
@@ -341,14 +418,16 @@ export function SandpackAppRenderer({
         href?: string;
         requestExternalId?: string;
         requestId?: string;
+        target?: string;
         appId?: string;
         workflowId?: string;
         triggerData?: Record<string, unknown>;
       } | null;
       if (data?.type === "external-link-navigation") {
         const href: string = typeof data.href === "string" && data.href.length > 0 ? data.href : "";
-        if (href) {
-          setExternalNavPrompt({ href });
+        const normalizedHref = href ? normalizeHttpNavigationHref(href) : null;
+        if (normalizedHref) {
+          setExternalNavPrompt({ href: normalizedHref, target: data.target === "_top" ? "_top" : "_blank" });
         }
         return;
       }
@@ -590,6 +669,11 @@ export function SandpackAppRenderer({
               type="button"
               className="rounded bg-amber-500 px-2 py-1 text-[11px] font-medium text-black hover:bg-amber-400"
               onClick={() => {
+                if (externalNavPrompt.target === "_top") {
+                  setExternalNavPrompt(null);
+                  window.location.assign(externalNavPrompt.href);
+                  return;
+                }
                 const expectedSource = iframeRef.current?.contentWindow ?? null;
                 expectedSource?.postMessage(
                   {
@@ -628,7 +712,7 @@ export function SandpackAppRenderer({
       <iframe
         ref={iframeRef}
         srcDoc={srcdoc}
-        sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
         style={{
           width: "100%",
           height: "100%",
