@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from uuid import UUID
@@ -44,7 +45,7 @@ class _FakeTask:
 
 
 @pytest.mark.asyncio
-async def test_trigger_app_workflow_runs_as_logged_in_user(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_trigger_app_workflow_runs_as_logged_in_user(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     org_id = UUID("00000000-0000-0000-0000-000000000001")
     user_id = UUID("00000000-0000-0000-0000-000000000002")
     app_id = UUID("00000000-0000-0000-0000-000000000003")
@@ -88,16 +89,19 @@ async def test_trigger_app_workflow_runs_as_logged_in_user(monkeypatch: pytest.M
         is_global_admin=False,
     )
 
+    caplog.set_level(logging.INFO, logger=apps_routes.logger.name)
+
     response = await apps_routes.trigger_app_workflow(
         app_id=str(app_id),
         workflow_id=str(workflow_id),
-        body=apps_routes.TriggerAppWorkflowRequest(trigger_data={"source": "app"}),
+        body=apps_routes.TriggerAppWorkflowRequest(trigger_data={"source": "app"}, request_id="req-test-123"),
         auth=auth,
     )
 
     assert response.status == "queued"
     assert response.triggered_by_user_id == str(user_id)
     assert response.run_id == "00000000-0000-0000-0000-000000000005"
+    assert response.request_id == "req-test-123"
     assert len(fake_sessions) == 1
     assert len(fake_sessions[0].added) == 1
     assert fake_sessions[0].added[0].status == "pending"
@@ -106,3 +110,6 @@ async def test_trigger_app_workflow_runs_as_logged_in_user(monkeypatch: pytest.M
     assert captured["triggered_by_user_id"] == str(user_id)
     assert captured["triggered_by"] == "app"
     assert captured["workflow_run_id"] == response.run_id
+    assert "Received app workflow trigger request" in caplog.text
+    assert "request_id=req-test-123" in caplog.text
+    assert "task_id=task-123" in caplog.text

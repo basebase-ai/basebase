@@ -120,23 +120,36 @@ export function triggerWorkflow(workflowId, triggerData) {
       const payload = event && event.data ? event.data : null;
       if (!payload || payload.type !== "app-trigger-workflow-result" || payload.requestId !== requestId) return;
       cleanup();
-      if (payload.ok) resolve(payload.result || { status: "queued" });
-      else reject(new Error(payload.error || "Failed to trigger workflow"));
+      if (payload.ok) {
+        console.info("[App SDK] Workflow trigger queued", { requestId, workflowId, result: payload.result });
+        resolve(payload.result || { status: "queued" });
+      } else {
+        console.error("[App SDK] Workflow trigger failed", { requestId, workflowId, error: payload.error });
+        reject(new Error(payload.error || "Failed to trigger workflow"));
+      }
     };
 
     window.addEventListener("message", onMessage);
     timeoutId = setTimeout(() => {
       cleanup();
+      console.error("[App SDK] Workflow trigger timed out", { requestId, workflowId });
       reject(new Error("Timed out waiting for workflow trigger response"));
     }, 15000);
 
     try {
+      const sanitizedTriggerData = triggerData && typeof triggerData === "object" ? triggerData : undefined;
+      console.info("[App SDK] Requesting workflow trigger", {
+        requestId,
+        appId: APP_ID,
+        workflowId,
+        triggerDataKeys: sanitizedTriggerData ? Object.keys(sanitizedTriggerData).sort() : [],
+      });
       window.parent.postMessage({
         type: "app-trigger-workflow",
         requestId,
         appId: APP_ID,
         workflowId,
-        triggerData: triggerData && typeof triggerData === "object" ? triggerData : undefined,
+        triggerData: sanitizedTriggerData,
       }, "*");
     } catch (err) {
       cleanup();
