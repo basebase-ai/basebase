@@ -1764,12 +1764,23 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
 
   useEffect(() => {
     if (currentView === 'admin' && !isGlobalAdmin) {
+      console.warn('[AppLayout] Blocking admin view: missing global_admin role', {
+        currentPath: window.location.pathname,
+        userId: user?.id ?? null,
+        userRoles: user?.roles ?? [],
+        masqueradeOriginalRoles: masquerade?.originalUser.roles ?? [],
+      });
       setCurrentView('home');
     }
     if (currentView === 'activity-log' && !isOrgAdmin) {
+      console.warn('[AppLayout] Blocking activity-log view: missing org admin access', {
+        currentPath: window.location.pathname,
+        userId: user?.id ?? null,
+        userRoles: user?.roles ?? [],
+      });
       setCurrentView('home');
     }
-  }, [currentView, isGlobalAdmin, isOrgAdmin, setCurrentView]);
+  }, [currentView, isGlobalAdmin, isOrgAdmin, masquerade, setCurrentView, user?.id, user?.roles]);
 
   // Guard against missing user/org (shouldn't happen, but be safe)
   if (!user || !organization || isSwitchingOrg) {
