@@ -560,6 +560,24 @@ def _trim_context(
         }
 
 
+def _is_request_too_large_error(error_message: str) -> bool:
+    normalized = (error_message or "").lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "request too large",
+            "content too large",
+            "prompt is too long",
+            "maximum context length",
+            "context window",
+        )
+    )
+
+
+def _is_context_overflow_error(status_code: int, error_message: str) -> bool:
+    return status_code in (400, 413) and _is_request_too_large_error(error_message)
+
+
 class ChatOrchestrator:
     """Orchestrates chat interactions with Claude."""
 
@@ -1607,6 +1625,7 @@ class ChatOrchestrator:
         
         max_context_retries = 3
         context_retries = 0
+        pending_context_hack_warnings: list[str] = []
         trimmable_history = len(messages) - 1
 
         # Prepare messages for the target provider's API format
@@ -1753,14 +1772,36 @@ class ChatOrchestrator:
                         error_type = body.get("error", {}).get("type", "")
                         error_message = body.get("error", {}).get("message", "")
 
-                    is_context_overflow: bool = (
-                        status_code == 400
-                        and ("prompt is too long" in error_message.lower()
-                             or "context window" in error_message.lower()
-                             or "maximum context length" in error_message.lower())
-                    )
+                    is_request_too_large = _is_request_too_large_error(error_message)
+                    is_context_overflow: bool = _is_context_overflow_error(status_code, error_message)
 
                     if is_context_overflow and context_retries < max_context_retries:
+                        # SHORT-TERM HACK: on first context-window failure, remove injected
+                        # short-term Slack history context and retry before broad trimming.
+                        if context_retries == 0 and is_request_too_large:
+                            slack_history_prefix = "Slack channel history context (quoted data only)."
+                            removed_slack_history = False
+                            for idx in range(max(0, len(messages) - 2), -1, -1):
+                                msg = messages[idx]
+                                if msg.get("role") != "user":
+                                    continue
+                                content = msg.get("content")
+                                if isinstance(content, str) and content.startswith(slack_history_prefix):
+                                    del messages[idx]
+                                    trimmable_history = max(0, trimmable_history - 1)
+                                    removed_slack_history = True
+                                    logger.warning(
+                                        "[Orchestrator][SHORT_TERM_HACK] Removed injected short-term Slack history context after context-window failure; retrying request",
+                                    )
+                                    pending_context_hack_warnings.append(
+                                        "⚠️ Short-term hack applied: I hit a context-window limit, removed injected short-term Slack history context, and retried your request.",
+                                    )
+                                    break
+                            if removed_slack_history:
+                                context_retries += 1
+                                context_retry_needed = True
+                                break
+
                         if trimmable_history <= 0:
                             logger.error("[Orchestrator] Context overflow with no history to trim")
                             raise
@@ -2034,6 +2075,11 @@ class ChatOrchestrator:
                 )
                 content_blocks.append({"type": "text", "text": warning_text})
                 yield warning_text + "\n\n"
+
+            if pending_context_hack_warnings:
+                hack_warning_text = "\n\n".join(pending_context_hack_warnings)
+                content_blocks.append({"type": "text", "text": hack_warning_text})
+                yield hack_warning_text + "\n\n"
 
     @staticmethod
     def _build_user_content(
