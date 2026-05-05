@@ -28,6 +28,7 @@ from models.database import get_session, get_admin_session
 from models.organization import Organization
 from models.user import User
 from models.visibility import normalize_visibility
+from models.workflow import Workflow, WorkflowRun
 from services.app_query_runner import (
     AppQueryResponse as QueryResponse,
     json_serial,
@@ -35,6 +36,7 @@ from services.app_query_runner import (
     validate_sql_is_select,
 )
 from services.org_admin import user_is_org_admin
+from services.workflow_pause import get_workflow_execution_pause_until
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +76,20 @@ class EmbedTokenResponse(BaseModel):
     embed_url: str
     token: str
     expires_at: str
+
+
+class TriggerAppWorkflowRequest(BaseModel):
+    trigger_data: dict[str, Any] | None = None
+    request_id: str | None = None
+
+
+class TriggerAppWorkflowResponse(BaseModel):
+    status: str
+    task_id: str
+    workflow_id: str
+    run_id: str
+    triggered_by_user_id: str
+    request_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +242,156 @@ async def execute_app_query(
             params=params,
             session=session,
         )
+
+
+@router.post("/{app_id}/workflows/{workflow_id}/trigger", response_model=TriggerAppWorkflowResponse)
+async def trigger_app_workflow(
+    app_id: str,
+    workflow_id: str,
+    body: TriggerAppWorkflowRequest | None = None,
+    auth: AuthContext = Depends(require_organization),
+) -> TriggerAppWorkflowResponse:
+    """Trigger a workflow from an app as the currently logged-in user."""
+    request_body = body or TriggerAppWorkflowRequest()
+    trigger_data: dict[str, Any] | None = request_body.trigger_data
+    request_id: str | None = request_body.request_id
+    trigger_data_keys = sorted(trigger_data.keys()) if isinstance(trigger_data, dict) else []
+    logger.warning(
+        "[Apps API] Received app workflow trigger request app_id=%s workflow_id=%s organization_id=%s user_id=%s request_id=%s trigger_data_keys=%s",
+        app_id,
+        workflow_id,
+        auth.organization_id_str,
+        auth.user_id_str,
+        request_id,
+        trigger_data_keys,
+    )
+
+    try:
+        app_uuid = UUID(app_id)
+        workflow_uuid = UUID(workflow_id)
+    except ValueError as exc:
+        logger.warning(
+            "[Apps API] Rejected app workflow trigger with invalid ID app_id=%s workflow_id=%s request_id=%s",
+            app_id,
+            workflow_id,
+            request_id,
+        )
+        raise HTTPException(status_code=400, detail="Invalid ID format") from exc
+
+    assert auth.organization_id_str is not None
+    async with get_session(
+        organization_id=auth.organization_id_str,
+        user_id=auth.user_id_str,
+    ) as session:
+        app_result = await session.execute(select(App).where(App.id == app_uuid))
+        app: App | None = app_result.scalar_one_or_none()
+        if app is None or str(app.organization_id) != auth.organization_id_str:
+            logger.warning(
+                "[Apps API] App workflow trigger app not found app_id=%s workflow_id=%s organization_id=%s request_id=%s",
+                app_id,
+                workflow_id,
+                auth.organization_id_str,
+                request_id,
+            )
+            raise HTTPException(status_code=404, detail="App not found")
+
+        workflow_result = await session.execute(
+            select(Workflow).where(
+                Workflow.id == workflow_uuid,
+                Workflow.organization_id == app.organization_id,
+            )
+        )
+        workflow: Workflow | None = workflow_result.scalar_one_or_none()
+        if workflow is None:
+            logger.warning(
+                "[Apps API] App workflow trigger workflow not found app_id=%s workflow_id=%s organization_id=%s request_id=%s",
+                app_id,
+                workflow_id,
+                auth.organization_id_str,
+                request_id,
+            )
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        if workflow.archived_at is not None:
+            logger.warning(
+                "[Apps API] App workflow trigger rejected archived workflow app_id=%s workflow_id=%s request_id=%s",
+                app_id,
+                workflow_id,
+                request_id,
+            )
+            raise HTTPException(status_code=400, detail="Archived workflows cannot be triggered")
+        if not workflow.is_enabled:
+            logger.warning(
+                "[Apps API] App workflow trigger rejected disabled workflow app_id=%s workflow_id=%s request_id=%s",
+                app_id,
+                workflow_id,
+                request_id,
+            )
+            raise HTTPException(status_code=400, detail="Workflow is disabled")
+
+        pause_until = await get_workflow_execution_pause_until()
+        if pause_until is not None:
+            logger.warning(
+                "[Apps API] Workflow trigger blocked by workflow execution pause app_id=%s workflow_id=%s organization_id=%s pause_until=%s request_id=%s",
+                app_id,
+                workflow_id,
+                auth.organization_id_str,
+                pause_until.isoformat(),
+                request_id,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=f"Workflow execution temporarily paused until {pause_until.isoformat()}",
+            )
+
+        run = WorkflowRun(
+            workflow_id=workflow.id,
+            organization_id=workflow.organization_id,
+            triggered_by="app",
+            trigger_data=trigger_data,
+            status="pending",
+            started_at=datetime.utcnow(),
+        )
+        session.add(run)
+        await session.commit()
+        await session.refresh(run)
+        run_id = str(run.id)
+        logger.warning(
+            "[Apps API] Created pending workflow run from app app_id=%s workflow_id=%s run_id=%s user_id=%s request_id=%s",
+            app_id,
+            workflow_id,
+            run_id,
+            auth.user_id_str,
+            request_id,
+        )
+
+    from workers.tasks.workflows import execute_workflow
+
+    task = execute_workflow.delay(
+        workflow_id=workflow_id,
+        triggered_by="app",
+        trigger_data=trigger_data,
+        conversation_id=None,
+        organization_id=auth.organization_id_str,
+        triggered_by_user_id=auth.user_id_str,
+        workflow_run_id=run_id,
+    )
+    logger.warning(
+        "[Apps API] Queued workflow from app app_id=%s workflow_id=%s run_id=%s task_id=%s user_id=%s request_id=%s",
+        app_id,
+        workflow_id,
+        run_id,
+        task.id,
+        auth.user_id_str,
+        request_id,
+    )
+    return TriggerAppWorkflowResponse(
+        status="queued",
+        task_id=task.id,
+        workflow_id=workflow_id,
+        run_id=run_id,
+        triggered_by_user_id=auth.user_id_str or "",
+        request_id=request_id,
+    )
 
 
 # ---------------------------------------------------------------------------

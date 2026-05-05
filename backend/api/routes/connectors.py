@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
 
 from config import BUILTIN_CONNECTORS, get_provider_sharing_defaults
-from connectors.registry import AuthType, Capability, discover_connectors
+from connectors.registry import Capability, ConnectorMeta, discover_connectors
 from models.database import get_session
 from models.integration import Integration
 from workers.events import emit_event
@@ -26,12 +26,17 @@ from workers.events import emit_event
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+def _connection_flow(meta: ConnectorMeta) -> str:
+    """Return oauth | builtin | custom_credentials for the frontend connect flow.
 
-def _connection_flow(slug: str, auth_type: AuthType) -> str:
-    """Return oauth | builtin | custom_credentials for frontend connect flow."""
-    if slug not in BUILTIN_CONNECTORS:
+    OAuth connectors go through Nango. Builtin connectors with user-provided
+    credentials (mcp, ispot_tv) open a form; builtin connectors without
+    credentials (apps, web_search, artifacts, twilio) are toggled server-side
+    with no user input.
+    """
+    if meta.slug not in BUILTIN_CONNECTORS:
         return "oauth"
-    if auth_type == AuthType.CUSTOM:
+    if meta.auth_fields:
         return "custom_credentials"
     return "builtin"
 
@@ -56,7 +61,7 @@ async def list_connectors() -> list[dict[str, Any]]:
                 "share_query_access": sharing.share_query_access,
                 "share_write_access": sharing.share_write_access,
             },
-            "connection_flow": _connection_flow(slug, meta.auth_type),
+            "connection_flow": _connection_flow(meta),
             "entity_types": meta.entity_types,
             "capabilities": [c.value for c in meta.capabilities],
             "write_operations": [

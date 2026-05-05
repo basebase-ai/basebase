@@ -59,7 +59,7 @@ const INTEGRATION_CONFIG_FALLBACK: Record<string, IntegrationConfigEntry> = {
   microsoft_mail: { name: 'Microsoft Mail', description: 'Outlook emails and communications', icon: 'microsoft_mail', color: 'from-sky-500 to-sky-600', scope: 'user' },
   fireflies: { name: 'Fireflies', description: 'Meeting transcriptions and notes', icon: 'fireflies', color: 'from-violet-500 to-violet-600', scope: 'user' },
   granola: { name: 'Granola', description: 'AI meeting notes, transcripts, and action items', icon: '/connector-icons/granola.png', color: 'from-lime-500 to-green-600', scope: 'user' },
-  google_drive: { name: 'Google Drive', description: 'Sync files — search and read Docs, Sheets, Slides from Drive', icon: 'google_drive', color: 'from-yellow-500 to-amber-500', scope: 'user' },
+  google_drive: { name: 'Google Drive', description: 'Docs, Sheets, Slides, and Gemini meeting notes from Drive', icon: 'google_drive', color: 'from-yellow-500 to-amber-500', scope: 'user' },
   apollo: { name: 'Apollo.io', description: 'Data enrichment - Contact titles, companies, emails', icon: 'apollo', color: 'from-yellow-400 to-yellow-500', scope: 'user' },
   github: { name: 'GitHub', description: 'Track repos, commits, and pull requests by team', icon: 'github', color: 'from-gray-600 to-gray-700', scope: 'user' },
   linear: { name: 'Linear', description: 'Issue tracking - sync and manage teams, projects, and issues', icon: 'linear', color: 'from-indigo-500 to-violet-600', scope: 'user' },
@@ -847,6 +847,11 @@ export function DataSources(): JSX.Element {
           setIspotClientSecret('');
           setIspotError(null);
           setShowIspotForm(true);
+        } else {
+          // Unknown custom_credentials provider — the classifier should only
+          // route mcp/ispot_tv here. Surface loudly instead of silently no-op'ing.
+          console.error(`[DataSources] No custom_credentials form registered for provider "${provider}"`);
+          throw new Error(`Connector "${provider}" is mis-configured: no credential form is registered.`);
         }
         return;
       }

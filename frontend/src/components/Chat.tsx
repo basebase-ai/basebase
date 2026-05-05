@@ -25,6 +25,7 @@ import { getConversation, updateConversation, uploadChatFile, type UploadRespons
 import { useIsMobile } from '../hooks';
 import { useTeamMembers, type TeamMember } from '../hooks/useOrganization';
 import { API_BASE, apiRequest, getAuthenticatedRequestHeaders } from '../lib/api';
+import { formatModelNameForUi } from '../lib/modelDisplay';
 
 import { crossTab } from '../lib/crossTab';
 import { APP_NAME, LOGO_PATH } from '../lib/brand';
@@ -104,6 +105,9 @@ interface ToolApprovalState {
   result: WsToolApprovalResult | null;
 }
 
+const DEFAULT_MODEL_MAX_TOKENS = 200_000;
+const ONE_MILLION_TOKEN_MODELS = new Set<string>(['claude-opus-4-6', 'gpt-5.5', 'gpt5.5', 'qwen3.6-plus']);
+
 /**
  * Slack-like message thread typography & layout.
  * NOTE: :root light mode uses an inverted surface scale (see index.css): low numbers = dark ink,
@@ -112,7 +116,7 @@ interface ToolApprovalState {
 const AGENT_AVATAR_PATH: string = '/basebase_logo_reverse-256.png';
 const CHAT_MSG_ROW: string =
   'group/msg flex items-start gap-3 px-5 -mx-5 hover:bg-black/[0.035] dark:hover:bg-surface-800/40 transition-colors';
-const CHAT_MSG_AVATAR: string = 'flex-shrink-0 !w-9 !h-9 !rounded-lg mt-px';
+const CHAT_MSG_AVATAR: string = 'flex-shrink-0 !w-9 !h-9 !rounded-full mt-px';
 const CHAT_MSG_AVATAR_SPACER: string = 'w-9 flex-shrink-0 mt-px';
 const CHAT_MSG_NAME: string =
   'text-[15px] font-bold leading-tight text-surface-50 dark:text-surface-50 tracking-[-0.015em]';
@@ -466,8 +470,8 @@ export function Chat({
     : configuredPrimaryModel;
   const activeModelName: string | null = conversationState?.activeModelName ?? displayPrimaryModel;
   const activeModelLabel: string | null = conversationState?.activeModelName
-    ? `Running: ${conversationState.activeModelName}`
-    : (displayPrimaryModel ? `Default: ${displayPrimaryModel}` : null);
+    ? `Running: ${formatModelNameForUi(conversationState.activeModelName)}`
+    : (displayPrimaryModel ? `Default: ${formatModelNameForUi(displayPrimaryModel)}` : null);
 
   // Get actions from Zustand (stable references)
   const addConversationMessage = useAppStore((s) => s.addConversationMessage);
@@ -491,6 +495,8 @@ export function Chat({
   const [currentAttachmentId, setCurrentAttachmentId] = useState<string | null>(null);
   const [currentAttachmentMeta, setCurrentAttachmentMeta] = useState<{ filename: string; mimeType: string } | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [modelMaxTokensMap, setModelMaxTokensMap] = useState<Record<string, number>>({});
+  const [defaultModelMaxTokens, setDefaultModelMaxTokens] = useState<number>(DEFAULT_MODEL_MAX_TOKENS);
 
   // App preview panel state
   const [previewAppId, setPreviewAppId] = useState<string | null>(null);
@@ -514,6 +520,32 @@ export function Chat({
   const [headerTitleDraft, setHeaderTitleDraft] = useState('');
   const headerTitleInputRef = useRef<HTMLInputElement>(null);
   const scopePatchInFlightRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadModelWindows = async (): Promise<void> => {
+      const { data, error } = await apiRequest<{
+        model_max_tokens?: Record<string, number>;
+        default_max_tokens?: number;
+      }>('/auth/llm-options', { cache: 'no-store' });
+      if (cancelled || error) return;
+      setModelMaxTokensMap(data?.model_max_tokens ?? {});
+      setDefaultModelMaxTokens(data?.default_max_tokens ?? DEFAULT_MODEL_MAX_TOKENS);
+    };
+    void loadModelWindows();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const activeModelMaxTokens: number = useMemo(() => {
+    const modelName = activeModelName?.trim();
+    if (!modelName) return defaultModelMaxTokens;
+    if (modelMaxTokensMap[modelName] != null) return modelMaxTokensMap[modelName];
+    const normalizedModel = modelName.toLowerCase();
+    if (ONE_MILLION_TOKEN_MODELS.has(normalizedModel)) return 1_000_000;
+    return defaultModelMaxTokens;
+  }, [activeModelName, defaultModelMaxTokens, modelMaxTokensMap]);
   const [conversationParticipants, setConversationParticipants] = useState<Array<{
     id: string;
     name: string | null;
@@ -524,7 +556,6 @@ export function Chat({
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [chatHeaderMenuOpen, setChatHeaderMenuOpen] = useState<boolean>(false);
   const [showSummaryPanel, setShowSummaryPanel] = useState<boolean>(false);
-  const [shareChatLinkCopied, setShareChatLinkCopied] = useState<boolean>(false);
   const chatHeaderMenuRef = useRef<HTMLDivElement>(null);
   const [newConversationScope, setNewConversationScope] = useState<'private' | 'shared'>('shared');
   /** True while PATCH /scope is in flight (optimistic UI already applied). */
@@ -1629,23 +1660,10 @@ export function Chat({
   }, [messages]);
 
   const handleMenuCopyConversation = useCallback(async (): Promise<void> => {
-    setShareChatLinkCopied(false);
     await handleCopyConversation();
     setChatHeaderMenuOpen(false);
   }, [handleCopyConversation]);
 
-  const handleShareChatLink = useCallback(async (): Promise<void> => {
-    if (!chatId) return;
-    setCopySuccess(false);
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      setShareChatLinkCopied(true);
-      setChatHeaderMenuOpen(false);
-      window.setTimeout(() => setShareChatLinkCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy share link:', err);
-    }
-  }, [chatId]);
 
   useEffect(() => {
     if (!chatHeaderMenuOpen) return;
@@ -1665,7 +1683,6 @@ export function Chat({
       document.removeEventListener('keydown', onKeyDown);
     };
   }, [chatHeaderMenuOpen]);
-
   // Check if the current user can rename this conversation
   const canRenameHeader = chatId && (
     conversationScope === 'private' || conversationCreatorId === userId
@@ -1973,17 +1990,17 @@ export function Chat({
           <div className="h-5 w-48 rounded bg-surface-800 animate-pulse" />
         </header>
 
-        <div className="flex-1 overflow-hidden p-3 md:p-6">
+        <div className="flex-1 overflow-hidden px-4 py-3 md:p-5">
           <div className="space-y-6">
-            <div className="flex gap-3">
-              <div className="w-7 h-7 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-0.5" />
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-px" />
               <div className="space-y-2 flex-1 max-w-[65%]">
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-4/5" />
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-3/5" />
               </div>
             </div>
-            <div className="flex gap-3">
-              <div className="w-7 h-7 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-0.5" />
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-px" />
               <div className="space-y-2 flex-1 max-w-[80%]">
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-full" style={{ animationDelay: '75ms' }} />
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-11/12" style={{ animationDelay: '150ms' }} />
@@ -1991,14 +2008,14 @@ export function Chat({
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-5/6" style={{ animationDelay: '300ms' }} />
               </div>
             </div>
-            <div className="flex gap-3">
-              <div className="w-7 h-7 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-0.5" />
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-px" />
               <div className="space-y-2 flex-1 max-w-[55%]">
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-full" style={{ animationDelay: '375ms' }} />
               </div>
             </div>
-            <div className="flex gap-3">
-              <div className="w-7 h-7 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-0.5" />
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-surface-700 animate-pulse flex-shrink-0 mt-px" />
               <div className="space-y-2 flex-1 max-w-[75%]">
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-full" style={{ animationDelay: '450ms' }} />
                 <div className="h-3 rounded-full bg-surface-800 animate-pulse w-5/6" style={{ animationDelay: '525ms' }} />
@@ -2008,7 +2025,7 @@ export function Chat({
           </div>
         </div>
 
-        <div className="flex-shrink-0 border-t border-surface-800 p-3 md:p-4">
+        <div className="flex-shrink-0 border-t border-surface-800 px-4 md:px-5 pb-4 pt-1">
           <div>
             <div className="h-11 rounded-xl bg-surface-800 animate-pulse" />
           </div>
@@ -2199,9 +2216,9 @@ export function Chat({
             </span>
           )}
           {(() => {
-            const contextPct = (conversationState?.contextTokens ?? 0) / 200_000;
+            const contextPct = (conversationState?.contextTokens ?? 0) / activeModelMaxTokens;
             return conversationState?.contextTokens != null ? (
-              <div className="flex items-center gap-1.5 ml-2" title={`${Math.round(contextPct * 100)}% context used (${(conversationState.contextTokens / 1000).toFixed(0)}k / 200k tokens)`}>
+              <div className="flex items-center gap-1.5 ml-2" title={`${Math.round(contextPct * 100)}% context used (${(conversationState.contextTokens / 1000).toFixed(0)}k / ${(activeModelMaxTokens / 1000).toFixed(0)}k tokens)`}>
                 <div className="w-16 h-1.5 bg-surface-700 rounded-full overflow-hidden">
                   <div
                     className={`h-full rounded-full transition-all ${
@@ -2224,28 +2241,8 @@ export function Chat({
           })()}
         </div>
         <div className="flex items-center gap-3">
-          {/* Shared: participant avatars only (team-wide visibility; no invite) */}
-          {conversationScope === 'shared' && conversationParticipants.length > 0 && (
-            <div className="flex items-center gap-2">
-              <div className="flex -space-x-2">
-                {conversationParticipants.slice(0, 4).map((p, idx) => (
-                  <div key={p.id} title={p.name || p.email} style={{ zIndex: 4 - idx }}>
-                    <Avatar user={p} size="sm" bordered className="border-2 border-surface-900" />
-                  </div>
-                ))}
-                {conversationParticipants.length > 4 && (
-                  <div
-                    className="w-6 h-6 rounded-full border-2 border-surface-700 dark:border-surface-600 bg-surface-700 flex items-center justify-center text-xs font-medium text-surface-300"
-                    title={`${conversationParticipants.length - 4} more participants`}
-                  >
-                    +{conversationParticipants.length - 4}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-          {/* Private: avatars + add people */}
-          {conversationScope === 'private' && (
+          {/* Participants + add people */}
+          {chatId && (
             <div className="flex items-center gap-2">
               {conversationParticipants.length > 0 && (
                 <div className="flex -space-x-2">
@@ -2278,6 +2275,23 @@ export function Chat({
             </div>
           )}
           <ConnectionStatus state={connectionState} />
+          {chatId ? (
+            <button
+              type="button"
+              onClick={handleMenuTogglePin}
+              className={`p-1.5 rounded-md transition-colors ${
+                isCurrentChatPinned
+                  ? 'text-amber-300 bg-amber-500/10 hover:bg-amber-500/20'
+                  : 'text-surface-400 hover:text-surface-200 hover:bg-surface-800'
+              }`}
+              title={isCurrentChatPinned ? 'Unpin chat' : 'Pin chat'}
+              aria-label={isCurrentChatPinned ? 'Unpin chat' : 'Pin chat'}
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 21l-5-3-5 3V5a2 2 0 012-2h6a2 2 0 012 2v16z" />
+              </svg>
+            </button>
+          ) : null}
           <div className="relative flex-shrink-0" ref={chatHeaderMenuRef}>
             <button
               type="button"
@@ -2285,15 +2299,13 @@ export function Chat({
               title={
                 copySuccess
                   ? 'Conversation copied'
-                  : shareChatLinkCopied
-                    ? 'Link copied'
-                    : 'Chat options'
+                  : 'Chat options'
               }
               aria-haspopup="menu"
               aria-expanded={chatHeaderMenuOpen}
               onClick={() => setChatHeaderMenuOpen((o) => !o)}
             >
-              {copySuccess || shareChatLinkCopied ? (
+              {copySuccess ? (
                 <svg className="w-5 h-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
@@ -2362,45 +2374,6 @@ export function Chat({
                     ) : null}
                   </>
                 ) : null}
-                {canToggleChatScope ? (
-                  <>
-                    <div className="my-1 border-t border-surface-800" role="separator" />
-                    <button
-                      type="button"
-                      role="menuitem"
-                      disabled={scopeToggleSaving || conversationScope === 'shared'}
-                      className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                      onClick={() => {
-                        setChatHeaderMenuOpen(false);
-                        void handleMakeShared();
-                      }}
-                    >
-                      Make shared
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      disabled={scopeToggleSaving || conversationScope === 'private'}
-                      className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                      onClick={() => {
-                        setChatHeaderMenuOpen(false);
-                        void handleMakePrivate();
-                      }}
-                    >
-                      Make private
-                    </button>
-                  </>
-                ) : null}
-                <div className="my-1 border-t border-surface-800" role="separator" />
-                <button
-                  type="button"
-                  role="menuitem"
-                  disabled={!chatId}
-                  className="flex w-full items-center px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                  onClick={() => void handleShareChatLink()}
-                >
-                  Share chat
-                </button>
                 {chatId && canDeleteConversation ? (
                   <>
                     <div className="my-1 border-t border-surface-800" role="separator" />
@@ -2503,7 +2476,7 @@ export function Chat({
                 />
               </div>
             )}
-            <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto overflow-x-hidden p-3 md:p-5">
+            <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto overflow-x-hidden px-4 py-3 md:p-5">
             {!userId && (
               <div className="mb-3 rounded-lg border border-amber-600/50 bg-amber-900/20 px-3 py-2 text-sm text-amber-200">
                 User context is missing — artifacts and apps may not save correctly. Please refresh or re-sign in.
@@ -2570,8 +2543,7 @@ export function Chat({
                           status: block.status === 'complete' ? 'complete' : 'running',
                         })}
                         onRetry={handleRetry}
-                        currentUserId={userId}
-                      />
+                                    />
                     </div>
                   );
                 })}
@@ -2649,7 +2621,7 @@ export function Chat({
       </div>
 
       {/* Composer */}
-      <div className="px-3 md:px-5 pb-4 pt-1">
+      <div className="px-4 md:px-5 pb-4 pt-1">
         <div className="relative">
           <div
             className={`absolute left-0 bottom-full mb-1 min-w-[14rem] max-w-sm max-h-44 overflow-y-auto rounded-lg border border-surface-700 bg-surface-900 shadow-lg z-50 ${
@@ -2872,7 +2844,7 @@ export function Chat({
                       autoFocus={chatId === null}
                     />
 
-                    <div className="flex items-center justify-between gap-2 border-t border-surface-700/40 px-1.5 py-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2 px-1.5 pt-0 pb-1 min-w-0">
                       <div className="flex min-w-0 items-center gap-1.5">
                         {attachButton}
                         {modelLabel}
@@ -2945,7 +2917,6 @@ export function Chat({
           teamMembers={teamMembersData?.members ?? []}
           participants={conversationParticipants}
           existingParticipantIds={new Set(conversationParticipants.map((p) => p.id))}
-          currentUserId={userId}
           onClose={() => setShowInviteModal(false)}
           onParticipantsAdded={(participants) => {
             setConversationParticipants((prev) => {
@@ -3004,7 +2975,6 @@ function InviteParticipantModal({
   teamMembers,
   participants,
   existingParticipantIds,
-  currentUserId,
   onClose,
   onParticipantsAdded,
   onParticipantRemoved,
@@ -3013,7 +2983,6 @@ function InviteParticipantModal({
   teamMembers: readonly TeamMember[];
   participants: readonly ConversationParticipant[];
   existingParticipantIds: ReadonlySet<string>;
-  currentUserId: string;
   onClose: () => void;
   onParticipantsAdded: (participants: InvitedParticipant[]) => void;
   onParticipantRemoved: (participantId: string) => void;
@@ -3027,7 +2996,7 @@ function InviteParticipantModal({
   const selectableMembers: readonly TeamMember[] = useMemo(() => {
     const q: string = searchQuery.trim().toLowerCase();
     const filtered: TeamMember[] = teamMembers.filter(
-      (member) => member.id !== currentUserId && !existingParticipantIds.has(member.id),
+      (member) => !existingParticipantIds.has(member.id),
     );
     const matched: TeamMember[] = filtered.filter((member) => {
       if (q.length === 0) return true;
@@ -3039,7 +3008,7 @@ function InviteParticipantModal({
       const bn: string = (b.name ?? b.email).toLowerCase();
       return an.localeCompare(bn);
     });
-  }, [teamMembers, existingParticipantIds, currentUserId, searchQuery]);
+  }, [teamMembers, existingParticipantIds, searchQuery]);
 
   const toggleSelected = useCallback((memberId: string): void => {
     setSelectedIds((prev) => {
@@ -3162,7 +3131,7 @@ function InviteParticipantModal({
             ) : (
               <ul className="divide-y divide-surface-800">
                 {participants.map((participant) => {
-                  const canRemove: boolean = participant.id !== currentUserId;
+                  const canRemove: boolean = true;
                   const isRemoving: boolean = removingParticipantId === participant.id;
                   return (
                     <li key={participant.id} className="flex items-center gap-3 px-3 py-2.5">
@@ -3178,7 +3147,7 @@ function InviteParticipantModal({
                         disabled={!canRemove || isRemoving || isLoading}
                         onClick={() => void handleRemoveParticipant(participant.id)}
                         className="px-2 py-1 text-xs font-medium rounded-md text-red-300 hover:text-red-200 hover:bg-red-950/40 disabled:opacity-40 disabled:cursor-not-allowed"
-                        title={canRemove ? 'Remove from conversation' : 'You cannot remove yourself here'}
+                        title="Remove from conversation"
                       >
                         {isRemoving ? 'Removing…' : 'Remove'}
                       </button>
@@ -3538,9 +3507,23 @@ function MessageWithBlocks({
               toolBlocks.push(tb);
             }
             if (toolBlocks.length > 0) {
+              const guidanceMessages: string[] = toolBlocks
+                .filter((tb) => tb.status === 'complete')
+                .map((tb) => (tb.result as Record<string, unknown> | undefined)?.user_guidance as string | undefined)
+                .filter((g): g is string => !!g);
+
               elements.push(
-                <div key={`tools-${toolRunStart}`} className="flex flex-wrap items-center gap-1 my-1">
-                  {toolBlocks.map((tb) => renderToolBlock(tb))}
+                <div key={`tools-${toolRunStart}`}>
+                  <div className="flex flex-wrap items-center gap-1 my-1">
+                    {toolBlocks.map((tb) => renderToolBlock(tb))}
+                  </div>
+                  {guidanceMessages.length > 0 && (
+                    <div className="mt-1 mb-2 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                      {guidanceMessages.map((msg, i) => (
+                        <p key={i}>{msg}</p>
+                      ))}
+                    </div>
+                  )}
                 </div>,
               );
             }

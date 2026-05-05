@@ -11,6 +11,7 @@ import { API_BASE } from '../lib/api';
 import { APP_NAME, LOGO_PATH } from '../lib/brand';
 
 interface InviteContext {
+  orgId: string | null;
   orgName: string;
   orgLogo: string | null;
   inviterName: string | null;
@@ -51,6 +52,7 @@ function parseInviteParams(): InviteContext | null {
   const orgName: string | null = params.get('org_name');
   if (!orgName) return null;
   return {
+    orgId: params.get('org_id') || null,
     orgName,
     orgLogo: params.get('org_logo') || null,
     inviterName: params.get('inviter_name') || null,
@@ -167,10 +169,14 @@ export function Auth({ onBack, onSuccess }: AuthProps): JSX.Element {
     setError(null);
 
     try {
+      // Preserve invite params across the OAuth round-trip so the post-auth
+      // redirect can land the user in the invited org (BAS-468).
+      const currentParams = new URLSearchParams(window.location.search);
+      const inviteSearch = currentParams.get('invite') === '1' ? `?${currentParams.toString()}` : '';
       const { error } = await supabase.auth.signInWithOAuth({
         provider,
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
+          redirectTo: `${window.location.origin}/auth/callback${inviteSearch}`,
           scopes: provider === 'azure' ? 'email profile openid' : undefined,
           // Force account selection prompt - prevents auto-selecting a previously used account
           queryParams: {
@@ -186,13 +192,14 @@ export function Auth({ onBack, onSuccess }: AuthProps): JSX.Element {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
+    <div className="h-full overflow-y-auto">
       {/* Background effects */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-1/2 -right-1/4 w-[800px] h-[800px] rounded-full bg-gradient-to-br from-primary-600/20 to-transparent blur-3xl" />
         <div className="absolute -bottom-1/4 -left-1/4 w-[600px] h-[600px] rounded-full bg-gradient-to-tr from-emerald-600/10 to-transparent blur-3xl" />
       </div>
 
+      <div className="min-h-full flex items-center justify-center p-4">
       <div className="relative z-10 w-full max-w-md">
         {/* Back button */}
         <button
@@ -222,7 +229,19 @@ export function Auth({ onBack, onSuccess }: AuthProps): JSX.Element {
               ) : null}
               <p className="text-surface-300 text-sm leading-relaxed">
                 {inviteContext.inviterName ? (
-                  <><span className="text-surface-100 font-medium">{inviteContext.inviterName}</span> invited you to join</>
+                  <>
+                    <span className="text-surface-100 font-medium">{inviteContext.inviterName}</span>
+                    {' '}
+                    invited
+                    {inviteContext.email ? (
+                      <>
+                        {' '}
+                        <span className="text-surface-100 font-medium">({inviteContext.email})</span>
+                      </>
+                    ) : null}
+                    {' '}
+                    to join
+                  </>
                 ) : (
                   <>You've been invited to join</>
                 )}
@@ -509,6 +528,7 @@ export function Auth({ onBack, onSuccess }: AuthProps): JSX.Element {
             )}
           </p>
         </div>
+      </div>
       </div>
     </div>
   );

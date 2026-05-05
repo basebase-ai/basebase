@@ -615,6 +615,32 @@ class TestChokepoints:
         assert "HubSpot" in str(result["warning"])
         assert "connect to HubSpot as yourself" in str(result["warning"])
 
+
+    @pytest.mark.parametrize("connector_slug", ["apps", "web_search"])
+    def test_write_on_connector_does_not_add_warning_for_apps_or_web(self, connector_slug: str) -> None:
+        """Cross-user Apps/Web connector use should not add teammate connector warning."""
+        from agents import tools
+
+        fake_instance = MagicMock()
+        fake_instance.user_id = "teammate-1"
+        fake_instance.write = AsyncMock(return_value={"id": "99", "status": "ok"})
+
+        with patch.object(tools, "_get_connector_instance", new=AsyncMock(return_value=(fake_instance, None))), \
+             patch.object(tools, "check_connector_call", new=AsyncMock(return_value=MagicMock(allowed=True))), \
+             patch("services.action_ledger.record_intent", new=AsyncMock(return_value=uuid.uuid4())), \
+             patch("services.action_ledger.record_outcome", new=AsyncMock()):
+
+            result = asyncio.run(tools._write_on_connector(
+                params={"connector": connector_slug, "operation": "update_record", "data": {"id": "1"}},
+                organization_id="org-1",
+                user_id="user-1",
+                skip_approval=True,
+                context={"conversation_id": "conv-1"},
+            ))
+
+        assert result.get("id") == "99"
+        assert "warning" not in result
+
     def test_write_on_connector_records_error_on_exception(self) -> None:
         """When instance.write raises, record_outcome should still be called with error."""
         from agents import tools

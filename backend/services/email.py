@@ -426,6 +426,8 @@ async def send_org_invitation_email(
     invited_by_name: Optional[str] = None,
     org_logo_url: Optional[str] = None,
     inviter_avatar_url: Optional[str] = None,
+    org_id: Optional[str] = None,
+    recipient_is_existing_user: bool = False,
 ) -> bool:
     """
     Send an invitation email to join an organization.
@@ -436,6 +438,10 @@ async def send_org_invitation_email(
         invited_by_name: Name of the person who sent the invite
         org_logo_url: URL of the organization's logo (passed to frontend via query params)
         inviter_avatar_url: URL of the inviter's avatar (passed to frontend via query params)
+        org_id: Organization UUID, passed to the frontend so existing users land in
+            the invited org instead of their previous active one.
+        recipient_is_existing_user: True when the invitee already has a Basebase
+            account. Switches the copy from "sign up" to "open Basebase".
 
     Returns:
         True if email sent successfully, False otherwise
@@ -447,6 +453,8 @@ async def send_org_invitation_email(
         return False
 
     params: list[str] = [f"invite=1", f"org_name={quote(org_name)}", f"email={quote(to_email)}"]
+    if org_id:
+        params.append(f"org_id={quote(org_id)}")
     if org_logo_url:
         params.append(f"org_logo={quote(org_logo_url)}")
     if invited_by_name:
@@ -455,17 +463,34 @@ async def send_org_invitation_email(
         params.append(f"inviter_avatar={quote(inviter_avatar_url)}")
     invite_url: str = f"{settings.FRONTEND_URL}?{'&'.join(params)}"
 
-    headline: str = (
-        f"{invited_by_name} invited you to use Basebase in {org_name}&apos;s Slack workspace"
-        if invited_by_name
-        else f"You&apos;ve been invited to use Basebase in {org_name}&apos;s Slack workspace"
-    )
-
-    subject: str = (
-        f"{invited_by_name} invited you to use Basebase"
-        if invited_by_name
-        else f"You're invited to use Basebase in {org_name}'s Slack"
-    )
+    if recipient_is_existing_user:
+        headline = (
+            f"{invited_by_name} added you to {org_name} on Basebase"
+            if invited_by_name
+            else f"You&apos;ve been added to {org_name} on Basebase"
+        )
+        subject = (
+            f"{invited_by_name} added you to {org_name} on Basebase"
+            if invited_by_name
+            else f"You've been added to {org_name} on Basebase"
+        )
+        cta_subhead = f"Open Basebase to start collaborating in {org_name}."
+        cta_button = "Open Basebase"
+        text_subhead = f"Open Basebase to start collaborating in {org_name}."
+    else:
+        headline = (
+            f"{invited_by_name} invited you to use Basebase in {org_name}&apos;s Slack workspace"
+            if invited_by_name
+            else f"You&apos;ve been invited to use Basebase in {org_name}&apos;s Slack workspace"
+        )
+        subject = (
+            f"{invited_by_name} invited you to use Basebase"
+            if invited_by_name
+            else f"You're invited to use Basebase in {org_name}'s Slack"
+        )
+        cta_subhead = "Sign up for Basebase to accept."
+        cta_button = "Sign Up"
+        text_subhead = "Sign up for Basebase to accept."
 
     html_content: str = f"""
 <!DOCTYPE html>
@@ -494,12 +519,12 @@ async def send_org_invitation_email(
           <tr>
             <td style="padding:24px 36px 0;text-align:center;">
               <h1 style="margin:0 0 12px;font-size:24px;line-height:1.3;color:#111;font-weight:700;">{headline}</h1>
-              <p style="margin:0;color:#6b7280;font-size:15px;line-height:1.6;">Sign up for Basebase to accept.</p>
+              <p style="margin:0;color:#6b7280;font-size:15px;line-height:1.6;">{cta_subhead}</p>
             </td>
           </tr>
           <tr>
             <td style="padding:28px 36px 0;text-align:center;">
-              <a href="{invite_url}" style="display:inline-block;background:#FF9F1C;color:#111111;text-decoration:none;font-size:16px;font-weight:600;padding:14px 32px;border-radius:10px;">Sign Up</a>
+              <a href="{invite_url}" style="display:inline-block;background:#FF9F1C;color:#111111;text-decoration:none;font-size:16px;font-weight:600;padding:14px 32px;border-radius:10px;">{cta_button}</a>
             </td>
           </tr>
           <tr>
@@ -527,16 +552,23 @@ async def send_org_invitation_email(
 </html>
     """
 
-    headline_text: str = (
-        f"{invited_by_name} invited you to use Basebase in {org_name}'s Slack workspace."
-        if invited_by_name
-        else f"You've been invited to use Basebase in {org_name}'s Slack workspace."
-    )
+    if recipient_is_existing_user:
+        headline_text = (
+            f"{invited_by_name} added you to {org_name} on Basebase."
+            if invited_by_name
+            else f"You've been added to {org_name} on Basebase."
+        )
+    else:
+        headline_text = (
+            f"{invited_by_name} invited you to use Basebase in {org_name}'s Slack workspace."
+            if invited_by_name
+            else f"You've been invited to use Basebase in {org_name}'s Slack workspace."
+        )
 
     text_content: str = f"""
 {headline_text}
 
-Sign up for Basebase to accept.
+{text_subhead}
 
 Basebase lives in your Slack workspace. Ask it anything -- cross-tool summaries, data lookups, task automation -- and it answers right in the thread. When one person learns something, the whole team benefits.
 

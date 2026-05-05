@@ -270,8 +270,11 @@ export function ChatsList({ chats: sidebarChats, onSelectChat, onNewChat }: Chat
           <div className="flex items-center gap-3 flex-shrink-0">
             {initialLoaded ? (
               <span className="text-sm text-surface-500">
-                {mergedChats.length} conversation{mergedChats.length !== 1 ? 's' : ''}
-                {hasMore ? '+' : ''}
+                <span className="sm:hidden">{mergedChats.length}{hasMore ? '+' : ''}</span>
+                <span className="hidden sm:inline">
+                  {mergedChats.length} conversation{mergedChats.length !== 1 ? 's' : ''}
+                  {hasMore ? '+' : ''}
+                </span>
               </span>
             ) : null}
             <button type="button" onClick={onNewChat} className="btn-primary flex items-center gap-2">
@@ -508,7 +511,7 @@ function ChatRow({
                 title={isPinned ? 'Unpin conversation' : 'Pin conversation'}
               >
                 <svg className={`w-4 h-4 ${isPinned ? 'text-primary-400' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 21l-5-3-5 3V5a2 2 0 012-2h6a2 2 0 012 2v16z" />
                 </svg>
               </button>
             </div>

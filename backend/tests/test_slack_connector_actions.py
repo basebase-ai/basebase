@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -28,6 +28,73 @@ def test_execute_action_send_message_can_initiate_dm_with_user_id(monkeypatch) -
     assert result == {"ok": True}
     assert captured == {"slack_user_id": "U123", "text": "Hi from Basebase"}
 
+
+
+
+def test_fetch_channel_history_accepts_unix_timestamp_since(monkeypatch) -> None:
+    connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
+
+    captured: dict[str, object] = {}
+
+    async def _fake_get_channel_messages(
+        channel_id: str,
+        oldest: float | None = None,
+        limit: int = 100,
+        latest: str | None = None,
+        inclusive: bool = False,
+    ) -> list[dict[str, object]]:
+        captured["channel_id"] = channel_id
+        captured["oldest"] = oldest
+        captured["limit"] = limit
+        captured["latest"] = latest
+        captured["inclusive"] = inclusive
+        return []
+
+    monkeypatch.setattr(connector, "get_channel_messages", _fake_get_channel_messages)
+
+    result = asyncio.run(
+        connector.fetch_channel_history("C123", "1711405920.999999", limit=20)
+    )
+
+    assert result["ok"] is True
+    assert captured == {
+        "channel_id": "C123",
+        "oldest": 1711405920.999999,
+        "limit": 20,
+        "latest": None,
+        "inclusive": False,
+    }
+
+
+def test_fetch_channel_history_prefers_iso_basic_date_over_unix_seconds(monkeypatch) -> None:
+    connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
+
+    captured: dict[str, object] = {}
+
+    async def _fake_get_channel_messages(
+        channel_id: str,
+        oldest: float | None = None,
+        limit: int = 100,
+        latest: str | None = None,
+        inclusive: bool = False,
+    ) -> list[dict[str, object]]:
+        captured["channel_id"] = channel_id
+        captured["oldest"] = oldest
+        captured["limit"] = limit
+        captured["latest"] = latest
+        captured["inclusive"] = inclusive
+        return []
+
+    monkeypatch.setattr(connector, "get_channel_messages", _fake_get_channel_messages)
+
+    result = asyncio.run(connector.fetch_channel_history("C123", "20250101", limit=20))
+
+    assert result["ok"] is True
+    assert captured["channel_id"] == "C123"
+    assert captured["limit"] == 20
+    assert captured["latest"] is None
+    assert captured["inclusive"] is False
+    assert captured["oldest"] == pytest.approx(1735689600.0)
 
 def test_execute_action_fetch_channel_history_returns_normalized_messages(monkeypatch) -> None:
     connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
@@ -122,6 +189,28 @@ def test_query_read_file_by_url_returns_base64_for_binary(monkeypatch) -> None:
     assert result["file"]["mime_type"] == "application/octet-stream"
     assert result["file"]["content_base64"] == "AQI="
     assert "Binary file returned as base64" in result["file"]["note"]
+
+
+def test_query_read_file_rejects_non_slack_url(monkeypatch) -> None:
+    connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
+    called = {"download": False}
+
+    async def _fake_download_file(url_private: str) -> bytes:
+        called["download"] = True
+        return b"should_not_download"
+
+    monkeypatch.setattr(connector, "download_file", _fake_download_file)
+
+    result = asyncio.run(connector.query("read_file:https://evil.example.com/steal"))
+    assert "only supports Slack-hosted https URLs" in result["error"]
+    assert called["download"] is False
+
+
+def test_download_file_rejects_non_slack_url() -> None:
+    connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
+
+    with pytest.raises(ValueError, match="non-Slack URL"):
+        asyncio.run(connector.download_file("https://evil.example.com/steal"))
 
 
 def test_query_read_file_from_message_permalink_downloads_attached_files(monkeypatch) -> None:
@@ -264,6 +353,104 @@ def test_execute_action_fetch_channel_history_accepts_channel_id_alias(monkeypat
     )
 
     assert result["ok"] is True
+
+def test_execute_action_fetch_channel_history_accepts_since_alias(monkeypatch) -> None:
+    connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
+
+    async def _fake_fetch(channel: str, since: str, *, limit: int = 1000) -> dict[str, object]:
+        assert channel == "C123"
+        assert since == "2025-01-01T00:00:00Z"
+        assert limit == 1000
+        return {"ok": True, "count": 0, "messages": []}
+
+    monkeypatch.setattr(connector, "fetch_channel_history", _fake_fetch)
+
+    result = asyncio.run(
+        connector.execute_action(
+            "fetch_channel_history",
+            {
+                "channel": "C123",
+                "since_iso": "2025-01-01T00:00:00Z",
+            },
+        )
+    )
+
+    assert result["ok"] is True
+
+
+def test_execute_action_fetch_channel_history_skips_blank_since_uses_alias(monkeypatch) -> None:
+    connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
+
+    async def _fake_fetch(channel: str, since: str, *, limit: int = 1000) -> dict[str, object]:
+        assert channel == "C123"
+        assert since == "2025-01-02T00:00:00Z"
+        assert limit == 1000
+        return {"ok": True, "count": 0, "messages": []}
+
+    monkeypatch.setattr(connector, "fetch_channel_history", _fake_fetch)
+
+    result = asyncio.run(
+        connector.execute_action(
+            "fetch_channel_history",
+            {
+                "channel": "C123",
+                "since": "   ",
+                "since_iso": "2025-01-02T00:00:00Z",
+            },
+        )
+    )
+
+    assert result["ok"] is True
+
+
+def test_execute_action_fetch_channel_history_defaults_since_when_missing(monkeypatch) -> None:
+    connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
+
+    async def _fake_fetch(channel: str, since: str, *, limit: int = 1000) -> dict[str, object]:
+        assert channel == "C123"
+        parsed = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        delta = datetime.now(timezone.utc) - parsed
+        assert timedelta(days=6) <= delta <= timedelta(days=8)
+        assert limit == 1000
+        return {"ok": True, "count": 0, "messages": []}
+
+    monkeypatch.setattr(connector, "fetch_channel_history", _fake_fetch)
+
+    result = asyncio.run(
+        connector.execute_action(
+            "fetch_channel_history",
+            {
+                "channel": "C123",
+            },
+        )
+    )
+
+    assert result["ok"] is True
+
+
+def test_execute_action_fetch_channel_history_preserves_oldest_zero(monkeypatch) -> None:
+    connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
+
+    async def _fake_fetch(channel: str, since: str, *, limit: int = 1000) -> dict[str, object]:
+        assert channel == "C123"
+        assert since == "0"
+        assert limit == 1000
+        return {"ok": True, "count": 0, "messages": []}
+
+    monkeypatch.setattr(connector, "fetch_channel_history", _fake_fetch)
+
+    result = asyncio.run(
+        connector.execute_action(
+            "fetch_channel_history",
+            {
+                "channel": "C123",
+                "oldest": 0,
+            },
+        )
+    )
+
+    assert result["ok"] is True
+
 
 def test_execute_action_send_message_accepts_legacy_message_param(monkeypatch) -> None:
     connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")

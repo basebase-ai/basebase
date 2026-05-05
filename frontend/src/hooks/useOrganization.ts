@@ -39,6 +39,7 @@ export interface TeamMember {
   status: string | null;
   isGuest: boolean;
   canLoginAsAdmin: boolean;
+  isGlobalAdmin: boolean;
   identities: IdentityMapping[];
 }
 
@@ -73,6 +74,7 @@ interface TeamMembersApiResponse {
     status: string | null;
     is_guest: boolean;
     can_login_as_admin?: boolean;
+    is_global_admin?: boolean;
     identities: IdentityMappingApiResponse[];
   }>;
   unmapped_identities: IdentityMappingApiResponse[];
@@ -155,6 +157,7 @@ async function fetchTeamMembers(orgId: string, userId: string): Promise<TeamMemb
       status: m.status ?? null,
       isGuest: Boolean(m.is_guest),
       canLoginAsAdmin: Boolean(m.can_login_as_admin),
+      isGlobalAdmin: Boolean(m.is_global_admin),
       identities: (m.identities ?? []).map(mapIdentity),
     })),
     unmappedIdentities: (data.unmapped_identities ?? []).map(mapIdentity),

@@ -95,11 +95,11 @@ def _merge_participating_user_ids(
     return current
 
 
-def _resolve_conversation_scope(
+def _resolve_conversation_scope_with_reason(
     message: InboundMessage,
     revtops_user_id: str | None,
-) -> str:
-    """Resolve conversation scope for newly created or updated conversations."""
+) -> tuple[str, str]:
+    """Resolve conversation scope plus a short explanation for logging."""
     channel_type: str = (message.messenger_context.get("channel_type") or "").strip().lower()
     channel_id: str = (message.messenger_context.get("channel_id") or "").strip().upper()
 
@@ -113,16 +113,26 @@ def _resolve_conversation_scope(
         )
     )
     if is_private_slack_channel:
-        return "private"
+        return "private", "private_slack_channel_or_group"
 
     if message.message_type != MessageType.DIRECT:
-        return "shared"
+        return "shared", "non_direct_message"
 
     if channel_type in {"mpim", "groupchat"}:
-        return "private"
+        return "private", "group_direct_message"
 
     identity_known: bool = bool(revtops_user_id or message.external_user_id)
-    return "private" if identity_known else "shared"
+    if identity_known:
+        return "private", "direct_message_with_known_identity"
+    return "shared", "direct_message_without_identity"
+
+
+def _resolve_conversation_scope(
+    message: InboundMessage,
+    revtops_user_id: str | None,
+) -> str:
+    """Resolve conversation scope for newly created or updated conversations."""
+    return _resolve_conversation_scope_with_reason(message, revtops_user_id)[0]
 
 
 def _build_workflow_context_for_message(
@@ -702,7 +712,7 @@ class WorkspaceMessenger(BaseMessenger):
 
             if conversation is not None:
                 changed: bool = False
-                target_scope: str = _resolve_conversation_scope(message, revtops_user_id)
+                target_scope, target_scope_reason = _resolve_conversation_scope_with_reason(message, revtops_user_id)
                 if message.external_user_id and conversation.source_user_id != message.external_user_id:
                     conversation.source_user_id = message.external_user_id
                     changed = True
@@ -726,6 +736,15 @@ class WorkspaceMessenger(BaseMessenger):
                 if conversation.scope != target_scope:
                     conversation.scope = target_scope
                     changed = True
+                    if source == "slack":
+                        logger.info(
+                            "[%s] Updated conversation scope for %s scope=%s reason=%s channel=%s",
+                            source,
+                            conversation.id,
+                            target_scope,
+                            target_scope_reason,
+                            source_channel_id,
+                        )
 
                 if changed:
                     await session.commit()
@@ -738,6 +757,8 @@ class WorkspaceMessenger(BaseMessenger):
             }.get(message.message_type.value, self.meta.name)
 
             user_display: str = user.name or message.external_user_id
+            conversation_scope, conversation_scope_reason = _resolve_conversation_scope_with_reason(message, revtops_user_id)
+
             conversation = Conversation(
                 organization_id=UUID(organization_id),
                 user_id=UUID(revtops_user_id) if revtops_user_id else None,
@@ -745,7 +766,7 @@ class WorkspaceMessenger(BaseMessenger):
                 source_channel_id=source_channel_id,
                 source_user_id=message.external_user_id,
                 participating_user_ids=_merge_participating_user_ids([], revtops_user_id),
-                scope=_resolve_conversation_scope(message, revtops_user_id),
+                scope=conversation_scope,
                 type="agent",
                 title=f"{source_label} - {user_display}",
             )
@@ -758,6 +779,18 @@ class WorkspaceMessenger(BaseMessenger):
                 "[%s] Created conversation %s channel=%s user=%s",
                 source, conversation.id, source_channel_id, revtops_user_id,
             )
+            if source == "slack":
+                visibility: str = "public" if conversation_scope == "shared" else "private"
+                logger.info(
+                    "[%s] Slack conversation visibility on create conversation_id=%s visibility=%s reason=%s channel=%s channel_type=%s message_type=%s",
+                    source,
+                    conversation.id,
+                    visibility,
+                    conversation_scope_reason,
+                    channel_id,
+                    ctx.get("channel_type"),
+                    message.message_type.value,
+                )
             return str(conversation.id)
 
     # ------------------------------------------------------------------

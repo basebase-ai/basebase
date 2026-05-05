@@ -3,7 +3,7 @@ Resolve per-org LLM configuration from database + environment variables.
 
 Resolution order for API keys:
 1. LLM_KEY__<org_handle> environment variable (org-specific)
-2. Global provider key (ANTHROPIC_API_KEY, MINIMAX_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY)
+2. Global provider key (ANTHROPIC_API_KEY, MINIMAX_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, QWEN_API_KEY)
 
 Provider/model resolution:
 1. Organization.llm_provider / llm_primary_model / llm_cheap_model / llm_workflow_model (DB)
@@ -33,9 +33,13 @@ _GLOBAL_PROVIDER_KEYS: dict[str, str | None] = {
     "minimax": getattr(settings, "MINIMAX_API_KEY", None),
     "openai": settings.OPENAI_API_KEY,
     "gemini": getattr(settings, "GEMINI_API_KEY", None),
+    "qwen": getattr(settings, "QWEN_API_KEY", None),
 }
 
 _DEFAULT_PROVIDER: LLMProvider = "anthropic"
+_PROVIDER_ALIASES: dict[str, LLMProvider] = {
+    "alibaba": "qwen",
+}
 
 
 async def resolve_llm_config(
@@ -57,7 +61,7 @@ async def resolve_llm_config(
             if org is not None:
                 org_handle = org.handle
                 if org.llm_provider:
-                    provider = org.llm_provider  # type: ignore[assignment]
+                    provider = _normalize_provider(org.llm_provider)
                 if org.llm_primary_model:
                     primary_model = org.llm_primary_model
                 if org.llm_cheap_model:
@@ -76,6 +80,8 @@ async def resolve_llm_config(
         inferred_model: str | None = primary_model or cheap_model
         if inferred_model:
             inferred: str | None = provider_for_model(inferred_model)
+            if not inferred:
+                inferred = _infer_provider_from_model_name(inferred_model)
             if inferred:
                 provider = inferred  # type: ignore[assignment]
 
@@ -130,7 +136,7 @@ async def resolve_api_key_for_provider(
                 provider,
                 exc_info=True,
             )
-    return _resolve_api_key(provider, org_handle)
+    return _resolve_api_key(_normalize_provider(provider), org_handle)
 
 
 async def _load_organization_for_llm(organization_id: str | UUID) -> object | None:
@@ -158,6 +164,15 @@ def _resolve_api_key(provider: LLMProvider, org_handle: str | None) -> str:
 
     logger.error("No API key found for provider %s (org_handle=%s)", provider, org_handle)
     return ""
+
+
+def _normalize_provider(provider: str | LLMProvider) -> LLMProvider:
+    """Normalize provider aliases to canonical provider names."""
+    normalized: str = provider.strip().lower()
+    aliased: LLMProvider | None = _PROVIDER_ALIASES.get(normalized)
+    if aliased:
+        return aliased
+    return normalized  # type: ignore[return-value]
 
 
 def _select_compatible_model(
@@ -229,6 +244,8 @@ def _infer_provider_from_model_name(model: str) -> str | None:
         return "openai"
     if normalized.startswith("gemini"):
         return "gemini"
+    if normalized.startswith(("qwen", "qwq")):
+        return "qwen"
     if normalized.startswith("minimax"):
         return "minimax"
     return None
@@ -263,15 +280,45 @@ def _parse_model_map() -> dict[str, str]:
             continue
         if ":" in entry:
             model, provider = entry.rsplit(":", 1)
-            result[model.strip()] = provider.strip()
+            result[model.strip()] = _normalize_provider(provider.strip())
         else:
             result[entry] = ""
     return result
 
 
+def _model_aliases(model: str) -> tuple[str, ...]:
+    """Return acceptable aliases for known model naming variations."""
+    normalized: str = model.strip()
+    aliases: list[str] = [normalized]
+    # Accept both gpt-5.5 and gpt5.5 naming variants (including mini/nano).
+    if normalized.startswith("gpt-5.5"):
+        aliases.append(normalized.replace("gpt-5.5", "gpt5.5", 1))
+    elif normalized.startswith("gpt5.5"):
+        aliases.append(normalized.replace("gpt5.5", "gpt-5.5", 1))
+    return tuple(dict.fromkeys(aliases))
+
+
 def get_model_provider_map() -> dict[str, str]:
     """Return the full {model_name: provider} map from ALL_MODEL_STRINGS."""
     return _parse_model_map()
+
+
+def get_model_max_tokens_map(default_max_tokens: int = 200_000) -> dict[str, int]:
+    """Return model→context-window map for UI context progress calculations.
+
+    Models not explicitly listed should use ``default_max_tokens`` on the client.
+    """
+    raw_model_map: dict[str, str] = _parse_model_map()
+    explicit_windows: dict[str, int] = {
+        "claude-opus-4-6": 1_000_000,
+        "gpt-5.5": 1_000_000,
+        "gpt5.5": 1_000_000,
+        "qwen3.6-plus": 1_000_000,
+    }
+    return {
+        model_name: explicit_windows.get(model_name, default_max_tokens)
+        for model_name in raw_model_map
+    }
 
 
 def get_allowed_models() -> list[str]:
@@ -284,7 +331,12 @@ def get_allowed_models() -> list[str]:
 
 def provider_for_model(model: str) -> str | None:
     """Look up the provider for a model name. Returns None if unknown."""
-    return _parse_model_map().get(model) or None
+    model_map: dict[str, str] = _parse_model_map()
+    for alias in _model_aliases(model):
+        provider: str | None = model_map.get(alias)
+        if provider is not None:
+            return provider or None
+    return None
 
 
 def is_model_allowed(model: str) -> bool:
@@ -295,4 +347,4 @@ def is_model_allowed(model: str) -> bool:
     model_map: dict[str, str] = _parse_model_map()
     if not model_map:
         return True
-    return model in model_map
+    return any(alias in model_map for alias in _model_aliases(model))

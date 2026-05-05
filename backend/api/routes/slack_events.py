@@ -550,7 +550,9 @@ async def _process_event_callback_impl(payload: dict[str, Any]) -> None:
         # Persist only public channel messages as Activity rows.
         # Treat private channels and group messages like DMs and skip activity persistence.
         should_persist_activity: bool = channel_type == "channel"
-        if should_persist_activity and event.get("text", "").strip():
+        has_persistable_text: bool = bool(str(event.get("text") or "").strip())
+        has_persistable_files: bool = bool([f for f in (event.get("files") or []) if isinstance(f, dict)])
+        if should_persist_activity and (has_persistable_text or has_persistable_files):
             activity_msg: InboundMessage = _build_inbound_message(
                 event, team_id, MessageType.MENTION,
             )

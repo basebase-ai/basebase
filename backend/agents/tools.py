@@ -14,9 +14,13 @@ write_on_connector, run_on_connector) which dispatch to the appropriate connecto
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import re
+import time
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -25,6 +29,8 @@ from uuid import UUID, uuid4
 
 if TYPE_CHECKING:
     from connectors.base import BaseConnector
+
+from connectors.base import ExternalConnectionRevokedError
 
 import httpx
 from openai import AsyncOpenAI
@@ -55,7 +61,7 @@ logger = logging.getLogger(__name__)
 _configured_openai_research_model = (settings.OPENAI_RESEARCH_MODEL or "").strip()
 _preferred_openai_research_model = (
     _configured_openai_research_model
-    if _configured_openai_research_model.startswith("gpt-5.5")
+    if _configured_openai_research_model.startswith(("gpt-5.5", "gpt5.5"))
     else "gpt-5.5"
 )
 
@@ -67,12 +73,11 @@ OPENAI_WEB_RESEARCH_FALLBACK_MODELS: tuple[str, ...] = tuple(
             "gpt-5.5",
             "gpt-5",
             "gpt-5.5-mini",
-            "gpt-5.5-nano",
         )
     )
 )
 
-if _configured_openai_research_model and not _configured_openai_research_model.startswith("gpt-5.5"):
+if _configured_openai_research_model and not _configured_openai_research_model.startswith(("gpt-5.5", "gpt5.5")):
     logger.warning(
         "[Tools] OPENAI_RESEARCH_MODEL=%s is not GPT-5+. Falling back to GPT-5 family for research synthesis.",
         _configured_openai_research_model,
@@ -702,7 +707,7 @@ def _build_cross_user_connector_warning(
     """Return a user-facing warning when we used a teammate's connector."""
     if not requester_user_id:
         return None
-    if connector_slug in {"slack", "teams"}:
+    if connector_slug in {"slack", "teams", "apps", "web_search"}:
         return None
 
     raw_integration_user_id: Any = getattr(connector_instance, "user_id", None)
@@ -971,6 +976,23 @@ async def _attach_connector_docs(
     return error_result
 
 
+def _build_connection_revoked_result(
+    connector: str, operation_label: str, exc: Exception,
+) -> dict[str, Any]:
+    """Build a tool-result dict with user_guidance for a revoked/expired connection."""
+    from connectors.base import get_provider_display_name
+
+    provider_name: str = get_provider_display_name(connector)
+    return {
+        "error": f"{operation_label} failed: {exc}",
+        "user_guidance": (
+            f"The {provider_name} connection has expired or been revoked. "
+            f"To fix this, go to the Connectors page (/connectors), "
+            f"disconnect {provider_name}, and reconnect it."
+        ),
+    }
+
+
 async def _query_on_connector(
     params: dict[str, Any], organization_id: str, user_id: str | None
 ) -> dict[str, Any]:
@@ -1014,6 +1036,12 @@ async def _query_on_connector(
         if info and isinstance(result, dict):
             result.setdefault("info", info)
         return _attach_cross_user_connector_warning(result, cross_user_warning)
+    except ExternalConnectionRevokedError as exc:
+        logger.warning("[Tools] query_on_connector(%s) connection revoked: %s", connector, exc)
+        return await _attach_connector_docs(
+            _build_connection_revoked_result(connector, f"Query to {connector}", exc),
+            connector, organization_id,
+        )
     except Exception as exc:
         logger.error("[Tools] query_on_connector(%s) failed: %s", connector, exc, exc_info=True)
         return await _attach_connector_docs(
@@ -1022,6 +1050,27 @@ async def _query_on_connector(
         )
 
 
+
+
+def _build_apps_auth_envelope(*, authenticated_user_id: str | None, organization_id: str, delegated_actor_user_id: str | None = None, ttl_seconds: int = 300) -> dict[str, Any] | None:
+    """Build signed auth envelope for apps workflow triggers (server-only internal field)."""
+    if not authenticated_user_id:
+        return None
+    now = int(time.time())
+    exp = now + max(60, min(ttl_seconds, 300))
+    payload: dict[str, Any] = {
+        "sub": authenticated_user_id,
+        "org": organization_id,
+        "iat": now,
+        "exp": exp,
+    }
+    if delegated_actor_user_id and delegated_actor_user_id != authenticated_user_id:
+        payload["delegated_actor"] = delegated_actor_user_id
+    body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    sig = hmac.new(settings.SECRET_KEY.encode("utf-8"), body, hashlib.sha256).digest()
+    token = base64.urlsafe_b64encode(body).decode("utf-8").rstrip("=")
+    signature = base64.urlsafe_b64encode(sig).decode("utf-8").rstrip("=")
+    return {"v": 1, "token": token, "sig": signature, "alg": "HS256"}
 async def _write_on_connector(
     params: dict[str, Any],
     organization_id: str,
@@ -1054,15 +1103,29 @@ async def _write_on_connector(
             data["conversation_id"] = ctx_apps["conversation_id"]
         if ctx_apps.get("message_id"):
             data["message_id"] = str(ctx_apps["message_id"]) if ctx_apps["message_id"] else None
-        if operation == "create" and not data.get(" app created by"):
+        if operation == "trigger_workflow":
+            envelope = _build_apps_auth_envelope(
+                authenticated_user_id=user_id,
+                organization_id=organization_id,
+                delegated_actor_user_id=None,
+            )
+            if envelope is not None:
+                data["_auth_envelope"] = envelope
+        if operation == "create" and "_app_owner_auth_envelope" not in data:
             conversation_owner_id = await _resolve_conversation_owner_user_id(
                 organization_id=organization_id,
                 conversation_id=ctx_apps.get("conversation_id"),
             )
             if conversation_owner_id:
-                data[" app created by"] = conversation_owner_id
+                owner_envelope = _build_apps_auth_envelope(
+                    authenticated_user_id=conversation_owner_id,
+                    organization_id=organization_id,
+                    delegated_actor_user_id=user_id,
+                )
+                if owner_envelope is not None:
+                    data["_app_owner_auth_envelope"] = owner_envelope
                 logger.info(
-                    "[Tools] write_on_connector(apps.create): passing conversation owner as app override owner: conversation_id=%s owner_user_id=%s",
+                    "[Tools] write_on_connector(apps.create): passing signed conversation owner override: conversation_id=%s owner_user_id=%s",
                     ctx_apps.get("conversation_id"),
                     conversation_owner_id,
                 )
@@ -1104,6 +1167,13 @@ async def _write_on_connector(
         result = await instance.write(operation, data)
         await record_outcome(change_id, organization_id, result)
         return _attach_cross_user_connector_warning(result, cross_user_warning)
+    except ExternalConnectionRevokedError as exc:
+        await record_outcome(change_id, organization_id, {"error": str(exc)})
+        logger.warning("[Tools] write_on_connector(%s, %s) connection revoked: %s", connector, operation, exc)
+        return await _attach_connector_docs(
+            _build_connection_revoked_result(connector, f"Write to {connector}.{operation}", exc),
+            connector, organization_id,
+        )
     except Exception as exc:
         await record_outcome(change_id, organization_id, {"error": str(exc)})
         logger.error("[Tools] write_on_connector(%s, %s) failed: %s", connector, operation, exc, exc_info=True)
@@ -1218,6 +1288,13 @@ async def _run_on_connector(
         result = await instance.execute_action(action, action_params)
         await record_outcome(change_id, organization_id, result)
         return _attach_cross_user_connector_warning(result, cross_user_warning)
+    except ExternalConnectionRevokedError as exc:
+        await record_outcome(change_id, organization_id, {"error": str(exc)})
+        logger.warning("[Tools] run_on_connector(%s, %s) connection revoked: %s", connector, action, exc)
+        return await _attach_connector_docs(
+            _build_connection_revoked_result(connector, f"Action {connector}.{action}", exc),
+            connector, organization_id,
+        )
     except Exception as exc:
         await record_outcome(change_id, organization_id, {"error": str(exc)})
         logger.error("[Tools] run_on_connector(%s, %s) failed: %s", connector, action, exc, exc_info=True)
@@ -6180,7 +6257,7 @@ async def execute_keep_notes(
 
 
 GLOBAL_COMMAND_CATEGORY = "global_commands"
-GLOBAL_COMMAND_MAX_LENGTH = 400
+GLOBAL_COMMAND_MAX_LENGTH = 1000
 SUPPORTED_MEMORY_ENTITY_TYPES = {"user", "organization_member"}
 ORG_LEVEL_MEMORY_ERROR = (
     "Org-level memories are not allowed. "

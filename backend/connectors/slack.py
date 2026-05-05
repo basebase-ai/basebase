@@ -14,9 +14,9 @@ import base64
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from sqlalchemy import func, select
@@ -31,6 +31,7 @@ _SLACK_MESSAGE_PERMALINK_RE: re.Pattern[str] = re.compile(
 )
 _MARKDOWN_TABLE_CODE_BLOCK_TEMPLATE: str = "```\n{table}\n```"
 _markdown_logger = logging.getLogger(__name__)
+_SLACK_ALLOWED_FILE_HOST_SUFFIXES: tuple[str, ...] = ("slack.com",)
 
 
 def _clean_table_lines(raw: str) -> str:
@@ -180,16 +181,26 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_since_iso_to_utc_timestamp(raw: str) -> float:
-    """Parse an ISO 8601 datetime string to a UTC Unix timestamp for Slack ``oldest``."""
+    """Parse ISO 8601 or Unix timestamp strings to a UTC Unix timestamp for Slack ``oldest``."""
     s: str = raw.strip()
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
-    dt: datetime = datetime.fromisoformat(s)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    else:
-        dt = dt.astimezone(timezone.utc)
-    return dt.timestamp()
+
+    # Prefer ISO parsing first to preserve valid basic-date inputs like "20250101".
+    iso_candidate: str = s[:-1] + "+00:00" if s.endswith("Z") else s
+    dt: datetime | None = None
+    try:
+        dt = datetime.fromisoformat(iso_candidate)
+    except ValueError:
+        pass
+
+    if dt is not None:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt.timestamp()
+
+    # Slack ``oldest`` commonly arrives as a Unix ts string like "1711405920.999999".
+    return float(s)
 
 
 class SlackConnector(BaseConnector):
@@ -1333,6 +1344,13 @@ Returns normalized messages for one channel since a cutoff (does not write to th
                     message_ts=message_ts,
                     permalink=normalized_ref,
                 )
+            if not self._is_allowed_slack_file_url(normalized_ref):
+                return {
+                    "error": (
+                        "read_file only supports Slack-hosted https URLs "
+                        "(for example, files.slack.com url_private links)."
+                    )
+                }
             download_url = normalized_ref
         else:
             file_data = await self._make_request("GET", "files.info", params={"file": normalized_ref})
@@ -1395,6 +1413,22 @@ Returns normalized messages for one channel since a cutoff (does not write to th
                 "note": "Binary file returned as base64 because text extraction is not supported for this mime type.",
             },
         }
+
+    def _is_allowed_slack_file_url(self, file_url: str) -> bool:
+        """Return True when URL is https and hosted on an allowed Slack domain."""
+        try:
+            parsed = urlparse(file_url.strip())
+        except Exception:
+            return False
+
+        if parsed.scheme.lower() != "https":
+            return False
+
+        hostname = (parsed.hostname or "").lower().rstrip(".")
+        return any(
+            hostname == suffix or hostname.endswith(f".{suffix}")
+            for suffix in _SLACK_ALLOWED_FILE_HOST_SUFFIXES
+        )
 
     def _parse_slack_message_permalink(self, url: str) -> tuple[str, str] | None:
         """Return ``(channel_id, message_ts)`` when URL is a Slack message permalink."""
@@ -1515,20 +1549,32 @@ Returns normalized messages for one channel since a cutoff (does not write to th
                 or params.get("channel_id")
                 or params.get("channelId")
             )
-            since_val: str | None = params.get("since")
+            since_val: Any = None
+            for key in ("since", "since_iso", "start_time", "oldest"):
+                if key not in params:
+                    continue
+                candidate_since_val: Any = params.get(key)
+                if candidate_since_val is None:
+                    continue
+                if isinstance(candidate_since_val, str) and not candidate_since_val.strip():
+                    continue
+                since_val = candidate_since_val
+                break
             if not ch or not str(ch).strip():
                 logger.error(
                     "[slack] fetch_channel_history missing channel params_keys=%s",
                     sorted(params.keys()),
                 )
                 raise ValueError("fetch_channel_history requires 'channel' (or 'channel_id')")
-            if not since_val or not str(since_val).strip():
-                logger.error(
-                    "[slack] fetch_channel_history missing since channel=%s params_keys=%s",
+            if since_val is None or not str(since_val).strip():
+                default_since: str = (datetime.now(timezone.utc) - timedelta(days=7)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+                logger.warning(
+                    "[slack] fetch_channel_history missing since; defaulting to last 7 days channel=%s params_keys=%s default_since=%s",
                     ch,
                     sorted(params.keys()),
+                    default_since,
                 )
-                raise ValueError("fetch_channel_history requires 'since' (ISO 8601 datetime)")
+                since_val = default_since
             limit_raw: Any = params.get("limit", 1000)
             limit_val: int = int(limit_raw) if limit_raw is not None else 1000
             logger.info(
@@ -1773,15 +1819,39 @@ Returns normalized messages for one channel since a cutoff (does not write to th
             httpx.HTTPStatusError: If the download request fails.
             ValueError: If the response body is empty.
         """
+        if not self._is_allowed_slack_file_url(url_private):
+            raise ValueError("Refusing to download non-Slack URL for file content")
+
         headers: dict[str, str] = await self._get_headers()
         # Remove Content-Type for raw file download
         headers.pop("Content-Type", None)
 
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            response: httpx.Response = await client.get(
-                url_private, headers=headers, timeout=60.0,
-            )
-            response.raise_for_status()
+        current_url: str = url_private
+        max_redirects: int = 5
+        async with httpx.AsyncClient(follow_redirects=False) as client:
+            for _ in range(max_redirects + 1):
+                response: httpx.Response = await client.get(
+                    current_url, headers=headers, timeout=60.0,
+                )
+                if response.is_redirect:
+                    location: str | None = response.headers.get("location")
+                    if not location:
+                        raise ValueError(
+                            f"Redirect without location while downloading Slack file: {current_url}"
+                        )
+                    next_url: str = urljoin(str(response.url), location)
+                    if not self._is_allowed_slack_file_url(next_url):
+                        raise ValueError(
+                            "Refusing redirect to non-Slack host while downloading file"
+                        )
+                    current_url = next_url
+                    continue
+                response.raise_for_status()
+                break
+            else:
+                raise ValueError(
+                    f"Too many redirects while downloading Slack file: {url_private}"
+                )
 
         data: bytes = response.content
         if not data:

@@ -1,9 +1,9 @@
 """
 Provider-agnostic LLM adapter layer.
 
-Two adapter implementations cover four providers:
+Two adapter implementations cover five providers:
 - AnthropicAdapter: Anthropic (native) + MiniMax (base_url override)
-- OpenAIAdapter: OpenAI (native) + Gemini (base_url override)
+- OpenAIAdapter: OpenAI (native) + Gemini/Qwen (base_url override)
 
 Both yield a common StreamEvent protocol so the orchestrator and services
 are decoupled from vendor-specific SDK details.
@@ -25,11 +25,12 @@ logger = logging.getLogger(__name__)
 # Common types
 # ---------------------------------------------------------------------------
 
-LLMProvider = Literal["anthropic", "minimax", "openai", "gemini"]
+LLMProvider = Literal["anthropic", "minimax", "openai", "gemini", "qwen"]
 
 PROVIDER_BASE_URLS: dict[str, str] = {
     "minimax": "https://api.minimax.io/anthropic",
     "gemini": "https://generativelanguage.googleapis.com/v1beta/openai/",
+    "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
 }
 
 PROVIDER_DEFAULT_MODELS: dict[str, dict[str, str]] = {
@@ -37,6 +38,7 @@ PROVIDER_DEFAULT_MODELS: dict[str, dict[str, str]] = {
     "minimax": {"primary": "MiniMax-M2.7", "cheap": "MiniMax-M2.7-highspeed"},
     "openai": {"primary": "gpt-5.5", "cheap": "gpt-5.5-mini"},
     "gemini": {"primary": "gemini-2.5-pro", "cheap": "gemini-2.5-flash"},
+    "qwen": {"primary": "qwen3.6-plus", "cheap": "qwen3-30b-a3b-instruct-2507"},
 }
 
 
@@ -405,9 +407,9 @@ class OpenAIAdapter:
 
     def _build_token_limit_kwargs(self, *, model: str, max_tokens: int) -> dict[str, int]:
         """Map token limit parameter name based on OpenAI model requirements."""
-        # Newer reasoning families (e.g. gpt-5.5 / o-series) reject `max_tokens`.
+        # Newer reasoning families (e.g. gpt-5 / gpt-5.5 / o-series) reject `max_tokens`.
         normalized_model: str = model.strip().lower().split("/")[-1]
-        uses_completion_tokens: bool = normalized_model.startswith(("gpt-5.5", "o"))
+        uses_completion_tokens: bool = normalized_model.startswith(("gpt-5", "gpt5", "o"))
         token_param_name: str = (
             "max_completion_tokens" if uses_completion_tokens else "max_tokens"
         )
@@ -431,16 +433,18 @@ class OpenAIAdapter:
             prefix, base_model = normalized_model.split("/", 1)
             prefix = f"{prefix}/"
 
-        if not base_model.startswith("gpt-5"):
+        if not base_model.startswith(("gpt-5", "gpt5")):
             return []
 
+        canonical_base_model: str = base_model.replace("gpt5", "gpt-5", 1) if base_model.startswith("gpt5") else base_model
+
         variants: list[str] = []
-        if base_model == "gpt-5":
-            variants.extend(["gpt-5.5", "gpt-5.5-mini", "gpt-5.5-nano"])
-        elif base_model == "gpt-5.5":
-            variants.extend(["gpt-5", "gpt-5.5-mini", "gpt-5.5-nano"])
-        elif base_model == "gpt-5.5-mini":
-            variants.append("gpt-5.5-nano")
+        if canonical_base_model == "gpt-5.5":
+            variants.extend(["gpt-5", "gpt-5.5-mini"])
+        elif canonical_base_model == "gpt-5.5-mini":
+            variants.extend(["gpt-5-mini", "gpt-5"])
+        elif canonical_base_model == "gpt-5.5-nano":
+            variants.extend(["gpt-5.5-mini", "gpt-5"])
 
         fallback_models: list[str] = [f"{prefix}{variant}" for variant in variants if variant != base_model]
         if fallback_models:
@@ -805,23 +809,29 @@ _PROVIDERS_WITHOUT_DOCUMENT_BLOCKS: frozenset[str] = frozenset({
     "minimax",
     "openai",
     "gemini",
+    "qwen",
 })
+_PROVIDER_ALIASES: dict[str, str] = {
+    "alibaba": "qwen",
+}
 
 
 def get_adapter(config: LLMConfig) -> AnthropicAdapter | OpenAIAdapter:
     """Create the appropriate adapter for a resolved LLM config."""
-    if config.provider in ("anthropic", "minimax"):
-        base_url: str | None = config.base_url or PROVIDER_BASE_URLS.get(config.provider)
-        supports_docs: bool = config.provider not in _PROVIDERS_WITHOUT_DOCUMENT_BLOCKS
+    provider: str = _PROVIDER_ALIASES.get(config.provider, config.provider)
+
+    if provider in ("anthropic", "minimax"):
+        base_url: str | None = config.base_url or PROVIDER_BASE_URLS.get(provider)
+        supports_docs: bool = provider not in _PROVIDERS_WITHOUT_DOCUMENT_BLOCKS
         return AnthropicAdapter(
             api_key=config.api_key,
             base_url=base_url,
             supports_document_blocks=supports_docs,
         )
 
-    if config.provider in ("openai", "gemini"):
-        base_url = config.base_url or PROVIDER_BASE_URLS.get(config.provider)
-        supports_docs: bool = config.provider not in _PROVIDERS_WITHOUT_DOCUMENT_BLOCKS
+    if provider in ("openai", "gemini", "qwen"):
+        base_url = config.base_url or PROVIDER_BASE_URLS.get(provider)
+        supports_docs: bool = provider not in _PROVIDERS_WITHOUT_DOCUMENT_BLOCKS
         return OpenAIAdapter(
             api_key=config.api_key,
             base_url=base_url,

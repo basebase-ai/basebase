@@ -18,6 +18,7 @@ import { useAppStore } from '../store';
 import { useTeamMembers, useUpdateOrganization, useLinkIdentity, useUnlinkIdentity, useUpdateGuestUser, useUpdateMemberRole, useDeleteMember, useDeleteOrganization, organizationKeys } from '../hooks';
 import type { TeamMember, IdentityMapping } from '../hooks';
 import { apiRequest } from '../lib/api';
+import { formatModelNameForUi } from '../lib/modelDisplay';
 import { Avatar } from './Avatar';
 import { SubscriptionSetup } from './SubscriptionSetup';
 
@@ -123,11 +124,31 @@ interface OrganizationPanelProps {
   mode?: 'panel' | 'page';
 }
 
+const normalizeModelFamilyName = (family: string): string => {
+  const normalized = family.trim().toLowerCase();
+  if (normalized === 'qwen') return 'alibaba';
+  return normalized;
+};
+
 const MODEL_FAMILY_DEFAULTS: Record<string, { primary: string; fast: string }> = {
   anthropic: { primary: 'claude-opus-4-6', fast: 'claude-haiku-4-5-20251001' },
   minimax: { primary: 'MiniMax-M2.7', fast: 'MiniMax-M2.7-highspeed' },
   openai: { primary: 'gpt-5.5', fast: 'gpt-5.5-mini' },
   gemini: { primary: 'gemini-2.5-pro', fast: 'gemini-2.5-flash' },
+  alibaba: { primary: 'qwen3.6-plus', fast: 'qwen3-30b-a3b-instruct-2507' },
+};
+
+const isFastModelCandidate = (modelName: string): boolean => {
+  const normalized = modelName.trim().toLowerCase();
+  return (
+    normalized.includes('mini')
+    || normalized.includes('nano')
+    || normalized.includes('flash')
+    || normalized.includes('haiku')
+    || normalized.includes('sonnet')
+    || normalized.includes('turbo')
+    || normalized.includes('speed')
+  );
 };
 
 export function OrganizationPanel({ organization, currentUser, initialTab = 'team', onClose, mode = 'panel' }: OrganizationPanelProps): JSX.Element {
@@ -673,22 +694,57 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
   const handleModelChange = async (field: 'llmPrimaryModel' | 'llmCheapModel' | 'llmWorkflowModel', value: string): Promise<void> => {
     const inferModelFamily = (modelName: string): string | null => {
       const explicitProvider: string | undefined = llmModelMap[modelName];
-      if (explicitProvider && explicitProvider.trim()) return explicitProvider.trim().toLowerCase();
+      if (explicitProvider && explicitProvider.trim()) return normalizeModelFamilyName(explicitProvider);
       const normalized = modelName.trim().toLowerCase();
       if (normalized.startsWith('claude')) return 'anthropic';
       if (normalized.startsWith('minimax')) return 'minimax';
       if (normalized.startsWith('gemini')) return 'gemini';
+      if (normalized.startsWith('qwen') || normalized.startsWith('qwq')) return 'alibaba';
       if (normalized.startsWith('gpt') || normalized.startsWith('o1') || normalized.startsWith('o3') || normalized.startsWith('o4')) return 'openai';
       return null;
     };
 
     const resolveFamilyDefaultModel = (family: string, modelRole: 'primary' | 'fast'): string => {
+      const familyModels: string[] = Object.entries(llmModelMap)
+        .filter(([, provider]) => normalizeModelFamilyName(provider ?? '') === family)
+        .map(([modelName]) => modelName);
+
+      if (familyModels.length > 0) {
+        const firstFamilyModel: string = familyModels[0] ?? '';
+        const desiredModelPredicate = (modelName: string): boolean => (
+          modelRole === 'fast' ? isFastModelCandidate(modelName) : !isFastModelCandidate(modelName)
+        );
+        const familySpecificDefault = familyModels.find((modelName) => desiredModelPredicate(modelName));
+        if (familySpecificDefault) return familySpecificDefault;
+        const defaults = MODEL_FAMILY_DEFAULTS[family];
+        if (defaults) {
+          const fallbackModel = modelRole === 'primary' ? defaults.primary : defaults.fast;
+          console.warn('[OrganizationPanel] No role-specific allowlisted family model found, using hardcoded family default', {
+            family,
+            modelRole,
+            fallbackModel,
+            allowedFamilyModels: familyModels,
+          });
+          return fallbackModel;
+        }
+        console.info('[OrganizationPanel] No role-specific family model found, using first allowed model', {
+          family,
+          modelRole,
+          selectedModel: firstFamilyModel,
+          allowedFamilyModels: familyModels,
+        });
+        return firstFamilyModel;
+      }
+
       const defaults = MODEL_FAMILY_DEFAULTS[family];
       if (defaults) {
+        console.warn('[OrganizationPanel] Falling back to hardcoded model family defaults because allowlist returned no models for family', {
+          family,
+          modelRole,
+          defaultModel: modelRole === 'primary' ? defaults.primary : defaults.fast,
+        });
         return modelRole === 'primary' ? defaults.primary : defaults.fast;
       }
-      const knownFamilyModel = Object.entries(llmModelMap).find(([, provider]) => provider?.trim().toLowerCase() === family)?.[0];
-      if (knownFamilyModel) return knownFamilyModel;
       return '';
     };
 
@@ -705,7 +761,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
       const primaryFamily = inferModelFamily(nextPrimary);
       if (selectedCheapFamily && primaryFamily && selectedCheapFamily !== primaryFamily) {
         nextPrimary = resolveFamilyDefaultModel(selectedCheapFamily, 'primary');
-        warningMessage = `Fast model family changed to ${selectedCheapFamily}, so primary model was reset to that family default (${nextPrimary || 'default'}).`;
+        warningMessage = `Fast model family changed to ${selectedCheapFamily}, so primary model was reset to that family default (${nextPrimary ? formatModelNameForUi(nextPrimary) : 'default'}).`;
       }
     }
 
@@ -714,7 +770,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
       const cheapFamily = inferModelFamily(nextCheap);
       if (selectedPrimaryFamily && cheapFamily && selectedPrimaryFamily !== cheapFamily) {
         nextCheap = resolveFamilyDefaultModel(selectedPrimaryFamily, 'fast');
-        warningMessage = `Primary model family changed to ${selectedPrimaryFamily}, so fast model was reset to that family default (${nextCheap || 'default'}).`;
+        warningMessage = `Primary model family changed to ${selectedPrimaryFamily}, so fast model was reset to that family default (${nextCheap ? formatModelNameForUi(nextCheap) : 'default'}).`;
       }
     }
 
@@ -943,6 +999,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                       const isGuest: boolean = member.isGuest;
                       const isInvited: boolean = member.status === 'invited';
                       const isOrgAdminMember: boolean = member.role === 'admin';
+                      const isGlobalAdmin: boolean = member.isGlobalAdmin;
                       const isAdmin: boolean = member.role === 'admin'
                         || member.role === 'global_admin'
                         || member.canLoginAsAdmin;
@@ -1008,6 +1065,14 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                                   <span className="font-medium text-surface-100 truncate">
                                     {displayName}
                                   </span>
+                                  {member.id === currentUser.id && (
+                                    <span
+                                      aria-label="You"
+                                      className="px-2 py-0.5 text-xs font-medium bg-surface-700 text-surface-200 rounded-full"
+                                    >
+                                      You
+                                    </span>
+                                  )}
                                   {isAdmin && (
                                     <span className="px-2 py-0.5 text-xs font-medium bg-primary-500/20 text-primary-400 rounded-full">
                                       admin
@@ -1068,18 +1133,27 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                                       </button>
                                       {canAdministerOrg && (
                                         <>
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setMenuOpenMemberId(null);
-                                              const nextRole: 'admin' | 'member' = isOrgAdminMember ? 'member' : 'admin';
-                                              void handleUpdateMemberRole(member.id, nextRole);
-                                            }}
-                                            disabled={updateMemberRoleMutation.isPending}
-                                            className="w-full text-left px-3 py-2 text-sm text-surface-200 hover:bg-surface-600/60 transition-colors disabled:opacity-50"
-                                          >
-                                            {isOrgAdminMember ? 'Demote to user' : 'Promote to admin'}
-                                          </button>
+                                          {isGlobalAdmin ? (
+                                            <div
+                                              className="w-full text-left px-3 py-2 text-sm text-surface-400 italic cursor-not-allowed"
+                                              title="Global admin role is managed at the user level and overrides per-org admin status."
+                                            >
+                                              Global admin
+                                            </div>
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setMenuOpenMemberId(null);
+                                                const nextRole: 'admin' | 'member' = isOrgAdminMember ? 'member' : 'admin';
+                                                void handleUpdateMemberRole(member.id, nextRole);
+                                              }}
+                                              disabled={updateMemberRoleMutation.isPending}
+                                              className="w-full text-left px-3 py-2 text-sm text-surface-200 hover:bg-surface-600/60 transition-colors disabled:opacity-50"
+                                            >
+                                              {isOrgAdminMember ? 'Demote to user' : 'Promote to admin'}
+                                            </button>
+                                          )}
                                           <button
                                             type="button"
                                             onClick={() => {
@@ -1529,7 +1603,9 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                         >
                           <option value="">Default</option>
                           {Object.entries(llmModelMap).map(([model, provider]) => (
-                            <option key={model} value={model}>{model} ({provider})</option>
+                            <option key={model} value={model}>
+                              {provider ? `${formatModelNameForUi(model)} (${provider})` : formatModelNameForUi(model)}
+                            </option>
                           ))}
                         </select>
                         <p className="text-xs text-surface-500 mt-1">Leave blank for provider default</p>
@@ -1543,7 +1619,9 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                         >
                           <option value="">Default</option>
                           {Object.entries(llmModelMap).map(([model, provider]) => (
-                            <option key={model} value={model}>{model} ({provider})</option>
+                            <option key={model} value={model}>
+                              {provider ? `${formatModelNameForUi(model)} (${provider})` : formatModelNameForUi(model)}
+                            </option>
                           ))}
                         </select>
                         <p className="text-xs text-surface-500 mt-1">Used for summaries, titles, and background tasks</p>
@@ -1562,7 +1640,9 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                         >
                           <option value="">Default</option>
                           {Object.entries(llmModelMap).map(([model, provider]) => (
-                            <option key={model} value={model}>{model} ({provider})</option>
+                            <option key={model} value={model}>
+                              {provider ? `${formatModelNameForUi(model)} (${provider})` : formatModelNameForUi(model)}
+                            </option>
                           ))}
                         </select>
                         <p className="text-xs text-surface-500 mt-1">Used only for workflow runs; regular chat turns keep using your primary model</p>

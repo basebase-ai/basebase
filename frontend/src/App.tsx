@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from './lib/supabase';
 import { getEmailDomain } from './lib/email';
-import { API_BASE } from './lib/api';
+import { API_BASE, getAuthenticatedRequestHeaders } from './lib/api';
 import { useAppStore } from './store';
 import { Auth } from './components/Auth';
 import { OnboardingWizard } from './components/OnboardingWizard';
@@ -223,6 +223,31 @@ function App(): JSX.Element {
     const domain = getEmailDomain(email);
     setEmailDomain(domain);
 
+    // If the user landed via an invite URL (?invite=1&org_id=...), redirect them
+    // into the invited org instead of falling back to their previous active org.
+    // Auto-acceptance of the pending membership happens server-side during sync.
+    const redirectToInvitedOrg = async (): Promise<void> => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('invite') !== '1') return;
+      const invitedOrgId = params.get('org_id');
+      if (!invitedOrgId) return;
+      const switched = await switchActiveOrganization(invitedOrgId);
+      if (switched) {
+        const orgs = useAppStore.getState().organizations;
+        const next = orgs.find((o) => o.id === invitedOrgId);
+        if (next) {
+          setOrganization({
+            id: next.id,
+            name: next.name,
+            logoUrl: next.logoUrl ?? null,
+            handle: next.handle ?? null,
+          });
+        }
+        // Strip the invite params so a refresh doesn't re-trigger this branch.
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+    };
+
     // Get avatar from OAuth metadata - try multiple possible field names
     // Google OAuth stores it in user_metadata, but also check identities array
     const identityData = supabaseUser.identities?.[0]?.identity_data as Record<string, unknown> | undefined;
@@ -262,9 +287,10 @@ function App(): JSX.Element {
     // This catches users who signed up via waitlist form
     // Also handles invited users with personal emails (they'll have a pending invitation)
     try {
+      const authHeaders = await getAuthenticatedRequestHeaders();
       const syncResponse = await fetch(`${API_BASE}/auth/users/sync`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({
           id: supabaseUser.id,
           email,
@@ -324,6 +350,7 @@ function App(): JSX.Element {
             setScreen('onboarding-wizard');
             return;
           }
+          await redirectToInvitedOrg();
           setScreen('app');
           return;
         }
@@ -347,6 +374,7 @@ function App(): JSX.Element {
           });
         }
       }
+      await redirectToInvitedOrg();
       setScreen('app');
       return;
     }

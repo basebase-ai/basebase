@@ -12,6 +12,14 @@ import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
 
 type CallbackState = 'processing' | 'success' | 'error';
 
+// Carry invite params through to "/" so the post-auth redirect in App.tsx
+// can land the user in the invited org (BAS-468).
+function preserveInviteSearch(): string {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('invite') !== '1') return '';
+  return `?${params.toString()}`;
+}
+
 export function OAuthCallback(): JSX.Element {
   const [state, setState] = useState<CallbackState>('processing');
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +55,7 @@ export function OAuthCallback(): JSX.Element {
           setState('success');
           // Redirect to home after a brief delay
           setTimeout(() => {
-            window.location.href = '/';
+            window.location.href = `/${preserveInviteSearch()}`;
           }, 1500);
         } else {
           // No session yet - might still be processing
@@ -57,7 +65,7 @@ export function OAuthCallback(): JSX.Element {
               if (event === 'SIGNED_IN' && session) {
                 setState('success');
                 setTimeout(() => {
-                  window.location.href = '/';
+                  window.location.href = `/${preserveInviteSearch()}`;
                 }, 1500);
                 subscription.unsubscribe();
               }

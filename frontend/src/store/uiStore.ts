@@ -68,7 +68,7 @@ export const useUIStore = create<UIState>()(
       // Initial state
       theme: "system",
       sidebarCollapsed: false,
-      sidebarWidth: 256,
+      sidebarWidth: 288,
       currentView: "home",
       currentAppId: null,
       currentArtifactId: null,

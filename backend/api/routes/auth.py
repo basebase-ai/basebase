@@ -732,7 +732,10 @@ class SyncUserResponse(BaseModel):
 
 
 @router.post("/users/sync", response_model=SyncUserResponse)
-async def sync_user(request: SyncUserRequest) -> SyncUserResponse:
+async def sync_user(
+    request: SyncUserRequest,
+    auth: AuthContext = Depends(get_current_auth),
+) -> SyncUserResponse:
     """Sync a user from Supabase auth to our database.
     
     Called when a user authenticates via Supabase OAuth.
@@ -742,6 +745,14 @@ async def sync_user(request: SyncUserRequest) -> SyncUserResponse:
         user_uuid = UUID(request.id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid user ID")
+
+    if auth.user_id != user_uuid:
+        raise HTTPException(status_code=403, detail="User ID does not match authenticated user")
+
+    request_email = request.email.strip().lower()
+    auth_email = (auth.email or "").strip().lower()
+    if auth_email and request_email != auth_email:
+        raise HTTPException(status_code=403, detail="Email does not match authenticated user")
 
     org_uuid: Optional[UUID] = None
     if request.organization_id:
@@ -1208,6 +1219,15 @@ async def create_organization(
         session.add(new_org)
         await session.flush()
 
+        from services.credits import record_grant
+        await record_grant(
+            session,
+            organization_id=new_org.id,
+            amount=new_org.credits_balance,
+            balance_after=new_org.credits_balance,
+            reason="signup_bonus",
+        )
+
         from models.org_member import OrgMember
 
         guest_user = User(
@@ -1402,6 +1422,7 @@ class TeamMemberResponse(BaseModel):
     status: Optional[str] = None  # 'active', 'crm_only', etc.
     is_guest: bool = False
     can_login_as_admin: bool = False  # True when user is org admin for this org, or global_admin
+    is_global_admin: bool = False  # True when user has the global_admin role at the user level
     identities: list[IdentityMappingResponse] = []
 
 
@@ -1524,6 +1545,7 @@ async def get_organization_members(
                         bool(membership and membership.role == "admin")
                         or _is_global_admin(u)
                     ),
+                    is_global_admin=_is_global_admin(u),
                     identities=identities,
                 )
             )
@@ -1602,6 +1624,7 @@ async def get_organization_members(
 async def link_identity(
     org_id: str,
     request: LinkIdentityRequest,
+    auth: AuthContext = Depends(get_current_auth),
     user_id: Optional[str] = None,
 ) -> dict[str, str]:
     """Manually link an unmatched identity mapping to a user.
@@ -1610,8 +1633,11 @@ async def link_identity(
     """
     from models.external_identity_mapping import ExternalIdentityMapping
 
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    if user_id is not None and user_id != auth.user_id_str:
+        raise HTTPException(
+            status_code=403, detail="user_id does not match authenticated user"
+        )
+    requester_uuid = auth.user_id
 
     try:
         org_uuid = UUID(org_id)
@@ -1621,6 +1647,10 @@ async def link_identity(
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
     async with get_session(organization_id=str(org_uuid)) as session:
+        requester: User | None = await session.get(User, requester_uuid)
+        if not requester or await _get_org_membership(session, requester_uuid, org_uuid) is None:
+            raise HTTPException(status_code=403, detail="Not authorized to modify this organization")
+
         # Verify target user belongs to this org (membership or guest home org)
         target_user: User | None = await session.get(User, target_uuid)
         if not target_user:
@@ -1641,7 +1671,7 @@ async def link_identity(
                 org_uuid,
                 target_uuid,
                 mapping_uuid,
-                user_id,
+                requester_uuid,
             )
             raise HTTPException(status_code=403, detail="Guest user identities cannot be manually linked")
 
@@ -1760,6 +1790,7 @@ async def link_identity(
 async def unlink_identity(
     org_id: str,
     request: UnlinkIdentityRequest,
+    auth: AuthContext = Depends(get_current_auth),
     user_id: Optional[str] = None,
 ) -> dict[str, str]:
     """Unlink an identity mapping from a user in the org.
@@ -1770,12 +1801,14 @@ async def unlink_identity(
     """
     from models.external_identity_mapping import ExternalIdentityMapping
 
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    if user_id is not None and user_id != auth.user_id_str:
+        raise HTTPException(
+            status_code=403, detail="user_id does not match authenticated user"
+        )
+    requester_uuid = auth.user_id
 
     try:
         org_uuid = UUID(org_id)
-        requester_uuid = UUID(user_id)
         mapping_uuid = UUID(request.mapping_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
@@ -1920,6 +1953,9 @@ async def invite_to_organization(
             select(User).where(User.email == invite_email)
         )
         target_user: Optional[User] = result.scalar_one_or_none()
+        # Existing == previously logged in. Stub users from a prior invite have
+        # last_login=None, so they still get the "sign up" copy.
+        recipient_is_existing_user: bool = bool(target_user and target_user.last_login)
 
         if not target_user:
             # Create stub user
@@ -1962,6 +1998,8 @@ async def invite_to_organization(
                     inviter_name,
                     org_logo_url=org.logo_url,
                     inviter_avatar_url=inviter.avatar_url,
+                    org_id=str(org_uuid),
+                    recipient_is_existing_user=recipient_is_existing_user,
                 )
                 return InviteToOrgResponse(
                     membership_id=membership_id_str,
@@ -1998,6 +2036,8 @@ async def invite_to_organization(
             inviter_name,
             org_logo_url=org.logo_url,
             inviter_avatar_url=inviter.avatar_url,
+            org_id=str(org_uuid),
+            recipient_is_existing_user=recipient_is_existing_user,
         )
 
         return InviteToOrgResponse(
@@ -2161,6 +2201,8 @@ async def invite_missing_slack_users_to_organization(
 
         inviter_name: str = inviter.name or inviter.email
         for email in invited_emails:
+            existing_user = target_users.get(email)
+            recipient_is_existing_user: bool = bool(existing_user and existing_user.last_login)
             background_tasks.add_task(
                 send_org_invitation_email,
                 email,
@@ -2168,6 +2210,8 @@ async def invite_missing_slack_users_to_organization(
                 inviter_name,
                 org_logo_url=org.logo_url,
                 inviter_avatar_url=inviter.avatar_url,
+                org_id=str(org_uuid),
+                recipient_is_existing_user=recipient_is_existing_user,
             )
 
         return SlackMissingInviteResponse(
@@ -2373,6 +2417,13 @@ async def update_organization_member_role(
         if not await _can_administer_org(session, requester, org_uuid):
             raise HTTPException(status_code=403, detail="Org admin or global_admin required for this organization")
 
+        target_user: Optional[User] = await session.get(User, target_uuid)
+        if _is_global_admin(target_user):
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot change the org-level role of a global admin. Their global role overrides the per-org setting.",
+            )
+
         membership_result = await session.execute(
             select(OrgMember).where(
                 OrgMember.user_id == target_uuid,
@@ -2570,10 +2621,16 @@ async def update_organization(
 
 
 @router.get("/llm-options")
-async def get_llm_options() -> dict[str, str | dict[str, str]]:
-    """Return model→provider map from ALL_MODEL_STRINGS."""
-    from services.llm_provider import get_model_provider_map
-    return {"models": get_model_provider_map()}
+async def get_llm_options() -> dict[str, str | dict[str, str] | dict[str, int] | int]:
+    """Return LLM model metadata for settings and chat context UI."""
+    from services.llm_provider import get_model_max_tokens_map, get_model_provider_map
+
+    default_max_tokens: int = 200_000
+    return {
+        "models": get_model_provider_map(),
+        "model_max_tokens": get_model_max_tokens_map(default_max_tokens=default_max_tokens),
+        "default_max_tokens": default_max_tokens,
+    }
 
 
 @router.get("/organizations/{org_id}", response_model=OrganizationResponse)
@@ -2726,17 +2783,15 @@ async def delete_organization(
 async def update_guest_user(
     org_id: str,
     request: UpdateGuestUserRequest,
-    user_id: Optional[str] = None,
+    auth: AuthContext = Depends(get_current_auth),
 ) -> dict[str, bool]:
     """Enable/disable guest user fallback for unmapped Slack identities."""
     try:
         org_uuid = UUID(org_id)
-        user_uuid = UUID(user_id) if user_id else None
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
-    if not user_uuid:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    user_uuid = auth.user_id
 
     async with get_session(organization_id=org_id) as session:
         requesting_user = await session.get(User, user_uuid)
@@ -2869,7 +2924,7 @@ async def get_available_integrations() -> AvailableIntegrationsResponse:
             {"id": "microsoft_calendar", "name": "Microsoft Calendar", "description": "Outlook calendar events and meetings", "scope": "user"},
             {"id": "microsoft_mail", "name": "Microsoft Mail", "description": "Outlook emails and communications", "scope": "user"},
             {"id": "salesforce", "name": "Salesforce", "description": "CRM - Opportunities, Accounts", "scope": "user"},
-            {"id": "google_drive", "name": "Google Drive", "description": "Sync files from Google Drive — search and read Docs, Sheets, Slides", "scope": "user"},
+            {"id": "google_drive", "name": "Google Drive", "description": "Docs, Sheets, Slides, and Gemini meeting notes from Drive", "scope": "user"},
             {"id": "apollo", "name": "Apollo.io", "description": "Data enrichment - Update contact job titles, companies, emails", "scope": "user"},
             {"id": "github", "name": "GitHub", "description": "Track repos, commits, and pull requests by team", "scope": "user"},
             {"id": "linear", "name": "Linear", "description": "Issue tracking - sync and manage teams, projects, and issues", "scope": "user"},
@@ -3638,6 +3693,18 @@ async def nango_oauth_callback_redirect(request: Request) -> RedirectResponse:
     This route can be used as the callback URL for any Nango integration.
     It preserves all query parameters and redirects to Nango's callback endpoint.
     """
+    frontend_url = settings.FRONTEND_URL.rstrip("/")
+    if "state" not in request.query_params:
+        logger.warning(
+            "OAuth callback missing state key; redirecting to login. path=%s query_keys=%s",
+            request.url.path,
+            sorted(request.query_params.keys()),
+        )
+        return RedirectResponse(
+            url=f"{frontend_url}/login?reason=missing_state",
+            status_code=302,
+        )
+
     nango_callback_url = "https://api.nango.dev/oauth/callback"
     
     # Preserve all query parameters from the incoming request

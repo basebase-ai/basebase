@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 _configured_openai_research_model: str = (settings.OPENAI_RESEARCH_MODEL or "").strip()
 _preferred_openai_research_model: str = (
     _configured_openai_research_model
-    if _configured_openai_research_model.startswith("gpt-5.5")
+    if _configured_openai_research_model.startswith(("gpt-5.5", "gpt5.5"))
     else "gpt-5.5"
 )
 OPENAI_WEB_RESEARCH_FALLBACK_MODELS: tuple[str, ...] = tuple(
@@ -39,7 +39,6 @@ OPENAI_WEB_RESEARCH_FALLBACK_MODELS: tuple[str, ...] = tuple(
             "gpt-5.5",
             "gpt-5",
             "gpt-5.5-mini",
-            "gpt-5.5-nano",
         )
     )
 )

@@ -68,6 +68,12 @@ async def grant_free_credits(
             return False
         org_name: str = row[0]
 
+        old_balance_result = await session.execute(
+            text("SELECT credits_balance FROM organizations WHERE id = :org_id"),
+            {"org_id": str(org_uuid)},
+        )
+        old_balance: int = int(old_balance_result.scalar_one() or 0)
+
         await session.execute(
             text("""
                 UPDATE organizations
@@ -88,6 +94,25 @@ async def grant_free_credits(
                 "period_end": period_end,
             },
         )
+
+        delta: int = credits - old_balance
+        if delta > 0:
+            await session.execute(
+                text("""
+                    INSERT INTO credit_transactions
+                        (id, organization_id, amount, balance_after, reason, created_at)
+                    VALUES
+                        (gen_random_uuid(), :org_id, :amount, :balance_after, :reason, :now)
+                """),
+                {
+                    "org_id": str(org_uuid),
+                    "amount": delta,
+                    "balance_after": credits,
+                    "reason": "partner_grant_script",
+                    "now": now,
+                },
+            )
+
         await session.commit()
 
         print(f"✓ Granted free credits to: {org_name}")

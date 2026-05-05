@@ -98,6 +98,97 @@ export function useAppQuery(queryName, params, options) {
   return { data, columns, loading, error, refetch };
 }
 
+
+
+// ---------------------------------------------------------------------------
+// triggerWorkflow – first-class app SDK API to enqueue a workflow run from this app
+//
+// Usage:
+// await triggerWorkflow("<workflow-id>", { foo: "bar" });
+//
+// Note: Do not hand-roll window.parent.postMessage("app-trigger-workflow").
+// This helper is the supported codepath and handles request IDs, status updates,
+// validation compatibility, and timeout behavior.
+//
+// Optional status listener:
+// await triggerWorkflow("<workflow-id>", { foo: "bar" }, {
+//   onStatus: ({ stage, requestId, error, result }) => {
+//     console.log("[My App] workflow trigger status", stage, { requestId, error, result });
+//   },
+// });
+// ---------------------------------------------------------------------------
+export function triggerWorkflow(workflowId, triggerData, options) {
+  const requestId = (globalThis.crypto && globalThis.crypto.randomUUID)
+    ? globalThis.crypto.randomUUID()
+    : (Date.now().toString(36) + Math.random().toString(36).slice(2));
+
+  return new Promise((resolve, reject) => {
+    const notify = (stage, details) => {
+      try {
+        if (options && typeof options.onStatus === "function") options.onStatus({ stage, ...details });
+      } catch (_) {}
+    };
+    let timeoutId = null;
+
+    const cleanup = () => {
+      window.removeEventListener("message", onMessage);
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+
+    const onMessage = (event) => {
+      const payload = event && event.data ? event.data : null;
+      if (!payload || payload.type !== "app-trigger-workflow-result" || payload.requestId !== requestId) return;
+      cleanup();
+      if (payload.ok) {
+        notify("queued", { requestId, workflowId, result: payload.result });
+        console.log("[App SDK] Workflow trigger queued", { requestId, workflowId, result: payload.result });
+        resolve(payload.result || { status: "queued" });
+      } else {
+        notify("failed", { requestId, workflowId, error: payload.error });
+        console.error("[App SDK] Workflow trigger failed", { requestId, workflowId, error: payload.error });
+        reject(new Error(payload.error || "Failed to trigger workflow"));
+      }
+    };
+
+    window.addEventListener("message", onMessage);
+    notify("listening", { requestId, workflowId });
+    console.log("[App SDK] Listening for workflow trigger result", { requestId, workflowId });
+    timeoutId = setTimeout(() => {
+      cleanup();
+      console.error("[App SDK] Workflow trigger timed out", { requestId, workflowId });
+      notify("timeout", { requestId, workflowId });
+      reject(new Error("Timed out waiting for workflow trigger response"));
+    }, 15000);
+
+    try {
+      const sanitizedTriggerData = triggerData && typeof triggerData === "object" ? triggerData : undefined;
+      console.log("[App SDK] Requesting workflow trigger", {
+        requestId,
+        appId: APP_ID,
+        workflowId,
+        triggerDataKeys: sanitizedTriggerData ? Object.keys(sanitizedTriggerData).sort() : [],
+      });
+      notify("posting", {
+        requestId,
+        appId: APP_ID,
+        workflowId,
+        triggerDataKeys: sanitizedTriggerData ? Object.keys(sanitizedTriggerData).sort() : [],
+      });
+      window.parent.postMessage({
+        type: "app-trigger-workflow",
+        requestId,
+        appId: APP_ID,
+        workflowId,
+        triggerData: sanitizedTriggerData,
+        transport: "sdk.triggerWorkflow",
+      }, "*");
+    } catch (err) {
+      cleanup();
+      reject(err instanceof Error ? err : new Error("Failed to post message to parent"));
+    }
+  });
+}
+
 // ---------------------------------------------------------------------------
 // useDateRange – convert named periods to { start, end } ISO date strings
 // ---------------------------------------------------------------------------

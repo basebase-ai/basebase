@@ -7,7 +7,8 @@
  * 3. SDK + Plot shim inlined (no module bundler needed)
  * 4. Basebase's code has imports stripped (everything is already in scope)
  *
- * The iframe uses sandbox="allow-scripts" for security isolation.
+ * The iframe uses a restrictive sandbox while allowing popups so app links
+ * with target="_blank" / window.open() can open in a new tab.
  */
 
 import { useEffect, useState, useCallback, useRef } from "react";
@@ -27,6 +28,10 @@ interface AppTokenData {
 interface AppApiData {
   frontend_code: string;
   frontend_code_compiled?: string | null;
+}
+interface ExternalNavigationPrompt {
+  href: string;
+  target?: "_blank" | "_top";
 }
 
 interface SandpackAppRendererProps {
@@ -98,6 +103,17 @@ function escapeForScript(s: string): string {
   return s.replace(new RegExp(CS, "gi"), "<\\/script>");
 }
 
+const BASEBASE_HOST = "basebase.com";
+
+function normalizeHttpNavigationHref(href: string): string | null {
+  try {
+    const parsed = new URL(href, window.location.href);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---- build the srcdoc HTML ------------------------------------------------
 
 function buildSrcdocHtml(opts: {
@@ -140,6 +156,146 @@ window.__REVTOPS_API_BASE__  = ${JSON.stringify(opts.apiBase)};
 window.__REVTOPS_APP_ID__    = ${JSON.stringify(opts.appId)};
 window.__REVTOPS_PUBLIC_MODE__ = ${opts.publicMode ? "true" : "false"};
 
+// Harden popup behavior for untrusted app code:
+// - block javascript:/data: URLs
+// - always open with noopener,noreferrer
+// - sever opener references when possible
+(function(){
+  const SAFE_SPECIAL_SCHEMES = /^(mailto:|tel:)/i;
+  const BASEBASE_HOST = ${JSON.stringify(BASEBASE_HOST)};
+  function isSingleSlashPath(url) {
+    return url.startsWith("/") && !url.startsWith("//");
+  }
+  function isBasebaseHost(hostname) {
+    return hostname === BASEBASE_HOST || hostname.endsWith("." + BASEBASE_HOST);
+  }
+  function parseHttpUrl(raw) {
+    try {
+      const parsed = new URL(raw, window.location.href);
+      return /^https?:$/i.test(parsed.protocol) ? parsed : null;
+    } catch(_) {
+      return null;
+    }
+  }
+  function shouldConfirmTopNavigation(raw) {
+    const parsed = parseHttpUrl(raw);
+    return !!parsed && parsed.origin !== window.location.origin && !isBasebaseHost(parsed.hostname);
+  }
+  function isSafeUrl(raw) {
+    if (typeof raw !== "string") return false;
+    const url = raw.trim();
+    if (!url) return false;
+    if (url.startsWith("#") || isSingleSlashPath(url) || SAFE_SPECIAL_SCHEMES.test(url)) return true;
+    return parseHttpUrl(url) !== null;
+  }
+  function isLikelyExternalUrl(raw) {
+    if (typeof raw !== "string") return false;
+    const url = raw.trim();
+    if (!url || url.startsWith("#") || isSingleSlashPath(url)) return false;
+    const parsed = parseHttpUrl(url);
+    return parsed ? parsed.origin !== window.location.origin : /^https?:/i.test(url);
+  }
+  function sanitizeFeatures(features) {
+    const base = (typeof features === "string" && features.trim()) ? features + "," : "";
+    return base + "noopener,noreferrer";
+  }
+  const originalOpen = window.open ? window.open.bind(window) : null;
+  let pendingExternalHref = null;
+  let pendingExternalTarget = "_blank";
+  function postExternalNavigationRequest(href, target) {
+    pendingExternalHref = href;
+    pendingExternalTarget = target;
+    try { window.parent.postMessage({ type:"external-link-navigation", href: href, target: target }, "*"); } catch(_) {}
+  }
+  function navigateTop(url) {
+    const href = typeof url === "string" ? url.trim() : String(url ?? "").trim();
+    if (!isSafeUrl(href)) return false;
+    if (shouldConfirmTopNavigation(href)) {
+      const parsed = parseHttpUrl(href);
+      postExternalNavigationRequest(parsed ? parsed.href : href, "_top");
+      return true;
+    }
+    window.top.location.href = href;
+    return true;
+  }
+  const topLocationProxy = new Proxy({}, {
+    get: function(_target, prop) {
+      if (prop === "assign" || prop === "replace") {
+        return function(url) { navigateTop(url); };
+      }
+      return window.top.location[prop];
+    },
+    set: function(_target, prop, value) {
+      if (prop === "href") return navigateTop(value);
+      window.top.location[prop] = value;
+      return true;
+    },
+  });
+  const guardedTopWindow = new Proxy({}, {
+    get: function(_target, prop) {
+      if (prop === "location") return topLocationProxy;
+      if (prop === "top" || prop === "parent" || prop === "self" || prop === "window") return guardedTopWindow;
+      const value = window.top[prop];
+      return typeof value === "function" ? value.bind(window.top) : value;
+    },
+    set: function(_target, prop, value) {
+      if (prop === "location") return navigateTop(value);
+      window.top[prop] = value;
+      return true;
+    },
+  });
+  const guardedWindow = new Proxy({}, {
+    get: function(_target, prop) {
+      if (prop === "top" || prop === "parent") return guardedTopWindow;
+      const value = window[prop];
+      return typeof value === "function" ? value.bind(window) : value;
+    },
+    set: function(_target, prop, value) {
+      if (prop === "top" || prop === "parent") return true;
+      window[prop] = value;
+      return true;
+    },
+  });
+  window.__BASEBASE_APP_GUARDED_WINDOW__ = guardedWindow;
+  if (originalOpen) {
+    window.open = function(url, target, features) {
+      if (!isSafeUrl(typeof url === "string" ? url : String(url ?? ""))) {
+        return null;
+      }
+      const opened = originalOpen(url, target || "_blank", sanitizeFeatures(features));
+      try { if (opened) { opened.opener = null; } } catch(_) {}
+      return opened;
+    };
+  }
+  window.addEventListener("message", function(ev) {
+    const data = ev && ev.data ? ev.data : null;
+    if (!data || data.type !== "external-link-navigation-decision") return;
+    if (!pendingExternalHref || typeof data.href !== "string" || data.href !== pendingExternalHref) return;
+    if (data.allow === true) {
+      originalOpen(pendingExternalHref, pendingExternalTarget, sanitizeFeatures(""));
+    }
+    pendingExternalHref = null;
+    pendingExternalTarget = "_blank";
+  });
+  document.addEventListener("click", function(ev){
+    const t = ev.target;
+    if (!(t instanceof Element)) return;
+    const a = t.closest("a[href]");
+    if (!(a instanceof HTMLAnchorElement)) return;
+    const href = a.getAttribute("href") || "";
+    if (!isSafeUrl(href)) {
+      ev.preventDefault();
+      return;
+    }
+    a.setAttribute("rel", "noopener noreferrer");
+    if (!a.getAttribute("target")) a.setAttribute("target", "_blank");
+    if (isLikelyExternalUrl(href)) {
+      ev.preventDefault();
+      postExternalNavigationRequest(href, a.getAttribute("target") || "_blank");
+    }
+  }, true);
+})();
+
 // Global error handler → show in UI + notify parent
 window.onerror = function(msg, url, line, col, err) {
   var el = document.getElementById('root');
@@ -152,6 +308,9 @@ window.onerror = function(msg, url, line, col, err) {
 ${CS}
 
 <script type="${scriptType}">
+/* ---- Guard common top-window navigation APIs used by app code ---- */
+const __basebaseWindow = globalThis.__BASEBASE_APP_GUARDED_WINDOW__ || globalThis;
+(function(window, self, top, parent) {
 /* ---- React destructured ---- */
 const { useState, useEffect, useCallback, useRef, useMemo, useReducer, useContext, createContext, Fragment } = React;
 
@@ -175,6 +334,7 @@ try {
     '<div style="color:#fca5a5;padding:1rem;font-family:monospace;font-size:12px;white-space:pre-wrap;">' + e.message + '<' + '/div>';
   try { window.parent.postMessage({ type:"app-error", error: e.message }, "*"); } catch(_){}
 }
+})(__basebaseWindow, __basebaseWindow, __basebaseWindow.top, __basebaseWindow.parent);
 ${CS}
 </body>
 </html>`;
@@ -195,6 +355,7 @@ export function SandpackAppRenderer({
   const [appCode, setAppCode] = useState<string | null>(initialCode ?? null);
   const [appCodeCompiled, setAppCodeCompiled] = useState<string | null | undefined>(initialCompiled);
   const [error, setError] = useState<string | null>(null);
+  const [externalNavPrompt, setExternalNavPrompt] = useState<ExternalNavigationPrompt | null>(null);
   const [tokenRetry, setTokenRetry] = useState<number>(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const retryingRef = useRef<boolean>(false);
@@ -245,7 +406,43 @@ export function SandpackAppRenderer({
   // Listen for error / token-expired messages from the iframe
   useEffect(() => {
     const handler = (event: MessageEvent): void => {
-      const data = event.data as { type?: string; error?: string } | null;
+      const expectedSource = iframeRef.current?.contentWindow ?? null;
+      const expectedOrigin = window.location.origin;
+      const maybeData = event.data as { type?: string; requestId?: string; appId?: string; workflowId?: string } | null;
+      if (event.source !== expectedSource || event.origin !== expectedOrigin) {
+        if (maybeData?.type?.startsWith("app-")) {
+          console.warn("[Apps iframe bridge] Ignored app message from unexpected source or origin", {
+            type: maybeData.type,
+            requestId: maybeData.requestId,
+            appId: maybeData.appId,
+            workflowId: maybeData.workflowId,
+            actualOrigin: event.origin,
+            expectedOrigin,
+            sourceMatches: event.source === expectedSource,
+          });
+        }
+        return;
+      }
+
+      const data = event.data as {
+        type?: string;
+        error?: string;
+        href?: string;
+        requestExternalId?: string;
+        requestId?: string;
+        target?: string;
+        appId?: string;
+        workflowId?: string;
+        triggerData?: Record<string, unknown>;
+      } | null;
+      if (data?.type === "external-link-navigation") {
+        const href: string = typeof data.href === "string" && data.href.length > 0 ? data.href : "";
+        const normalizedHref = href ? normalizeHttpNavigationHref(href) : null;
+        if (normalizedHref) {
+          setExternalNavPrompt({ href: normalizedHref, target: data.target === "_top" ? "_top" : "_blank" });
+        }
+        return;
+      }
       if (data?.type === "app-error" && data.error && onError) {
         onError(data.error);
       }
@@ -254,6 +451,107 @@ export function SandpackAppRenderer({
         try { sessionStorage.removeItem(`app_token_${appId}`); } catch { /* ignore */ }
         setTokenData(null);
         setTokenRetry((n: number) => n + 1);
+      }
+      if (data?.type === "app-trigger-workflow") {
+        const requestId = data.requestId;
+        const workflowId = data.workflowId;
+        const payloadAppId = data.appId;
+        const payloadAppIdMatchesCurrentApp = (() => {
+          if (!payloadAppId) return false;
+          try {
+            return payloadAppId.toLowerCase() === appId.toLowerCase();
+          } catch {
+            return false;
+          }
+        })();
+        if (data.transport !== "sdk.triggerWorkflow") {
+          console.warn("[Apps iframe bridge] Workflow trigger should use first-class SDK helper triggerWorkflow() instead of a hand-rolled postMessage", {
+            appId: payloadAppId,
+            workflowId,
+            requestId,
+            transport: data.transport,
+          });
+        }
+
+        if (!requestId || !workflowId || !payloadAppIdMatchesCurrentApp) {
+          console.warn("[Apps iframe bridge] Invalid workflow trigger payload", {
+            requestId,
+            workflowId,
+            payloadAppId,
+            expectedAppId: appId,
+          });
+          (event.source as Window | null)?.postMessage({
+            type: "app-trigger-workflow-result",
+            requestId,
+            ok: false,
+            error: "Invalid workflow trigger payload",
+          }, "*");
+          return;
+        }
+
+        void (async () => {
+          try {
+            const triggerDataKeys = data.triggerData && typeof data.triggerData === "object"
+              ? Object.keys(data.triggerData).sort()
+              : [];
+            console.warn("[Apps iframe bridge] Trigger workflow request", {
+              appId: payloadAppId,
+              workflowId,
+              requestId,
+              triggerDataKeys,
+            });
+            const response = await apiRequest<{
+              status: string;
+              task_id: string;
+              workflow_id: string;
+              run_id: string;
+              triggered_by_user_id: string;
+              request_id?: string | null;
+            }>(`/apps/${payloadAppId}/workflows/${workflowId}/trigger`, {
+              method: "POST",
+              body: JSON.stringify({
+                trigger_data: data.triggerData && typeof data.triggerData === "object" ? data.triggerData : undefined,
+                request_id: requestId,
+              }),
+            });
+            if (response.error || !response.data) {
+              console.warn("[Apps iframe bridge] Workflow trigger API rejected request", {
+                appId: payloadAppId,
+                workflowId,
+                requestId,
+                error: response.error,
+              });
+              (event.source as Window | null)?.postMessage({
+                type: "app-trigger-workflow-result",
+                requestId,
+                ok: false,
+                error: response.error ?? "Failed to queue workflow",
+              }, "*");
+              return;
+            }
+            console.warn("[Apps iframe bridge] Workflow trigger queued", {
+              appId: payloadAppId,
+              workflowId,
+              requestId,
+              taskId: response.data.task_id,
+              runId: response.data.run_id,
+            });
+            (event.source as Window | null)?.postMessage({
+              type: "app-trigger-workflow-result",
+              requestId,
+              ok: true,
+              result: response.data,
+            }, "*");
+          } catch (err) {
+            console.warn("[Apps iframe bridge] Trigger workflow failed", err);
+            (event.source as Window | null)?.postMessage({
+              type: "app-trigger-workflow-result",
+              requestId,
+              ok: false,
+              error: err instanceof Error ? err.message : "Failed to trigger workflow",
+            }, "*");
+          }
+        })();
       }
     };
     window.addEventListener("message", handler);
@@ -421,10 +719,59 @@ export function SandpackAppRenderer({
 
   return (
     <div className="w-full h-full min-h-[400px] relative">
+      {externalNavPrompt ? (
+        <div className="absolute top-2 left-2 right-2 z-20 rounded-md border border-amber-500/40 bg-zinc-900/95 px-3 py-3 text-xs text-amber-100 shadow-lg">
+          <p className="mb-2">You are leaving Basebase and opening an external link:</p>
+          <p className="mb-3 break-all text-amber-200">{externalNavPrompt.href}</p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded bg-amber-500 px-2 py-1 text-[11px] font-medium text-black hover:bg-amber-400"
+              onClick={() => {
+                if (externalNavPrompt.target === "_top") {
+                  setExternalNavPrompt(null);
+                  window.location.assign(externalNavPrompt.href);
+                  return;
+                }
+                const expectedSource = iframeRef.current?.contentWindow ?? null;
+                expectedSource?.postMessage(
+                  {
+                    type: "external-link-navigation-decision",
+                    href: externalNavPrompt.href,
+                    allow: true,
+                  },
+                  "*",
+                );
+                setExternalNavPrompt(null);
+              }}
+            >
+              Open link
+            </button>
+            <button
+              type="button"
+              className="rounded border border-zinc-600 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-800"
+              onClick={() => {
+                const expectedSource = iframeRef.current?.contentWindow ?? null;
+                expectedSource?.postMessage(
+                  {
+                    type: "external-link-navigation-decision",
+                    href: externalNavPrompt.href,
+                    allow: false,
+                  },
+                  "*",
+                );
+                setExternalNavPrompt(null);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
       <iframe
         ref={iframeRef}
         srcDoc={srcdoc}
-        sandbox="allow-scripts allow-same-origin"
+        sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         style={{
           width: "100%",
           height: "100%",

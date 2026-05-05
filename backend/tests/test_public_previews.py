@@ -14,6 +14,7 @@ from api.routes.public import (
     _public_preview_title,
     share_router,
 )
+from config import settings
 from api.routes.artifacts import _generate_chart_html, get_artifact
 from starlette.routing import Match
 from services.public_previews import build_preview_html, decode_data_url_image, render_card_png
@@ -27,6 +28,22 @@ def test_decode_data_url_image_valid_png() -> None:
     assert content == b"hello"
     assert mime == "image/png"
 
+
+
+
+def test_decode_data_url_image_rejects_svg() -> None:
+    payload = base64.b64encode(b"<svg><script>alert(1)</script></svg>").decode("ascii")
+    decoded = decode_data_url_image(f"data:image/svg+xml;base64,{payload}")
+    assert decoded is None
+
+
+def test_decode_data_url_image_accepts_case_insensitive_jpeg_mime() -> None:
+    payload = base64.b64encode(b"jpeg-bytes").decode("ascii")
+    decoded = decode_data_url_image(f"data:image/JPEG;base64,{payload}")
+    assert decoded is not None
+    content, mime = decoded
+    assert content == b"jpeg-bytes"
+    assert mime == "image/jpeg"
 
 def test_build_preview_html_includes_og_and_twitter_tags() -> None:
     html = build_preview_html(
@@ -136,7 +153,8 @@ def test_public_preview_title_falls_back_when_artifact_title_missing() -> None:
     assert title == "Shared Document · Basebase"
 
 
-def test_public_origin_prefers_forwarded_proxy_headers() -> None:
+def test_public_origin_prefers_forwarded_proxy_headers(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "BACKEND_PUBLIC_URL", "")
     request = SimpleNamespace(
         headers={"x-forwarded-proto": "https", "x-forwarded-host": "app.basebase.com"},
         url=SimpleNamespace(scheme="http", netloc="internal:8000"),

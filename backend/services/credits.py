@@ -102,6 +102,43 @@ async def check_sufficient(organization_id: str, amount: int) -> bool:
     return balance >= amount
 
 
+async def record_grant(
+    session: AsyncSession,
+    organization_id: UUID,
+    amount: int,
+    balance_after: int,
+    reason: str,
+    *,
+    reference_type: str | None = None,
+    reference_id: str | None = None,
+    user_id: UUID | None = None,
+) -> None:
+    """Append a positive credit_transactions row for audit.
+
+    Caller updates org.credits_balance (and credits_included if relevant)
+    in the same session; this only writes the audit row. amount must be
+    positive — non-positive grants are ignored so callers can blindly call
+    this with a computed delta without guarding.
+    """
+    if amount <= 0:
+        return
+    session.add(
+        CreditTransaction(
+            organization_id=organization_id,
+            user_id=user_id,
+            amount=amount,
+            balance_after=balance_after,
+            reason=reason[:64],
+            reference_type=reference_type,
+            reference_id=reference_id,
+        )
+    )
+    logger.info(
+        "[Credits] grant: org %s +%d (%s), new balance %d",
+        organization_id, amount, reason, balance_after,
+    )
+
+
 async def deduct(
     organization_id: str,
     amount: int,
