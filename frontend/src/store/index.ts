@@ -164,9 +164,13 @@ export const useCurrentView = () => useUIStore((state) => state.currentView);
 /** True if the signed-in user or the pre-masquerade admin is global_admin (UI access while impersonating). */
 export const useIsGlobalAdmin = (): boolean =>
   useAuthStore((state) => {
+    const currentUserRole = (state.user as { role?: string } | null)?.role;
+    if (currentUserRole === "global_admin") return true;
     if (state.user?.roles?.includes("global_admin")) return true;
-    if (state.masquerade?.originalUser.roles?.includes("global_admin"))
-      return true;
+
+    const originalUserRole = (state.masquerade?.originalUser as { role?: string } | undefined)?.role;
+    if (originalUserRole === "global_admin") return true;
+    if (state.masquerade?.originalUser.roles?.includes("global_admin")) return true;
     return false;
   });
 /** True if the signed-in user is an admin of the current organization. */
