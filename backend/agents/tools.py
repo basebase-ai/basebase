@@ -707,7 +707,7 @@ def _build_cross_user_connector_warning(
     """Return a user-facing warning when we used a teammate's connector."""
     if not requester_user_id:
         return None
-    if connector_slug in {"slack", "teams", "apps", "web_search"}:
+    if connector_slug in {"slack", "teams"}:
         return None
 
     raw_integration_user_id: Any = getattr(connector_instance, "user_id", None)
@@ -719,10 +719,12 @@ def _build_cross_user_connector_warning(
 
     service_name: str = connector_slug.replace("_", " ").title()
     try:
-        from connectors.registry import resolve_connector
+        from connectors.registry import ConnectorScope, resolve_connector
 
         connector_cls = resolve_connector(connector_slug)
         if connector_cls is not None and getattr(connector_cls, "meta", None) is not None:
+            if connector_cls.meta.scope == ConnectorScope.ORGANIZATION:
+                return None
             service_name = connector_cls.meta.name
     except Exception:
         logger.debug(
