@@ -121,7 +121,7 @@ export function triggerWorkflow(workflowId, triggerData) {
       if (!payload || payload.type !== "app-trigger-workflow-result" || payload.requestId !== requestId) return;
       cleanup();
       if (payload.ok) {
-        console.info("[App SDK] Workflow trigger queued", { requestId, workflowId, result: payload.result });
+        console.log("[App SDK] Workflow trigger queued", { requestId, workflowId, result: payload.result });
         resolve(payload.result || { status: "queued" });
       } else {
         console.error("[App SDK] Workflow trigger failed", { requestId, workflowId, error: payload.error });
@@ -130,6 +130,7 @@ export function triggerWorkflow(workflowId, triggerData) {
     };
 
     window.addEventListener("message", onMessage);
+    console.log("[App SDK] Listening for workflow trigger result", { requestId, workflowId });
     timeoutId = setTimeout(() => {
       cleanup();
       console.error("[App SDK] Workflow trigger timed out", { requestId, workflowId });
@@ -138,7 +139,7 @@ export function triggerWorkflow(workflowId, triggerData) {
 
     try {
       const sanitizedTriggerData = triggerData && typeof triggerData === "object" ? triggerData : undefined;
-      console.info("[App SDK] Requesting workflow trigger", {
+      console.log("[App SDK] Requesting workflow trigger", {
         requestId,
         appId: APP_ID,
         workflowId,
