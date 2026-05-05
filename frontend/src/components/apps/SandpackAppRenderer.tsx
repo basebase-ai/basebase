@@ -408,7 +408,19 @@ export function SandpackAppRenderer({
     const handler = (event: MessageEvent): void => {
       const expectedSource = iframeRef.current?.contentWindow ?? null;
       const expectedOrigin = window.location.origin;
+      const maybeData = event.data as { type?: string; requestId?: string; appId?: string; workflowId?: string } | null;
       if (event.source !== expectedSource || event.origin !== expectedOrigin) {
+        if (maybeData?.type?.startsWith("app-")) {
+          console.warn("[Apps iframe bridge] Ignored app message from unexpected source or origin", {
+            type: maybeData.type,
+            requestId: maybeData.requestId,
+            appId: maybeData.appId,
+            workflowId: maybeData.workflowId,
+            actualOrigin: event.origin,
+            expectedOrigin,
+            sourceMatches: event.source === expectedSource,
+          });
+        }
         return;
       }
 
@@ -445,6 +457,12 @@ export function SandpackAppRenderer({
         const workflowId = data.workflowId;
         const payloadAppId = data.appId;
         if (!requestId || !workflowId || !payloadAppId || payloadAppId !== appId) {
+          console.warn("[Apps iframe bridge] Invalid workflow trigger payload", {
+            requestId,
+            workflowId,
+            payloadAppId,
+            expectedAppId: appId,
+          });
           (event.source as Window | null)?.postMessage({
             type: "app-trigger-workflow-result",
             requestId,
@@ -456,20 +474,36 @@ export function SandpackAppRenderer({
 
         void (async () => {
           try {
-            console.info("[Apps iframe bridge] Trigger workflow request", { appId: payloadAppId, workflowId, requestId });
+            const triggerDataKeys = data.triggerData && typeof data.triggerData === "object"
+              ? Object.keys(data.triggerData).sort()
+              : [];
+            console.info("[Apps iframe bridge] Trigger workflow request", {
+              appId: payloadAppId,
+              workflowId,
+              requestId,
+              triggerDataKeys,
+            });
             const response = await apiRequest<{
               status: string;
               task_id: string;
               workflow_id: string;
               run_id: string;
               triggered_by_user_id: string;
+              request_id?: string | null;
             }>(`/apps/${payloadAppId}/workflows/${workflowId}/trigger`, {
               method: "POST",
               body: JSON.stringify({
                 trigger_data: data.triggerData && typeof data.triggerData === "object" ? data.triggerData : undefined,
+                request_id: requestId,
               }),
             });
             if (response.error || !response.data) {
+              console.error("[Apps iframe bridge] Workflow trigger API rejected request", {
+                appId: payloadAppId,
+                workflowId,
+                requestId,
+                error: response.error,
+              });
               (event.source as Window | null)?.postMessage({
                 type: "app-trigger-workflow-result",
                 requestId,
@@ -478,6 +512,13 @@ export function SandpackAppRenderer({
               }, "*");
               return;
             }
+            console.info("[Apps iframe bridge] Workflow trigger queued", {
+              appId: payloadAppId,
+              workflowId,
+              requestId,
+              taskId: response.data.task_id,
+              runId: response.data.run_id,
+            });
             (event.source as Window | null)?.postMessage({
               type: "app-trigger-workflow-result",
               requestId,
