@@ -229,7 +229,19 @@ export function Auth({ onBack, onSuccess }: AuthProps): JSX.Element {
               ) : null}
               <p className="text-surface-300 text-sm leading-relaxed">
                 {inviteContext.inviterName ? (
-                  <><span className="text-surface-100 font-medium">{inviteContext.inviterName}</span> invited you to join</>
+                  <>
+                    <span className="text-surface-100 font-medium">{inviteContext.inviterName}</span>
+                    {' '}
+                    invited
+                    {inviteContext.email ? (
+                      <>
+                        {' '}
+                        <span className="text-surface-100 font-medium">({inviteContext.email})</span>
+                      </>
+                    ) : null}
+                    {' '}
+                    to join
+                  </>
                 ) : (
                   <>You've been invited to join</>
                 )}
