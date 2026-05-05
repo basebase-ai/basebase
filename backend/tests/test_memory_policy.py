@@ -4,6 +4,9 @@ import types
 from datetime import datetime
 from uuid import UUID
 
+from fastapi import HTTPException
+
+from api.auth_middleware import AuthContext
 from api.routes import memories as memories_api
 
 fake_websockets = types.ModuleType("api.websockets")
@@ -44,6 +47,14 @@ class _FakeSession:
             obj.created_at = datetime(2026, 1, 1, 0, 0, 0)
         if getattr(obj, "updated_at", None) is None:
             obj.updated_at = datetime(2026, 1, 1, 0, 0, 0)
+
+    async def execute(self, *_args: object, **_kwargs: object):
+        class _FakeResult:
+            @staticmethod
+            def scalar_one_or_none() -> None:
+                return None
+
+        return _FakeResult()
 
 
 class _TrackedSessionContext:
@@ -163,3 +174,54 @@ def test_global_command_limit_allows_1000_chars() -> None:
 def test_channel_scope_normalization_for_slack_thread_id() -> None:
     normalized = memories_api.normalize_channel_scope_channel_id("slack", "C12345678:1714691329.001200")
     assert normalized == "C12345678"
+
+
+def test_channel_path_org_mismatch_is_forbidden() -> None:
+    auth = AuthContext(
+        user_id=UUID("00000000-0000-0000-0000-000000000001"),
+        organization_id=UUID("00000000-0000-0000-0000-000000000010"),
+        email="user@example.com",
+        role="user",
+        is_global_admin=False,
+    )
+
+    try:
+        memories_api._require_path_org_access("00000000-0000-0000-0000-000000000099", auth)
+        assert False, "Expected HTTPException"
+    except HTTPException as exc:
+        assert exc.status_code == 403
+
+
+def test_upsert_channel_memory_sets_created_by_user_id(monkeypatch) -> None:
+    fake_session = _FakeSession()
+    tracker = {"entered": 0, "exited": 0}
+
+    def _fake_get_session(*_args: object, **_kwargs: object) -> _TrackedSessionContext:
+        return _TrackedSessionContext(fake_session, tracker)
+
+    monkeypatch.setattr(memories_api, "get_session", _fake_get_session)
+
+    auth = AuthContext(
+        user_id=UUID("00000000-0000-0000-0000-000000000001"),
+        organization_id=UUID("00000000-0000-0000-0000-000000000010"),
+        email="user@example.com",
+        role="user",
+        is_global_admin=False,
+    )
+
+    response = asyncio.run(
+        memories_api.upsert_channel_memory(
+            organization_id="00000000-0000-0000-0000-000000000010",
+            source="slack",
+            channel_id="C12345678",
+            request=memories_api.UpdateMemoryRequest(content="Be concise"),
+            auth=auth,
+        )
+    )
+
+    assert tracker == {"entered": 1, "exited": 1}
+    assert fake_session.commit_count == 1
+    assert len(fake_session.added) == 1
+    saved_memory = fake_session.added[0]
+    assert saved_memory.created_by_user_id == auth.user_id
+    assert response.created_by_user_id == str(auth.user_id)
