@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from './lib/supabase';
 import { getEmailDomain } from './lib/email';
-import { API_BASE } from './lib/api';
+import { API_BASE, getAuthenticatedRequestHeaders } from './lib/api';
 import { useAppStore } from './store';
 import { Auth } from './components/Auth';
 import { OnboardingWizard } from './components/OnboardingWizard';
@@ -287,9 +287,10 @@ function App(): JSX.Element {
     // This catches users who signed up via waitlist form
     // Also handles invited users with personal emails (they'll have a pending invitation)
     try {
+      const authHeaders = await getAuthenticatedRequestHeaders();
       const syncResponse = await fetch(`${API_BASE}/auth/users/sync`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({
           id: supabaseUser.id,
           email,
