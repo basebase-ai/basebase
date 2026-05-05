@@ -997,6 +997,7 @@ async def _execute_workflow(
     conversation_id: str | None = None,
     organization_id: str | None = None,
     triggered_by_user_id: str | None = None,
+    workflow_run_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Execute a workflow by creating a conversation and sending the prompt to the agent.
@@ -1091,22 +1092,71 @@ async def _execute_workflow(
             )
             return result_payload
 
-        existing_run_count_result = await session.execute(
-            select(WorkflowRun.id).where(WorkflowRun.workflow_id == workflow.id).limit(1)
+        run: WorkflowRun | None = None
+        if workflow_run_id:
+            try:
+                workflow_run_uuid = UUID(workflow_run_id)
+            except ValueError:
+                logger.warning(
+                    "[Workflow] Ignoring invalid pre-created workflow_run_id=%s workflow_id=%s",
+                    workflow_run_id,
+                    workflow_id,
+                )
+            else:
+                run_result = await session.execute(
+                    select(WorkflowRun).where(
+                        WorkflowRun.id == workflow_run_uuid,
+                        WorkflowRun.workflow_id == workflow.id,
+                        WorkflowRun.organization_id == workflow.organization_id,
+                    )
+                )
+                run = run_result.scalar_one_or_none()
+                if run is None:
+                    logger.warning(
+                        "[Workflow] Pre-created run not found; creating a new run workflow_id=%s workflow_run_id=%s",
+                        workflow_id,
+                        workflow_run_id,
+                    )
+
+        existing_run_count_query = select(WorkflowRun.id).where(
+            WorkflowRun.workflow_id == workflow.id
         )
+        if run is not None:
+            existing_run_count_query = existing_run_count_query.where(WorkflowRun.id != run.id)
+        existing_run_count_result = await session.execute(existing_run_count_query.limit(1))
         is_first_run_attempt = existing_run_count_result.scalar_one_or_none() is None
-        
-        # Create run record
-        run = WorkflowRun(
-            workflow_id=workflow.id,
-            organization_id=workflow.organization_id,
-            triggered_by=triggered_by,
-            trigger_data=trigger_data,
-            status="running",
-            started_at=started_at,
-        )
-        session.add(run)
-        await session.flush()
+
+        if run is None:
+            run = WorkflowRun(
+                workflow_id=workflow.id,
+                organization_id=workflow.organization_id,
+                triggered_by=triggered_by,
+                trigger_data=trigger_data,
+                status="running",
+                started_at=started_at,
+            )
+            session.add(run)
+            await session.flush()
+            logger.info(
+                "[Workflow] Created workflow run workflow_id=%s run_id=%s triggered_by=%s",
+                workflow_id,
+                run.id,
+                triggered_by,
+            )
+        else:
+            run.triggered_by = triggered_by
+            run.trigger_data = trigger_data
+            run.status = "running"
+            run.started_at = started_at
+            run.completed_at = None
+            run.error_message = None
+            await session.flush()
+            logger.info(
+                "[Workflow] Claimed pre-created workflow run workflow_id=%s run_id=%s triggered_by=%s",
+                workflow_id,
+                run.id,
+                triggered_by,
+            )
         run_id = run.id
         
         # Check if this workflow uses the new prompt-based execution
@@ -2431,6 +2481,7 @@ def execute_workflow(
     conversation_id: str | None = None,
     organization_id: str | None = None,
     triggered_by_user_id: str | None = None,
+    workflow_run_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Celery task to execute a workflow.
@@ -2441,6 +2492,7 @@ def execute_workflow(
         trigger_data: Optional data from the trigger event
         conversation_id: Optional pre-created conversation ID (for immediate navigation)
         organization_id: Organization ID for RLS context (required for proper security)
+        workflow_run_id: Optional ID of a pending run created by the caller
     
     Returns:
         Execution result with status and any errors
@@ -2454,5 +2506,6 @@ def execute_workflow(
             conversation_id,
             organization_id,
             triggered_by_user_id,
+            workflow_run_id,
         )
     )

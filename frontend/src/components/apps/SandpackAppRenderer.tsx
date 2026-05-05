@@ -333,6 +333,7 @@ export function SandpackAppRenderer({
               status: string;
               task_id: string;
               workflow_id: string;
+              run_id: string;
               triggered_by_user_id: string;
             }>(`/apps/${payloadAppId}/workflows/${workflowId}/trigger`, {
               method: "POST",
