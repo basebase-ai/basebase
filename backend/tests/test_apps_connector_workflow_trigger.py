@@ -71,6 +71,7 @@ async def test_apps_connector_trigger_workflow_uses_envelope_user_not_connector_
             "workflow_id": workflow_id,
             "_auth_envelope": {"token": "", "sig": ""},
             "trigger_data": {"from": "test"},
+            "request_id": "req-123",
         },
     )
 
@@ -81,6 +82,7 @@ async def test_apps_connector_trigger_workflow_uses_envelope_user_not_connector_
     assert captured["triggered_by_user_id"] == "00000000-0000-0000-0000-000000000005"
     assert captured["triggered_by_user_id"] != user_id
     assert session_kwargs["user_id"] == "00000000-0000-0000-0000-000000000005"
+    assert result["request_id"] == "req-123"
 
 
 @pytest.mark.asyncio
