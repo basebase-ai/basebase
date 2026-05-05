@@ -28,7 +28,7 @@ from models.database import get_session, get_admin_session
 from models.organization import Organization
 from models.user import User
 from models.visibility import normalize_visibility
-from models.workflow import Workflow
+from models.workflow import Workflow, WorkflowRun
 from services.app_query_runner import (
     AppQueryResponse as QueryResponse,
     json_serial,
@@ -86,6 +86,7 @@ class TriggerAppWorkflowResponse(BaseModel):
     status: str
     task_id: str
     workflow_id: str
+    run_id: str
     triggered_by_user_id: str
 
 
@@ -281,18 +282,38 @@ async def trigger_app_workflow(
         if not workflow.is_enabled:
             raise HTTPException(status_code=400, detail="Workflow is disabled")
 
-    pause_until = await get_workflow_execution_pause_until()
-    if pause_until is not None:
-        logger.warning(
-            "[Apps API] Workflow trigger blocked by workflow execution pause app_id=%s workflow_id=%s organization_id=%s pause_until=%s",
+        pause_until = await get_workflow_execution_pause_until()
+        if pause_until is not None:
+            logger.warning(
+                "[Apps API] Workflow trigger blocked by workflow execution pause app_id=%s workflow_id=%s organization_id=%s pause_until=%s",
+                app_id,
+                workflow_id,
+                auth.organization_id_str,
+                pause_until.isoformat(),
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=f"Workflow execution temporarily paused until {pause_until.isoformat()}",
+            )
+
+        run = WorkflowRun(
+            workflow_id=workflow.id,
+            organization_id=workflow.organization_id,
+            triggered_by="app",
+            trigger_data=trigger_data,
+            status="pending",
+            started_at=datetime.utcnow(),
+        )
+        session.add(run)
+        await session.commit()
+        await session.refresh(run)
+        run_id = str(run.id)
+        logger.info(
+            "[Apps API] Created pending workflow run from app app_id=%s workflow_id=%s run_id=%s user_id=%s",
             app_id,
             workflow_id,
-            auth.organization_id_str,
-            pause_until.isoformat(),
-        )
-        raise HTTPException(
-            status_code=503,
-            detail=f"Workflow execution temporarily paused until {pause_until.isoformat()}",
+            run_id,
+            auth.user_id_str,
         )
 
     from workers.tasks.workflows import execute_workflow
@@ -304,17 +325,20 @@ async def trigger_app_workflow(
         conversation_id=None,
         organization_id=auth.organization_id_str,
         triggered_by_user_id=auth.user_id_str,
+        workflow_run_id=run_id,
     )
     logger.info(
-        "[Apps API] Queued workflow from app app_id=%s workflow_id=%s user_id=%s",
+        "[Apps API] Queued workflow from app app_id=%s workflow_id=%s run_id=%s user_id=%s",
         app_id,
         workflow_id,
+        run_id,
         auth.user_id_str,
     )
     return TriggerAppWorkflowResponse(
         status="queued",
         task_id=task.id,
         workflow_id=workflow_id,
+        run_id=run_id,
         triggered_by_user_id=auth.user_id_str or "",
     )
 
