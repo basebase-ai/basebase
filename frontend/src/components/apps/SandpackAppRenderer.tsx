@@ -432,6 +432,7 @@ export function SandpackAppRenderer({
         requestId?: string;
         target?: string;
         appId?: string;
+        transport?: string;
         workflowId?: string;
         triggerData?: Record<string, unknown>;
       } | null;
