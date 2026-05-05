@@ -162,6 +162,54 @@ def test_process_event_callback_persists_activity_for_public_channels(monkeypatc
     assert persisted == [("channel", "C123")]
 
 
+
+
+def test_process_event_callback_persists_activity_for_public_channel_file_only_messages(monkeypatch) -> None:
+    persisted: list[tuple[str, str]] = []
+
+    async def _fake_is_duplicate_event(_event_id: str) -> bool:
+        return False
+
+    async def _fake_process_inbound(self, _message: InboundMessage):
+        return {"status": "success"}
+
+    async def _fake_persist_activity(_messenger, message: InboundMessage, _team_id: str) -> None:
+        persisted.append(
+            (
+                message.messenger_context.get("channel_type"),
+                message.messenger_context.get("channel_id"),
+            )
+        )
+
+    monkeypatch.setattr(slack_events, "is_duplicate_event", _fake_is_duplicate_event)
+    monkeypatch.setattr(slack_events, "_persist_activity", _fake_persist_activity)
+    monkeypatch.setattr(SlackMessenger, "process_inbound", _fake_process_inbound)
+
+    payload = {
+        "type": "event_callback",
+        "event_id": "EvPublicChannelFilesOnly1",
+        "team_id": "T123",
+        "event": {
+            "type": "message",
+            "channel_type": "channel",
+            "channel": "C123",
+            "user": "U123",
+            "text": "",
+            "files": [
+                {
+                    "id": "F123",
+                    "name": "report.pdf",
+                    "url_private_download": "https://files.slack.com/files-pri/T1-F123/download/report.pdf",
+                }
+            ],
+            "ts": "1700000000.125",
+        },
+    }
+
+    asyncio.run(slack_events._process_event_callback_impl(payload))
+
+    assert persisted == [("channel", "C123")]
+
 def test_process_event_callback_records_failure_when_background_processing_raises(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
