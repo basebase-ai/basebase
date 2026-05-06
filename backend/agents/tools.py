@@ -93,6 +93,7 @@ from datetime import datetime as dt
 from typing import TypedDict
 
 from services.automated_agent_footer import ensure_automated_agent_footer
+from services.sql_safety import prepare_safe_sql_query
 
 class PendingOperationData(TypedDict):
     tool_name: str
@@ -189,22 +190,6 @@ class ToolProgressUpdater:
             self.organization_id,
             self.user_id,
         )
-
-
-# Tables that are allowed to be queried (synced data only - no internal admin tables)
-# Note: Row-Level Security (RLS) handles organization filtering at the database level
-ALLOWED_TABLES: set[str] = {
-    "deals", "accounts", "contacts", "activities", "meetings", "integrations", "users", "organizations",
-    "org_members", "apps",
-    "conversations", "chat_messages",
-    "pipelines", "pipeline_stages", "goals", "workflows", "workflow_runs", "user_mappings_for_identity",
-    "github_repositories", "github_commits", "github_pull_requests",
-    "shared_files",
-    "tracker_teams", "tracker_projects", "tracker_issues",
-    "bulk_operations", "bulk_operation_results",
-    "temp_data",
-    "daily_digests", "daily_team_summaries",
-}
 
 
 def get_tools(context: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -405,74 +390,6 @@ def _log_tool_execution_result(
 
     else:
         logger.info("[Tools] %s completed: %s", requested_tool_name, result.get("status", result))
-
-
-def _strip_sql_comments(query: str) -> str:
-    """Remove SQL comments (-- line comments and /* block comments */) from a query."""
-    # Remove block comments /* ... */
-    query = re.sub(r'/\*.*?\*/', '', query, flags=re.DOTALL)
-    # Remove line comments -- ...
-    query = re.sub(r'--[^\n]*', '', query)
-    return query.strip()
-
-
-def _validate_sql_query(query: str) -> tuple[bool, str | None]:
-    """
-    Validate that the SQL query is safe to execute.
-    Returns (is_valid, error_message).
-    """
-    # Strip comments before validation so queries like "-- comment\nSELECT ..." pass
-    query_no_comments: str = _strip_sql_comments(query)
-    query_upper = query_no_comments.upper().strip()
-    
-    # Must start with SELECT (or WITH for CTEs)
-    if not (query_upper.startswith("SELECT") or query_upper.startswith("WITH")):
-        return False, "Only SELECT queries are allowed"
-    
-    # Block dangerous keywords
-    dangerous_keywords: list[str] = [
-        "INSERT", "UPDATE", "DELETE", "DROP", "TRUNCATE", "ALTER", 
-        "CREATE", "GRANT", "REVOKE", "EXECUTE", "EXEC",
-        "INTO OUTFILE", "INTO DUMPFILE", "LOAD_FILE",
-    ]
-    for keyword in dangerous_keywords:
-        # Check for keyword as whole word (not part of column name)
-        if re.search(rf'\b{keyword}\b', query_upper):
-            return False, f"'{keyword}' statements are not allowed"
-    
-    return True, None
-
-
-_SQL_BUILTIN_FUNCTIONS: set[str] = {
-    # Date/time functions that might appear after FROM in expressions
-    "now", "current_date", "current_time", "current_timestamp",
-    "localtime", "localtimestamp", "date", "time", "timestamp",
-    "extract", "date_part", "date_trunc", "age", "interval",
-    # Other common functions that could be mistaken for tables
-    "generate_series", "unnest", "json_each", "json_array_elements",
-    "jsonb_each", "jsonb_array_elements", "regexp_matches",
-    "string_to_array", "lateral", "rows",
-}
-
-
-def _extract_tables_from_query(query: str) -> set[str]:
-    """Extract table names from a SQL query (best effort)."""
-    tables: set[str] = set()
-    
-    # Match FROM and JOIN clauses
-    patterns = [
-        r'\bFROM\s+([a-zA-Z_][a-zA-Z0-9_]*)',
-        r'\bJOIN\s+([a-zA-Z_][a-zA-Z0-9_]*)',
-    ]
-    
-    for pattern in patterns:
-        matches = re.findall(pattern, query, re.IGNORECASE)
-        tables.update(m.lower() for m in matches)
-    
-    # Exclude SQL built-in functions that might be mistaken for tables
-    tables -= _SQL_BUILTIN_FUNCTIONS
-    
-    return tables
 
 
 def _serialize_value(value: Any) -> Any:
@@ -1338,20 +1255,6 @@ async def _run_sql_query(
 
     logger.info("[Tools._run_sql_query] Query: %s", query)
 
-    # Validate query is safe (SELECT only, no dangerous keywords)
-    is_valid, error = _validate_sql_query(query)
-    if not is_valid:
-        logger.warning("[Tools._run_sql_query] Query validation failed: %s", error)
-        return {"error": error}
-
-    # Extract tables and validate they're in the allowed list
-    tables: set[str] = _extract_tables_from_query(query)
-    logger.debug("[Tools._run_sql_query] Detected tables: %s", tables)
-
-    disallowed: set[str] = tables - ALLOWED_TABLES
-    if disallowed:
-        return {"error": f"Access to tables not allowed: {disallowed}"}
-
     # Resolve semantic_embed('...') placeholders into real vectors
     final_query, embed_error = await _resolve_semantic_embeds(query)
     if embed_error is not None:
@@ -1361,24 +1264,20 @@ async def _run_sql_query(
     if not re.search(r'\bLIMIT\b', final_query, re.IGNORECASE):
         final_query = final_query.rstrip(';') + " LIMIT 100"
 
-    rights_ctx = RightsContext(
+    safe_query, safety_error = await prepare_safe_sql_query(
+        query=final_query,
         organization_id=organization_id,
         user_id=user_id,
-        conversation_id=None,
-        is_workflow=False,
+        log_prefix="Tools._run_sql_query",
     )
-    rights_result = await check_sql(rights_ctx, final_query, None)
-    if not rights_result.allowed:
-        return {"error": rights_result.deny_reason or "SQL not allowed"}
-    query_to_run: str = (
-        rights_result.transformed_query if rights_result.transformed_query is not None else final_query
-    )
+    if safety_error is not None or safe_query is None:
+        return {"error": safety_error or "SQL not allowed"}
 
     try:
         async with get_session(
             organization_id=organization_id, user_id=user_id
         ) as session:
-            result = await session.execute(text(query_to_run))
+            result = await session.execute(text(safe_query.query))
             rows = result.fetchall()
             columns: list[str] = list(result.keys())
 

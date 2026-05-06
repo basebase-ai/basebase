@@ -38,6 +38,7 @@ from models.workflow import Workflow
 from services.workflow_pause import get_workflow_execution_pause_until
 from services.public_preview_warmup import warm_public_preview_cache
 from services.slack_identity import get_alternate_slack_user_ids_for_identity
+from services.sql_safety import prepare_safe_sql_query
 
 logger = logging.getLogger(__name__)
 
@@ -908,11 +909,20 @@ class AppsConnector(BaseConnector):
             sql: str = query_spec.get("sql", "")
 
             exec_params: dict[str, Any] = {"org_id": self.organization_id, **query_params}
+            safe_query, safety_error = await prepare_safe_sql_query(
+                query=sql,
+                organization_id=self.organization_id,
+                user_id=self.user_id,
+                params=exec_params,
+                log_prefix="AppsConnector._test_query",
+            )
+            if safety_error is not None or safe_query is None:
+                return {"error": safety_error or "SQL not allowed"}
 
-            limited_sql: str = f"SELECT * FROM ({sql.rstrip().rstrip(';')}) AS _q LIMIT {limit}"
+            limited_sql: str = f"SELECT * FROM ({safe_query.query.rstrip().rstrip(';')}) AS _q LIMIT {limit}"
 
             try:
-                result = await session.execute(text(limited_sql), exec_params)
+                result = await session.execute(text(limited_sql), safe_query.params or {})
                 rows: list[dict[str, Any]] = [dict(row._mapping) for row in result.fetchall()]
 
                 for row in rows:

@@ -31,5 +31,5 @@ def test_run_sql_query_documents_conversation_tables() -> None:
 
 
 def test_run_sql_query_allows_conversation_tables() -> None:
-    tools_source = (Path(__file__).resolve().parents[1] / "agents" / "tools.py").read_text()
-    assert '"conversations", "chat_messages"' in tools_source
+    safety_source = (Path(__file__).resolve().parents[1] / "services" / "sql_safety.py").read_text()
+    assert '"conversations", "chat_messages"' in safety_source
