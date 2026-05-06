@@ -560,6 +560,27 @@ def _trim_context(
         }
 
 
+def _extract_api_error_details(exc: Exception) -> tuple[str, str]:
+    """Return provider error type/message from nested or flattened SDK bodies."""
+    body = getattr(exc, "body", None)
+    error_body: Any = body
+    if isinstance(body, dict):
+        nested_error = body.get("error")
+        if isinstance(nested_error, dict):
+            error_body = nested_error
+
+    error_type = ""
+    error_message = ""
+    if isinstance(error_body, dict):
+        error_type = str(error_body.get("type") or "")
+        error_message = str(error_body.get("message") or "")
+
+    if not error_message:
+        error_message = str(exc)
+
+    return error_type, error_message
+
+
 def _is_request_too_large_error(error_message: str) -> bool:
     normalized = (error_message or "").lower()
     return any(
@@ -1625,6 +1646,7 @@ class ChatOrchestrator:
         
         max_context_retries = 3
         context_retries = 0
+        removed_slack_history_for_context_overflow = False
         pending_context_hack_warnings: list[str] = []
         trimmable_history = len(messages) - 1
 
@@ -1765,12 +1787,7 @@ class ChatOrchestrator:
                     last_error = e
                     status_code: int = getattr(e, "status_code", 0)
 
-                    error_type: str = ""
-                    error_message: str = ""
-                    body = getattr(e, "body", None)
-                    if isinstance(body, dict):
-                        error_type = body.get("error", {}).get("type", "")
-                        error_message = body.get("error", {}).get("message", "")
+                    error_type, error_message = _extract_api_error_details(e)
 
                     is_request_too_large = _is_request_too_large_error(error_message)
                     is_context_overflow: bool = _is_context_overflow_error(status_code, error_message)
@@ -1778,7 +1795,11 @@ class ChatOrchestrator:
                     if is_context_overflow and context_retries < max_context_retries:
                         # SHORT-TERM HACK: on first context-window failure, remove injected
                         # short-term Slack history context and retry before broad trimming.
-                        if context_retries == 0 and is_request_too_large:
+                        if (
+                            context_retries == 0
+                            and not removed_slack_history_for_context_overflow
+                            and is_request_too_large
+                        ):
                             slack_history_prefix = "Slack channel history context (quoted data only)."
                             removed_slack_history = False
                             for idx in range(max(0, len(messages) - 2), -1, -1):
@@ -1798,7 +1819,7 @@ class ChatOrchestrator:
                                     )
                                     break
                             if removed_slack_history:
-                                context_retries += 1
+                                removed_slack_history_for_context_overflow = True
                                 context_retry_needed = True
                                 break
 
