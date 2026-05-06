@@ -35,6 +35,13 @@ from models.notification import Notification
 from models.action_ledger import ActionLedgerEntry
 from models.daily_digest import DailyDigest
 from models.topic_graph_snapshot import TopicGraphSnapshot
+from models.knowledge_base import (
+    KnowledgeBaseEntry,
+    KnowledgeBaseEntrySource,
+    KnowledgeBaseClusterType,
+    KnowledgeBaseCluster,
+    KnowledgeBaseEntryClusterLink,
+)
 
 __all__ = [
     "Base",
@@ -78,4 +85,9 @@ __all__ = [
     "ActionLedgerEntry",
     "DailyDigest",
     "TopicGraphSnapshot",
+    "KnowledgeBaseEntry",
+    "KnowledgeBaseEntrySource",
+    "KnowledgeBaseClusterType",
+    "KnowledgeBaseCluster",
+    "KnowledgeBaseEntryClusterLink",
 ]

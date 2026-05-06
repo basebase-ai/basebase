@@ -202,7 +202,11 @@ ALLOWED_TABLES: set[str] = {
     "shared_files",
     "tracker_teams", "tracker_projects", "tracker_issues",
     "bulk_operations", "bulk_operation_results",
-    "temp_data",
+    "kb_entries",
+    "kb_entry_sources",
+    "kb_cluster_types",
+    "kb_clusters",
+    "kb_entry_cluster_links",
     "daily_digests", "daily_team_summaries",
 }
 
@@ -1410,7 +1414,11 @@ WRITABLE_TABLES: set[str] = {
     "deals",
     "accounts",
     "org_members",
-    "temp_data",
+    "kb_entries",
+    "kb_entry_sources",
+    "kb_cluster_types",
+    "kb_clusters",
+    "kb_entry_cluster_links",
     "daily_digests",
 }
 
