@@ -220,6 +220,7 @@ class MicrosoftCalendarConnector(BaseConnector):
                             title=parsed["subject"],
                             duration_minutes=parsed["duration_minutes"],
                             organizer_email=parsed["organizer_email"],
+                            **self._meeting_visibility_fields(),
                             status=parsed["meeting_status"],
                         )
                         meeting = await session.merge(meeting)

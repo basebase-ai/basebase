@@ -370,6 +370,7 @@ class GoogleCalendarConnector(BaseConnector):
                                     title=parsed["summary"],
                                     duration_minutes=parsed["duration_minutes"],
                                     organizer_email=parsed["organizer_email"],
+                                    **self._meeting_visibility_fields(),
                                     status=parsed["meeting_status"],
                                 )
                                 meeting = await session.merge(meeting)
@@ -401,6 +402,7 @@ class GoogleCalendarConnector(BaseConnector):
                                 title=parsed["summary"],
                                 duration_minutes=parsed["duration_minutes"],
                                 organizer_email=parsed["organizer_email"],
+                                **self._meeting_visibility_fields(),
                                 status=parsed["meeting_status"],
                             )
                             meeting = await session.merge(meeting)
@@ -1042,6 +1044,7 @@ class GoogleCalendarConnector(BaseConnector):
             title=title,
             duration_minutes=duration_minutes,
             organizer_email=organizer_email,
+            **self._meeting_visibility_fields(),
             status="scheduled",
         )
 

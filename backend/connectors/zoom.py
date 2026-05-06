@@ -252,6 +252,7 @@ class ZoomConnector(BaseConnector):
                         participants=participants or None,
                         organizer_email=host_email if isinstance(host_email, str) else None,
                         title=topic,
+                        **self._meeting_visibility_fields(),
                         status="completed",
                     )
                     meeting_record_id: uuid.UUID = _safe_meeting_id(meeting_record)

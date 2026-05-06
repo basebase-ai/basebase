@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from datetime import timezone as tz
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -38,12 +38,30 @@ class Meeting(Base):
     """
 
     __tablename__ = "meetings"
+    __table_args__ = (
+        Index("ix_meetings_integration_id", "integration_id"),
+        Index("ix_meetings_owner_user_id", "owner_user_id"),
+        Index("ix_meetings_org_visibility", "organization_id", "visibility"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
+    )
+    integration_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("integrations.id", ondelete="SET NULL", onupdate="CASCADE"),
+        nullable=True,
+    )
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL", onupdate="CASCADE"),
+        nullable=True,
+    )
+    visibility: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="team", server_default="team"
     )
 
     # Core meeting info (normalized from best available source)
@@ -165,6 +183,9 @@ class Meeting(Base):
         return {
             "id": str(self.id),
             "title": self.title,
+            "integration_id": str(self.integration_id) if self.integration_id else None,
+            "owner_user_id": str(self.owner_user_id) if self.owner_user_id else None,
+            "visibility": self.visibility,
             "scheduled_start": f"{self.scheduled_start.isoformat()}Z" if self.scheduled_start else None,
             "scheduled_end": f"{self.scheduled_end.isoformat()}Z" if self.scheduled_end else None,
             "duration_minutes": self.duration_minutes,
@@ -190,6 +211,9 @@ class Meeting(Base):
         return {
             "id": str(self.id),
             "title": self.title,
+            "integration_id": str(self.integration_id) if self.integration_id else None,
+            "owner_user_id": str(self.owner_user_id) if self.owner_user_id else None,
+            "visibility": self.visibility,
             "scheduled_start": f"{self.scheduled_start.isoformat()}Z" if self.scheduled_start else None,
             "duration_minutes": self.duration_minutes,
             "participant_count": self.participant_count,
