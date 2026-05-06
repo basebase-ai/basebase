@@ -110,3 +110,29 @@ async def test_prepare_safe_sql_query_rejects_disallowed_comma_separated_table()
 
     assert safe_query is None
     assert error == "Access to tables not allowed: {'pending_operations'}"
+
+
+def test_extract_tables_from_query_reads_left_side_of_parenthesized_join() -> None:
+    tables = sql_safety.extract_tables_from_query(
+        "SELECT * FROM (pending_operations JOIN contacts ON true) AS p"
+    )
+
+    assert tables == {"pending_operations", "contacts"}
+
+
+@pytest.mark.asyncio
+async def test_prepare_safe_sql_query_rejects_disallowed_parenthesized_join_left_side() -> None:
+    safe_query, error = await sql_safety.prepare_safe_sql_query(
+        query="SELECT * FROM (pending_operations JOIN contacts ON true) AS p",
+        organization_id="00000000-0000-0000-0000-000000000001",
+        user_id="00000000-0000-0000-0000-000000000002",
+    )
+
+    assert safe_query is None
+    assert error == "Access to tables not allowed: {'pending_operations'}"
+
+
+def test_extract_tables_from_query_does_not_treat_parenthesized_subquery_keyword_as_table() -> None:
+    tables = sql_safety.extract_tables_from_query("SELECT * FROM (SELECT * FROM contacts) AS c")
+
+    assert tables == {"contacts"}

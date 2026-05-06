@@ -176,13 +176,54 @@ def _split_top_level_commas(clause: str) -> list[str]:
     return parts
 
 
-def _extract_leading_table_reference(clause_part: str) -> str | None:
-    """Return the first table identifier in a comma-delimited FROM item."""
+def _find_matching_parenthesis(sql: str, open_index: int = 0) -> int | None:
+    """Return the index of the parenthesis matching ``open_index``."""
+    depth = 0
+    index = open_index
+    while index < len(sql):
+        char = sql[index]
+        if char in {"'", '"'}:
+            quote = char
+            index += 1
+            while index < len(sql):
+                if sql[index] == quote:
+                    if index + 1 < len(sql) and sql[index + 1] == quote:
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                index += 1
+            continue
+        if char == '(':
+            depth += 1
+        elif char == ')':
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
+    return None
+
+
+def _extract_table_references_from_from_item(clause_part: str) -> set[str]:
+    """Return leading table identifiers from a comma-delimited FROM item."""
     stripped = clause_part.lstrip()
-    if not stripped or stripped.startswith('('):
-        return None
+    if not stripped:
+        return set()
+
+    if stripped.startswith('('):
+        close_index = _find_matching_parenthesis(stripped)
+        if close_index is None:
+            return set()
+        inner = stripped[1:close_index]
+        if re.match(r'\s*(?:SELECT|WITH|VALUES)\b', inner, re.IGNORECASE):
+            return set()
+        references: set[str] = set()
+        for inner_part in _split_top_level_commas(inner):
+            references.update(_extract_table_references_from_from_item(inner_part))
+        return references
+
     match = re.match(rf'({_SQL_QUALIFIED_IDENTIFIER})', stripped, re.IGNORECASE)
-    return match.group(1) if match else None
+    return {match.group(1)} if match else set()
 
 
 def extract_tables_from_query(query: str) -> set[str]:
@@ -198,9 +239,8 @@ def extract_tables_from_query(query: str) -> set[str]:
     # FROM can introduce a comma-delimited table list; each item must be checked.
     for clause_body in _iter_from_clause_bodies(query):
         for clause_part in _split_top_level_commas(clause_body):
-            table_reference = _extract_leading_table_reference(clause_part)
-            if table_reference is not None:
-                tables.add(_normalize_table_identifier(table_reference))
+            table_references = _extract_table_references_from_from_item(clause_part)
+            tables.update(_normalize_table_identifier(table_reference) for table_reference in table_references)
 
     # Exclude SQL built-in functions that might be mistaken for tables
     tables -= _SQL_BUILTIN_FUNCTIONS
