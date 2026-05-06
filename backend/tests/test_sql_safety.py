@@ -78,3 +78,35 @@ def test_extract_tables_from_query_rejects_qualified_disallowed_table_not_schema
     tables = sql_safety.extract_tables_from_query("SELECT * FROM public.pending_operations")
 
     assert tables == {"pending_operations"}
+
+
+def test_extract_tables_from_query_reads_all_comma_separated_from_tables() -> None:
+    tables = sql_safety.extract_tables_from_query("SELECT * FROM contacts, pending_operations")
+
+    assert tables == {"contacts", "pending_operations"}
+
+
+def test_extract_tables_from_query_reads_qualified_comma_separated_from_tables() -> None:
+    tables = sql_safety.extract_tables_from_query(
+        'SELECT * FROM public.contacts c, "custom_schema"."pending_operations" p WHERE c.id = p.contact_id'
+    )
+
+    assert tables == {"contacts", "pending_operations"}
+
+
+def test_extract_tables_from_query_ignores_select_list_commas() -> None:
+    tables = sql_safety.extract_tables_from_query("SELECT id, name, email FROM contacts")
+
+    assert tables == {"contacts"}
+
+
+@pytest.mark.asyncio
+async def test_prepare_safe_sql_query_rejects_disallowed_comma_separated_table() -> None:
+    safe_query, error = await sql_safety.prepare_safe_sql_query(
+        query="SELECT * FROM contacts, pending_operations",
+        organization_id="00000000-0000-0000-0000-000000000001",
+        user_id="00000000-0000-0000-0000-000000000002",
+    )
+
+    assert safe_query is None
+    assert error == "Access to tables not allowed: {'pending_operations'}"

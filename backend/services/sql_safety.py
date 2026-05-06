@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -90,19 +91,116 @@ def _normalize_table_identifier(identifier: str) -> str:
     return table_name.strip('"').lower()
 
 
+_FROM_CLAUSE_BOUNDARY_KEYWORDS: set[str] = {
+    "where",
+    "group",
+    "having",
+    "order",
+    "limit",
+    "offset",
+    "union",
+    "intersect",
+    "except",
+    "qualify",
+    "window",
+}
+
+
+def _iter_from_clause_bodies(query: str) -> Iterator[str]:
+    """Yield text after each FROM keyword up to the next top-level clause boundary."""
+    for match in re.finditer(r'\bFROM\b', query, re.IGNORECASE):
+        start = match.end()
+        index = start
+        depth = 0
+        while index < len(query):
+            char = query[index]
+            if char in {"'", '"'}:
+                quote = char
+                index += 1
+                while index < len(query):
+                    if query[index] == quote:
+                        if index + 1 < len(query) and query[index + 1] == quote:
+                            index += 2
+                            continue
+                        index += 1
+                        break
+                    index += 1
+                continue
+            if char == '(':
+                depth += 1
+                index += 1
+                continue
+            if char == ')':
+                if depth == 0:
+                    break
+                depth -= 1
+                index += 1
+                continue
+            if depth == 0:
+                keyword_match = re.match(r'[a-zA-Z_][a-zA-Z0-9_]*', query[index:])
+                if keyword_match and keyword_match.group(0).lower() in _FROM_CLAUSE_BOUNDARY_KEYWORDS:
+                    break
+            index += 1
+        yield query[start:index]
+
+
+def _split_top_level_commas(clause: str) -> list[str]:
+    """Split a FROM clause body on commas that are not nested or quoted."""
+    parts: list[str] = []
+    start = 0
+    depth = 0
+    index = 0
+    while index < len(clause):
+        char = clause[index]
+        if char in {"'", '"'}:
+            quote = char
+            index += 1
+            while index < len(clause):
+                if clause[index] == quote:
+                    if index + 1 < len(clause) and clause[index + 1] == quote:
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                index += 1
+            continue
+        if char == '(':
+            depth += 1
+        elif char == ')' and depth > 0:
+            depth -= 1
+        elif char == ',' and depth == 0:
+            parts.append(clause[start:index])
+            start = index + 1
+        index += 1
+    parts.append(clause[start:])
+    return parts
+
+
+def _extract_leading_table_reference(clause_part: str) -> str | None:
+    """Return the first table identifier in a comma-delimited FROM item."""
+    stripped = clause_part.lstrip()
+    if not stripped or stripped.startswith('('):
+        return None
+    match = re.match(rf'({_SQL_QUALIFIED_IDENTIFIER})', stripped, re.IGNORECASE)
+    return match.group(1) if match else None
+
+
 def extract_tables_from_query(query: str) -> set[str]:
     """Extract table names from a SQL query (best effort)."""
     tables: set[str] = set()
 
-    # Match FROM and JOIN clauses, including schema-qualified tables like public.contacts.
-    patterns = [
-        rf'\bFROM\s+({_SQL_QUALIFIED_IDENTIFIER})',
-        rf'\bJOIN\s+({_SQL_QUALIFIED_IDENTIFIER})',
-    ]
+    query = strip_sql_comments(query)
 
-    for pattern in patterns:
-        matches = re.findall(pattern, query, re.IGNORECASE)
-        tables.update(_normalize_table_identifier(match) for match in matches)
+    # Match every explicit JOIN target, including schema-qualified tables like public.contacts.
+    join_matches = re.findall(rf'\bJOIN\s+({_SQL_QUALIFIED_IDENTIFIER})', query, re.IGNORECASE)
+    tables.update(_normalize_table_identifier(match) for match in join_matches)
+
+    # FROM can introduce a comma-delimited table list; each item must be checked.
+    for clause_body in _iter_from_clause_bodies(query):
+        for clause_part in _split_top_level_commas(clause_body):
+            table_reference = _extract_leading_table_reference(clause_part)
+            if table_reference is not None:
+                tables.add(_normalize_table_identifier(table_reference))
 
     # Exclude SQL built-in functions that might be mistaken for tables
     tables -= _SQL_BUILTIN_FUNCTIONS
