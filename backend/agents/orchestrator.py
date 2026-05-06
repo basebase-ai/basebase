@@ -1846,12 +1846,19 @@ class ChatOrchestrator:
                 # Save text to content_blocks
                 if current_text.strip():
                     content_blocks.append({"type": "text", "text": current_text})
+
+                if pending_context_hack_warnings:
+                    hack_warning_text = "\n\n".join(pending_context_hack_warnings)
+                    content_blocks.append({"type": "text", "text": hack_warning_text})
+                    yield hack_warning_text + "\n\n"
+                    pending_context_hack_warnings.clear()
+
                 break
-            
+
             # Flush current text to content_blocks before processing tools
             if current_text.strip():
                 content_blocks.append({"type": "text", "text": current_text})
-            
+
             # Signal frontend to complete current text block before showing tools
             yield _json_dumps({"type": "text_block_complete"})
             
@@ -2080,6 +2087,8 @@ class ChatOrchestrator:
                 hack_warning_text = "\n\n".join(pending_context_hack_warnings)
                 content_blocks.append({"type": "text", "text": hack_warning_text})
                 yield hack_warning_text + "\n\n"
+                pending_context_hack_warnings.clear()
+
 
     @staticmethod
     def _build_user_content(
