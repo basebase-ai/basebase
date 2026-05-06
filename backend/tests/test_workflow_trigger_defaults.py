@@ -2,6 +2,8 @@ import asyncio
 from types import SimpleNamespace
 from uuid import UUID
 
+import pytest
+
 from api.routes import workflows
 
 
@@ -55,8 +57,11 @@ class _FakeTask:
 
 
 class _FakeExecuteWorkflowTask:
+    delay_kwargs: dict[str, object] | None = None
+
     @staticmethod
-    def delay(**_kwargs) -> _FakeTask:
+    def delay(**kwargs) -> _FakeTask:
+        _FakeExecuteWorkflowTask.delay_kwargs = kwargs
         return _FakeTask()
 
 
@@ -74,6 +79,7 @@ def test_trigger_workflow_creates_private_conversation_for_owner_by_default(monk
         name="Parent workflow",
     )
     fake_session = _FakeSession(fake_workflow)
+    _FakeExecuteWorkflowTask.delay_kwargs = None
 
     monkeypatch.setattr(workflows, "get_session", lambda **_kwargs: _FakeSessionFactory(fake_session))
     monkeypatch.setattr("models.conversation.Conversation", _FakeConversation)
@@ -102,4 +108,92 @@ def test_trigger_workflow_creates_private_conversation_for_owner_by_default(monk
     conversation = fake_session.added[0]
     assert conversation.scope == "private"
     assert conversation.type == "workflow"
-    assert conversation.user_id == creator_id
+    assert conversation.user_id == auth.user_id
+    assert _FakeExecuteWorkflowTask.delay_kwargs is not None
+    assert _FakeExecuteWorkflowTask.delay_kwargs["triggered_by_user_id"] == str(auth.user_id)
+
+
+def test_trigger_workflow_rejects_trigger_user_impersonation(monkeypatch) -> None:
+    org_id = UUID("00000000-0000-0000-0000-0000000000a1")
+    creator_id = UUID("00000000-0000-0000-0000-0000000000b2")
+
+    fake_workflow = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-0000000000d3"),
+        organization_id=org_id,
+        created_by_user_id=creator_id,
+        archived_at=None,
+        is_enabled=True,
+        prompt="Do work",
+        name="Parent workflow",
+    )
+    fake_session = _FakeSession(fake_workflow)
+
+    monkeypatch.setattr(workflows, "get_session", lambda **_kwargs: _FakeSessionFactory(fake_session))
+    monkeypatch.setattr("models.conversation.Conversation", _FakeConversation)
+    monkeypatch.setattr("workers.tasks.workflows.execute_workflow", _FakeExecuteWorkflowTask)
+
+    auth = SimpleNamespace(
+        user_id=UUID("00000000-0000-0000-0000-0000000000e4"),
+        organization_id=org_id,
+        is_global_admin=False,
+    )
+
+    with pytest.raises(workflows.HTTPException) as exc_info:
+        asyncio.run(
+            workflows.trigger_workflow(
+                organization_id=str(org_id),
+                workflow_id=str(fake_workflow.id),
+                body=workflows.TriggerWorkflowRequest(
+                    user_id="00000000-0000-0000-0000-0000000000f5"
+                ),
+                user_id=None,
+                auth=auth,
+            )
+        )
+
+    assert exc_info.value.status_code == 403
+
+
+def test_trigger_workflow_allows_global_admin_user_masquerade(monkeypatch) -> None:
+    org_id = UUID("00000000-0000-0000-0000-0000000000a1")
+    creator_id = UUID("00000000-0000-0000-0000-0000000000b2")
+    masquerade_user_id = UUID("00000000-0000-0000-0000-0000000000f5")
+
+    fake_workflow = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-0000000000d3"),
+        organization_id=org_id,
+        created_by_user_id=creator_id,
+        archived_at=None,
+        is_enabled=True,
+        prompt="Do work",
+        name="Parent workflow",
+    )
+    fake_session = _FakeSession(fake_workflow)
+    _FakeExecuteWorkflowTask.delay_kwargs = None
+
+    monkeypatch.setattr(workflows, "get_session", lambda **_kwargs: _FakeSessionFactory(fake_session))
+    monkeypatch.setattr("models.conversation.Conversation", _FakeConversation)
+    monkeypatch.setattr("workers.tasks.workflows.execute_workflow", _FakeExecuteWorkflowTask)
+
+    auth = SimpleNamespace(
+        user_id=UUID("00000000-0000-0000-0000-0000000000e4"),
+        organization_id=org_id,
+        is_global_admin=True,
+    )
+
+    response = asyncio.run(
+        workflows.trigger_workflow(
+            organization_id=str(org_id),
+            workflow_id=str(fake_workflow.id),
+            body=workflows.TriggerWorkflowRequest(user_id=str(masquerade_user_id)),
+            user_id=None,
+            auth=auth,
+        )
+    )
+
+    assert response.status == "queued"
+    assert _FakeExecuteWorkflowTask.delay_kwargs is not None
+    assert _FakeExecuteWorkflowTask.delay_kwargs["triggered_by_user_id"] == str(masquerade_user_id)
+    conversation = fake_session.added[0]
+    assert conversation.user_id == masquerade_user_id
+    assert set(conversation.participating_user_ids) == {creator_id, masquerade_user_id}

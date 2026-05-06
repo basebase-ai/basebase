@@ -614,9 +614,27 @@ async def trigger_workflow(
     from models.conversation import Conversation
 
     req = body or TriggerWorkflowRequest()
-    trigger_user_uuid: UUID | None = (
+    requested_trigger_user_uuid: UUID | None = (
         UUID(req.user_id) if req.user_id else (UUID(user_id) if user_id else None)
     )
+    if (
+        requested_trigger_user_uuid is not None
+        and requested_trigger_user_uuid != auth.user_id
+        and not auth.is_global_admin
+    ):
+        logger.warning(
+            "[Workflows API] Rejecting manual trigger user impersonation attempt "
+            "workflow_id=%s organization_id=%s auth_user_id=%s requested_user_id=%s",
+            workflow_id,
+            organization_id,
+            auth.user_id,
+            requested_trigger_user_uuid,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Manual workflow triggers may only run as the authenticated user",
+        )
+    trigger_user_uuid = requested_trigger_user_uuid or auth.user_id
     trigger_data: dict[str, Any] | None = req.trigger_data
 
     try:
@@ -707,7 +725,7 @@ async def trigger_workflow(
         trigger_data=trigger_data,
         conversation_id=conversation_id,
         organization_id=organization_id,
-        triggered_by_user_id=str(trigger_user_uuid) if trigger_user_uuid else None,
+        triggered_by_user_id=str(trigger_user_uuid),
     )
 
     return TriggerWorkflowResponseV2(
