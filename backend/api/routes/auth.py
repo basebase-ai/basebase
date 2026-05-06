@@ -465,6 +465,11 @@ async def get_current_user(
 ) -> UserResponse:
     """Get current authenticated user."""
     if user_id is not None and user_id != auth.user_id_str:
+        logger.warning(
+            "Rejected current-user read with mismatched user_id query param auth_user=%s query_user=%s",
+            auth.user_id_str,
+            user_id,
+        )
         raise HTTPException(
             status_code=403, detail="user_id does not match authenticated user"
         )
@@ -521,6 +526,11 @@ async def update_profile(
 ) -> UserResponse:
     """Update current user's profile."""
     if user_id is not None and user_id != auth.user_id_str:
+        logger.warning(
+            "Rejected current-user profile update with mismatched user_id query param auth_user=%s query_user=%s",
+            auth.user_id_str,
+            user_id,
+        )
         raise HTTPException(
             status_code=403, detail="user_id does not match authenticated user"
         )
@@ -1648,8 +1658,18 @@ async def link_identity(
 
     async with get_session(organization_id=str(org_uuid)) as session:
         requester: User | None = await session.get(User, requester_uuid)
-        if not requester or await _get_org_membership(session, requester_uuid, org_uuid) is None:
-            raise HTTPException(status_code=403, detail="Not authorized to modify this organization")
+        if not await _can_administer_org(session, requester, org_uuid):
+            logger.warning(
+                "Blocked identity link by non-admin org=%s target_user=%s mapping=%s by_user=%s",
+                org_uuid,
+                target_uuid,
+                mapping_uuid,
+                requester_uuid,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Org admin or global_admin required to link identities",
+            )
 
         # Verify target user belongs to this org (membership or guest home org)
         target_user: User | None = await session.get(User, target_uuid)
@@ -1834,9 +1854,20 @@ async def unlink_identity(
                 raise HTTPException(status_code=403, detail="Guest user identities cannot be unlinked")
 
         is_unlinking_own_identity = mapping.user_id == requester_uuid
-        can_link_identities_in_org = True  # Mirrors current link-identity access for org members.
-        if not is_unlinking_own_identity and not can_link_identities_in_org:
-            raise HTTPException(status_code=403, detail="Not authorized to unlink this identity")
+        if not is_unlinking_own_identity and not await _can_administer_org(
+            session, requester, org_uuid
+        ):
+            logger.warning(
+                "Blocked identity unlink by non-admin org=%s mapping=%s linked_user=%s by_user=%s",
+                org_uuid,
+                mapping_uuid,
+                mapping.user_id,
+                requester_uuid,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Org admin or global_admin required to unlink another user's identity",
+            )
 
         mapping.user_id = None
         mapping.revtops_email = None
@@ -1899,6 +1930,7 @@ async def invite_to_organization(
     org_id: str,
     request: InviteToOrgRequest,
     background_tasks: BackgroundTasks,
+    auth: AuthContext = Depends(get_current_auth),
     user_id: Optional[str] = None,
 ) -> InviteToOrgResponse:
     """Invite a user to an organization by email.
@@ -1909,12 +1941,20 @@ async def invite_to_organization(
     from models.org_member import OrgMember
     from services.email import send_org_invitation_email
 
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    if user_id is not None and user_id != auth.user_id_str:
+        logger.warning(
+            "Rejected org invitation with mismatched user_id query param org=%s auth_user=%s query_user=%s",
+            org_id,
+            auth.user_id_str,
+            user_id,
+        )
+        raise HTTPException(
+            status_code=403, detail="user_id does not match authenticated user"
+        )
 
     try:
         org_uuid = UUID(org_id)
-        inviter_uuid = UUID(user_id)
+        inviter_uuid = auth.user_id
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
@@ -1932,21 +1972,20 @@ async def invite_to_organization(
         if not org:
             raise HTTPException(status_code=404, detail="Organization not found")
 
-        # Require inviter to be an active member, or be a global admin (e.g. Admin Panel inviting to any org)
-        is_global_admin: bool = (
-            inviter.role == "global_admin" or bool(inviter.roles and "global_admin" in inviter.roles)
-        )
-        if not is_global_admin:
-            result = await session.execute(
-                select(OrgMember).where(
-                    OrgMember.user_id == inviter_uuid,
-                    OrgMember.organization_id == org_uuid,
-                    OrgMember.status.in_(MEMBER_ACTIVE_STATUSES),
-                )
+        if not await _can_administer_org(session, inviter, org_uuid):
+            logger.warning(
+                "Blocked org invitation by non-admin org=%s invite_email=%s by_user=%s",
+                org_uuid,
+                invite_email,
+                inviter_uuid,
             )
-            inviter_membership: Optional[OrgMember] = result.scalar_one_or_none()
-            if not inviter_membership:
-                raise HTTPException(status_code=403, detail="Not a member of this organization")
+            raise HTTPException(
+                status_code=403,
+                detail="Org admin or global_admin required to invite users",
+            )
+
+        if request.role not in {"admin", "member"}:
+            raise HTTPException(status_code=400, detail="Role must be 'admin' or 'member'")
 
         # Find or create the target user
         result = await session.execute(
@@ -2056,6 +2095,7 @@ async def invite_missing_slack_users_to_organization(
     org_id: str,
     request: SlackMissingInviteRequest,
     background_tasks: BackgroundTasks,
+    auth: AuthContext = Depends(get_current_auth),
     user_id: Optional[str] = None,
 ) -> SlackMissingInviteResponse:
     """Invite Slack users (with email) who are not already present in the org."""
@@ -2063,12 +2103,20 @@ async def invite_missing_slack_users_to_organization(
     from models.external_identity_mapping import ExternalIdentityMapping
     from services.email import send_org_invitation_email
 
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    if user_id is not None and user_id != auth.user_id_str:
+        logger.warning(
+            "Rejected Slack missing-user invitation with mismatched user_id query param org=%s auth_user=%s query_user=%s",
+            org_id,
+            auth.user_id_str,
+            user_id,
+        )
+        raise HTTPException(
+            status_code=403, detail="user_id does not match authenticated user"
+        )
 
     try:
         org_uuid = UUID(org_id)
-        inviter_uuid = UUID(user_id)
+        inviter_uuid = auth.user_id
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
@@ -2081,10 +2129,16 @@ async def invite_missing_slack_users_to_organization(
         if not org:
             raise HTTPException(status_code=404, detail="Organization not found")
 
-        if not _is_global_admin(inviter):
-            inviter_membership = await _get_org_membership(session, inviter_uuid, org_uuid)
-            if not inviter_membership:
-                raise HTTPException(status_code=403, detail="Not a member of this organization")
+        if not await _can_administer_org(session, inviter, org_uuid):
+            logger.warning(
+                "Blocked Slack missing-user invitation by non-admin org=%s by_user=%s",
+                org_uuid,
+                inviter_uuid,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Org admin or global_admin required to invite users",
+            )
 
         slack_integration_result = await session.execute(
             select(Integration.id).where(
@@ -2302,18 +2356,28 @@ async def update_organization_member(
     org_id: str,
     target_user_id: str,
     request: UpdateMemberRequest,
+    auth: AuthContext = Depends(get_current_auth),
     user_id: Optional[str] = None,
 ) -> dict[str, Optional[str]]:
     """Update a member row. Users can edit themselves; org/global admins can edit anyone in-org."""
     from models.org_member import OrgMember, ORG_MEMBER_SCOPING_STATUSES
 
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    if user_id is not None and user_id != auth.user_id_str:
+        logger.warning(
+            "Rejected org member update with mismatched user_id query param org=%s target_user=%s auth_user=%s query_user=%s",
+            org_id,
+            target_user_id,
+            auth.user_id_str,
+            user_id,
+        )
+        raise HTTPException(
+            status_code=403, detail="user_id does not match authenticated user"
+        )
 
     try:
         org_uuid = UUID(org_id)
         target_uuid = UUID(target_user_id)
-        requester_uuid = UUID(user_id)
+        requester_uuid = auth.user_id
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
@@ -2451,6 +2515,7 @@ async def update_organization_member_role(
 async def remove_organization_member(
     org_id: str,
     target_user_id: str,
+    auth: AuthContext = Depends(get_current_auth),
     user_id: Optional[str] = None,
 ) -> dict[str, str]:
     """Remove a member from an organization, and unlink all identities.
@@ -2460,13 +2525,22 @@ async def remove_organization_member(
     from models.org_member import OrgMember
     from models.external_identity_mapping import ExternalIdentityMapping
 
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    if user_id is not None and user_id != auth.user_id_str:
+        logger.warning(
+            "Rejected org member removal with mismatched user_id query param org=%s target_user=%s auth_user=%s query_user=%s",
+            org_id,
+            target_user_id,
+            auth.user_id_str,
+            user_id,
+        )
+        raise HTTPException(
+            status_code=403, detail="user_id does not match authenticated user"
+        )
 
     try:
         org_uuid = UUID(org_id)
         target_uuid = UUID(target_user_id)
-        requester_uuid = UUID(user_id)
+        requester_uuid = auth.user_id
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
 

@@ -64,7 +64,13 @@ def test_update_role_rejects_demotion_of_global_admin(monkeypatch):
                 org_id=str(org_id),
                 target_user_id=str(target_id),
                 request=request,
-                user_id=str(requester_id),
+                auth=auth.AuthContext(
+                    user_id=requester_id,
+                    organization_id=org_id,
+                    email="admin@example.com",
+                    role="admin",
+                    is_global_admin=False,
+                ),
             )
         )
 
