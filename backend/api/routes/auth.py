@@ -4502,7 +4502,7 @@ class MergeUsersResponse(BaseModel):
 @router.post("/users/merge", response_model=MergeUsersResponse)
 async def merge_users_endpoint(
     request: MergeUsersRequest,
-    auth: AuthContext = Depends(get_current_auth),
+    auth: AuthContext = Depends(require_global_admin),
 ) -> MergeUsersResponse:
     """
     Merge two user accounts into one.
@@ -4514,26 +4514,35 @@ async def merge_users_endpoint(
     - Reassigned to the target user (ownership, authorship)
     - Deleted (conversations, messages, user mappings)
     
-    Requires admin role or global_admin.
+    Requires global_admin. Org admins cannot merge users because the merge may
+    reassign or delete records across every organization the source user belongs to.
     """
-    from services.user_merge import merge_users
-    
+    if not auth.is_global_admin:
+        logger.warning(
+            "[user_merge] Blocked non-global-admin merge attempt requester=%s org=%s",
+            auth.user_id,
+            auth.organization_id,
+        )
+        raise HTTPException(status_code=403, detail="Global admin access required")
+
     if not auth.organization_id:
         raise HTTPException(status_code=400, detail="Organization context required")
-    
-    # Check admin permissions (org admin for current org, or global_admin).
-    async with get_admin_session() as session:
-        requester: Optional[User] = await session.get(User, auth.user_id)
-        if not await _can_administer_org(session, requester, auth.organization_id):
-            raise HTTPException(
-                status_code=403,
-                detail="Org admin for this organization or global_admin role required",
-            )
-    
+
+    from services.user_merge import merge_users
+
+    logger.info(
+        "[user_merge] Global admin requester=%s initiated merge source=%s target=%s org=%s delete_source=%s",
+        auth.user_id,
+        request.source_user_id,
+        request.target_user_id,
+        auth.organization_id,
+        request.delete_source,
+    )
+
     result = await merge_users(
         target_user_id=request.target_user_id,
         source_user_id=request.source_user_id,
-        organization_id=auth.organization_id,
+        organization_id=str(auth.organization_id),
         delete_source=request.delete_source,
     )
     
