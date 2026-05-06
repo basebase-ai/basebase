@@ -40,12 +40,14 @@ async def merge_users(
     Merge source_user into target_user, reassigning all FK references.
     
     This handles all tables that reference the users table:
-    - Reassigns ownership/authorship to target_user (across ALL organizations)
+    - Reassigns ownership/authorship to target_user
     - Deletes user-specific records (conversations, messages, mappings)
     - Optionally deletes the source user record
     
-    Note: The organization_id is used to verify both users are in the same org,
-    but the merge itself affects ALL organizations the source user is in.
+    Security guardrail:
+    - Both users must be members of the provided organization_id.
+    - Both users must be single-tenant within organization_id (no memberships
+      in any other organization).
     
     Args:
         target_user_id: The user to keep (receives all reassigned records)
@@ -95,23 +97,59 @@ async def merge_users(
         
         source_email = source_row[1]
         
-        # Verify both users share at least one org membership
-        shared_orgs_result = await session.execute(
+        # Verify both users are members of the requested organization.
+        org_membership_result = await session.execute(
             text("""
                 SELECT COUNT(*) FROM org_members om1
                 JOIN org_members om2 ON om1.organization_id = om2.organization_id
-                WHERE om1.user_id = :target_id AND om2.user_id = :source_id
+                WHERE om1.user_id = :target_id
+                  AND om2.user_id = :source_id
+                  AND om1.organization_id = :org_id
+                  AND om1.status IN ('active', 'onboarding')
+                  AND om2.status IN ('active', 'onboarding')
             """),
-            {"target_id": str(target_uuid), "source_id": str(source_uuid)},
+            {
+                "target_id": str(target_uuid),
+                "source_id": str(source_uuid),
+                "org_id": str(org_uuid),
+            },
         )
-        shared_count = shared_orgs_result.scalar()
-        if shared_count == 0:
+        membership_count = org_membership_result.scalar()
+        if membership_count == 0:
             return MergeResult(
                 success=False,
                 target_user_id=target_user_id,
                 source_user_id=source_user_id,
                 source_email=source_email,
-                error="Users must share at least one organization to merge",
+                error="Both users must be active members of the selected organization",
+            )
+
+        # Prevent cross-tenant data changes when running under admin session.
+        # This merge updates/deletes user references across many tables, so we
+        # only allow source/target users that are single-tenant within org_id.
+        outside_org_memberships_result = await session.execute(
+            text("""
+                SELECT user_id, COUNT(DISTINCT organization_id) AS org_count
+                FROM org_members
+                WHERE user_id IN (:target_id, :source_id)
+                  AND status IN ('active', 'onboarding')
+                GROUP BY user_id
+            """),
+            {"target_id": str(target_uuid), "source_id": str(source_uuid)},
+        )
+        org_count_by_user: dict[str, int] = {
+            str(row[0]): int(row[1]) for row in outside_org_memberships_result.fetchall()
+        }
+        if org_count_by_user.get(str(target_uuid), 0) != 1 or org_count_by_user.get(str(source_uuid), 0) != 1:
+            return MergeResult(
+                success=False,
+                target_user_id=target_user_id,
+                source_user_id=source_user_id,
+                source_email=source_email,
+                error=(
+                    "Cannot merge multi-organization users in an organization-scoped request. "
+                    "Use single-organization accounts only."
+                ),
             )
         
         logger.info(
@@ -125,8 +163,9 @@ async def merge_users(
         }
         
         # =================================================================
-        # REASSIGN: Tables where we want to keep the records but change owner
-        # No org filter - reassign ALL records across all organizations
+        # REASSIGN: Tables where we want to keep the records but change owner.
+        # Queries are intentionally broad because authorization above requires
+        # both users to be single-tenant within the requested organization.
         # =================================================================
         
         reassign_queries: list[tuple[str, str]] = [
