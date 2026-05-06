@@ -74,6 +74,14 @@ const INTEGRATION_CONFIG_FALLBACK: Record<string, IntegrationConfigEntry> = {
   ispot_tv: { name: 'iSpot.tv', description: 'TV ad analytics — airings, spend, impressions, and conversions', icon: 'globe', color: 'from-emerald-500 to-teal-600', scope: 'organization' },
 };
 
+const CALENDAR_SHARING_WARNING_PROVIDERS = new Set(['google_calendar', 'microsoft_calendar']);
+
+const isSharedWithTeam = (sharing: {
+  shareSyncedData: boolean;
+  shareQueryAccess: boolean;
+  shareWriteAccess: boolean;
+}): boolean => sharing.shareSyncedData || sharing.shareQueryAccess || sharing.shareWriteAccess;
+
 // Common integrations to show as tiles when org has zero connected (display order)
 const COMMON_INTEGRATION_KEYS: ReadonlyArray<string> = [
   'hubspot',
@@ -478,9 +486,11 @@ export function DataSources(): JSX.Element {
     shareQueryAccess: boolean;
     shareWriteAccess: boolean;
     isInitialSetup: boolean;  // true = post-OAuth, false = editing existing
+    initiallySharedWithTeam: boolean;
   }
   const [sharingModal, setSharingModal] = useState<SharingModalState | null>(null);
   const [sharingSaving, setSharingSaving] = useState(false);
+  const [calendarSharingWarningOpen, setCalendarSharingWarningOpen] = useState(false);
 
   // Disconnect confirmation modal state
   interface DisconnectModalState {
@@ -1110,7 +1120,7 @@ export function DataSources(): JSX.Element {
   };
 
   // Save sharing preferences (POST for initial setup, PATCH for updates)
-  const handleSaveSharing = async (): Promise<void> => {
+  const persistSharingSettings = async (): Promise<void> => {
     if (!sharingModal || sharingSaving) return;
 
     setSharingSaving(true);
@@ -1147,6 +1157,27 @@ export function DataSources(): JSX.Element {
     }
   };
 
+  const shouldShowCalendarSharingWarning = (): boolean => {
+    if (!sharingModal) return false;
+    if (!CALENDAR_SHARING_WARNING_PROVIDERS.has(sharingModal.provider)) return false;
+    if (sharingModal.initiallySharedWithTeam) return false;
+    return isSharedWithTeam(sharingModal);
+  };
+
+  const handleSaveSharing = async (): Promise<void> => {
+    if (sharingSaving) return;
+    if (shouldShowCalendarSharingWarning()) {
+      setCalendarSharingWarningOpen(true);
+      return;
+    }
+    await persistSharingSettings();
+  };
+
+  const handleConfirmCalendarSharingWarning = async (): Promise<void> => {
+    setCalendarSharingWarningOpen(false);
+    await persistSharingSettings();
+  };
+
   // Open sharing modal for editing an existing integration
   const handleOpenSharingSettings = (integration: DisplayIntegration): void => {
     setSharingModal({
@@ -1158,6 +1189,7 @@ export function DataSources(): JSX.Element {
       shareQueryAccess: integration.shareQueryAccess,
       shareWriteAccess: integration.shareWriteAccess,
       isInitialSetup: false,
+      initiallySharedWithTeam: isSharedWithTeam(integration),
     });
   };
 
@@ -1540,7 +1572,7 @@ export function DataSources(): JSX.Element {
     const renderSharingBadge = (): JSX.Element | null => {
       if (state !== 'connected') return null;
 
-      if (integration.shareSyncedData) {
+      if (isSharedWithTeam(integration)) {
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-primary-500/20 text-primary-400">
             <HiShare className="w-3 h-3" />
@@ -2744,7 +2776,7 @@ export function DataSources(): JSX.Element {
                     : `${sharingModal.providerName} Sharing Settings`}
                 </h2>
                 <button
-                  onClick={() => setSharingModal(null)}
+                  onClick={() => { setCalendarSharingWarningOpen(false); setSharingModal(null); }}
                   className="p-1 text-surface-400 hover:text-surface-200 rounded"
                 >
                   <HiX className="w-5 h-5" />
@@ -2816,7 +2848,7 @@ export function DataSources(): JSX.Element {
 
               <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-surface-700">
                 <button
-                  onClick={() => setSharingModal(null)}
+                  onClick={() => { setCalendarSharingWarningOpen(false); setSharingModal(null); }}
                   className="px-4 py-2 text-sm font-medium text-surface-300 hover:text-surface-100 transition-colors"
                 >
                   Cancel
@@ -2833,6 +2865,55 @@ export function DataSources(): JSX.Element {
                     </svg>
                   )}
                   {sharingModal.isInitialSetup ? 'Save & Start Sync' : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Calendar Sharing Warning Modal */}
+      {calendarSharingWarningOpen && sharingModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-surface-900 border border-amber-500/40 rounded-xl shadow-2xl w-full max-w-lg mx-4">
+            <div className="p-6">
+              <div className="flex items-start justify-between gap-4 mb-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-surface-100">
+                    Share calendar data with your team?
+                  </h2>
+                  <p className="text-sm text-amber-300 mt-1">
+                    This setting can expose personal calendar context.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setCalendarSharingWarningOpen(false)}
+                  className="p-1 text-surface-400 hover:text-surface-200 rounded"
+                  aria-label="Close calendar sharing warning"
+                >
+                  <HiX className="w-5 h-5" />
+                </button>
+              </div>
+
+              <p className="text-sm leading-6 text-surface-300">
+                Checking this box will share your personal and private data with teams and may make mixed context items
+                that have both private and shareable data shared — for example, private meeting notes on an otherwise
+                public meeting.
+              </p>
+
+              <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-surface-700">
+                <button
+                  onClick={() => setCalendarSharingWarningOpen(false)}
+                  className="px-4 py-2 text-sm font-medium text-surface-300 hover:text-surface-100 transition-colors"
+                >
+                  Go Back
+                </button>
+                <button
+                  onClick={() => void handleConfirmCalendarSharingWarning()}
+                  disabled={sharingSaving}
+                  className="px-4 py-2 text-sm font-medium bg-amber-600 hover:bg-amber-500 text-white rounded-lg disabled:opacity-50 transition-colors"
+                >
+                  I Understand, Share with Team
                 </button>
               </div>
             </div>
