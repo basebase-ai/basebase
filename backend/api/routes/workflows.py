@@ -617,6 +617,19 @@ async def trigger_workflow(
     trigger_user_uuid: UUID | None = (
         UUID(req.user_id) if req.user_id else (UUID(user_id) if user_id else None)
     )
+    if trigger_user_uuid is not None and trigger_user_uuid != auth.user_id:
+        logger.warning(
+            "[Workflows API] Rejecting manual trigger user impersonation attempt "
+            "workflow_id=%s organization_id=%s auth_user_id=%s requested_user_id=%s",
+            workflow_id,
+            organization_id,
+            auth.user_id,
+            trigger_user_uuid,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Manual workflow triggers may only run as the authenticated user",
+        )
     trigger_data: dict[str, Any] | None = req.trigger_data
 
     try:

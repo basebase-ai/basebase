@@ -2,6 +2,8 @@ import asyncio
 from types import SimpleNamespace
 from uuid import UUID
 
+import pytest
+
 from api.routes import workflows
 
 
@@ -103,3 +105,44 @@ def test_trigger_workflow_creates_private_conversation_for_owner_by_default(monk
     assert conversation.scope == "private"
     assert conversation.type == "workflow"
     assert conversation.user_id == creator_id
+
+
+def test_trigger_workflow_rejects_trigger_user_impersonation(monkeypatch) -> None:
+    org_id = UUID("00000000-0000-0000-0000-0000000000a1")
+    creator_id = UUID("00000000-0000-0000-0000-0000000000b2")
+
+    fake_workflow = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-0000000000d3"),
+        organization_id=org_id,
+        created_by_user_id=creator_id,
+        archived_at=None,
+        is_enabled=True,
+        prompt="Do work",
+        name="Parent workflow",
+    )
+    fake_session = _FakeSession(fake_workflow)
+
+    monkeypatch.setattr(workflows, "get_session", lambda **_kwargs: _FakeSessionFactory(fake_session))
+    monkeypatch.setattr("models.conversation.Conversation", _FakeConversation)
+    monkeypatch.setattr("workers.tasks.workflows.execute_workflow", _FakeExecuteWorkflowTask)
+
+    auth = SimpleNamespace(
+        user_id=UUID("00000000-0000-0000-0000-0000000000e4"),
+        organization_id=org_id,
+        is_global_admin=False,
+    )
+
+    with pytest.raises(workflows.HTTPException) as exc_info:
+        asyncio.run(
+            workflows.trigger_workflow(
+                organization_id=str(org_id),
+                workflow_id=str(fake_workflow.id),
+                body=workflows.TriggerWorkflowRequest(
+                    user_id="00000000-0000-0000-0000-0000000000f5"
+                ),
+                user_id=None,
+                auth=auth,
+            )
+        )
+
+    assert exc_info.value.status_code == 403
