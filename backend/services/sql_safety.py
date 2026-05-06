@@ -80,19 +80,29 @@ def validate_sql_query(query: str) -> tuple[bool, str | None]:
     return True, None
 
 
+_SQL_IDENTIFIER = r'(?:(?:"[^"]+")|(?:[a-zA-Z_][a-zA-Z0-9_]*))'
+_SQL_QUALIFIED_IDENTIFIER = rf'{_SQL_IDENTIFIER}(?:\s*\.\s*{_SQL_IDENTIFIER})*'
+
+
+def _normalize_table_identifier(identifier: str) -> str:
+    """Return the table/object name from a possibly schema-qualified identifier."""
+    table_name = re.split(r'\s*\.\s*', identifier)[-1]
+    return table_name.strip('"').lower()
+
+
 def extract_tables_from_query(query: str) -> set[str]:
     """Extract table names from a SQL query (best effort)."""
     tables: set[str] = set()
 
-    # Match FROM and JOIN clauses
+    # Match FROM and JOIN clauses, including schema-qualified tables like public.contacts.
     patterns = [
-        r'\bFROM\s+([a-zA-Z_][a-zA-Z0-9_]*)',
-        r'\bJOIN\s+([a-zA-Z_][a-zA-Z0-9_]*)',
+        rf'\bFROM\s+({_SQL_QUALIFIED_IDENTIFIER})',
+        rf'\bJOIN\s+({_SQL_QUALIFIED_IDENTIFIER})',
     ]
 
     for pattern in patterns:
         matches = re.findall(pattern, query, re.IGNORECASE)
-        tables.update(m.lower() for m in matches)
+        tables.update(_normalize_table_identifier(match) for match in matches)
 
     # Exclude SQL built-in functions that might be mistaken for tables
     tables -= _SQL_BUILTIN_FUNCTIONS
