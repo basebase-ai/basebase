@@ -136,3 +136,52 @@ def test_extract_tables_from_query_does_not_treat_parenthesized_subquery_keyword
     tables = sql_safety.extract_tables_from_query("SELECT * FROM (SELECT * FROM contacts) AS c")
 
     assert tables == {"contacts"}
+
+
+def test_extract_tables_from_query_ignores_cte_table_names() -> None:
+    tables = sql_safety.extract_tables_from_query(
+        "WITH recent AS (SELECT * FROM contacts) SELECT * FROM recent"
+    )
+
+    assert tables == {"contacts"}
+
+
+def test_extract_tables_from_query_ignores_cte_names_in_joins() -> None:
+    tables = sql_safety.extract_tables_from_query(
+        """
+        WITH recent AS (SELECT * FROM contacts),
+             account_rollup AS (SELECT * FROM accounts)
+        SELECT * FROM recent JOIN account_rollup ON true
+        """
+    )
+
+    assert tables == {"contacts", "accounts"}
+
+
+@pytest.mark.asyncio
+async def test_prepare_safe_sql_query_allows_query_reading_allowed_tables_through_cte(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_check_sql(context, query, params):
+        assert query == "WITH recent AS (SELECT * FROM contacts) SELECT * FROM recent"
+        return RightsResult(allowed=True)
+
+    monkeypatch.setattr(sql_safety, "check_sql", _fake_check_sql)
+
+    safe_query, error = await sql_safety.prepare_safe_sql_query(
+        query="WITH recent AS (SELECT * FROM contacts) SELECT * FROM recent",
+        organization_id="org-1",
+        user_id="user-1",
+    )
+
+    assert error is None
+    assert safe_query is not None
+    assert safe_query.tables == {"contacts"}
+
+
+def test_extract_tables_from_query_keeps_schema_qualified_table_matching_cte_name() -> None:
+    tables = sql_safety.extract_tables_from_query(
+        "WITH pending_operations AS (SELECT * FROM contacts) SELECT * FROM public.pending_operations"
+    )
+
+    assert tables == {"contacts", "pending_operations"}

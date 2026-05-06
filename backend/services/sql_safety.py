@@ -204,6 +204,54 @@ def _find_matching_parenthesis(sql: str, open_index: int = 0) -> int | None:
     return None
 
 
+def _iter_cte_names(query: str) -> Iterator[str]:
+    """Yield CTE names declared by a leading WITH clause."""
+    match = re.match(r'\s*WITH\b', query, re.IGNORECASE)
+    if not match:
+        return
+
+    index = match.end()
+    recursive_match = re.match(r'\s*RECURSIVE\b', query[index:], re.IGNORECASE)
+    if recursive_match:
+        index += recursive_match.end()
+
+    while index < len(query):
+        name_match = re.match(rf'\s*({_SQL_IDENTIFIER})', query[index:], re.IGNORECASE)
+        if not name_match:
+            return
+        yield _normalize_table_identifier(name_match.group(1))
+        index += name_match.end()
+
+        # Optional column list after the CTE name: cte_name(col_a, col_b) AS (...).
+        while index < len(query) and query[index].isspace():
+            index += 1
+        if index < len(query) and query[index] == '(':
+            close_index = _find_matching_parenthesis(query, index)
+            if close_index is None:
+                return
+            index = close_index + 1
+
+        as_match = re.match(r'\s*AS\s*\(', query[index:], re.IGNORECASE)
+        if not as_match:
+            return
+        open_index = index + as_match.end() - 1
+        close_index = _find_matching_parenthesis(query, open_index)
+        if close_index is None:
+            return
+        index = close_index + 1
+
+        while index < len(query) and query[index].isspace():
+            index += 1
+        if index >= len(query) or query[index] != ',':
+            return
+        index += 1
+
+
+def _is_unqualified_identifier(identifier: str) -> bool:
+    """Return whether an identifier has no schema/database qualifier."""
+    return not re.search(r'\s*\.\s*', identifier)
+
+
 def _extract_table_references_from_from_item(clause_part: str) -> set[str]:
     """Return leading table identifiers from a comma-delimited FROM item."""
     stripped = clause_part.lstrip()
@@ -231,16 +279,25 @@ def extract_tables_from_query(query: str) -> set[str]:
     tables: set[str] = set()
 
     query = strip_sql_comments(query)
+    cte_names = set(_iter_cte_names(query))
 
     # Match every explicit JOIN target, including schema-qualified tables like public.contacts.
     join_matches = re.findall(rf'\bJOIN\s+({_SQL_QUALIFIED_IDENTIFIER})', query, re.IGNORECASE)
-    tables.update(_normalize_table_identifier(match) for match in join_matches)
+    for match in join_matches:
+        table_name = _normalize_table_identifier(match)
+        if table_name in cte_names and _is_unqualified_identifier(match):
+            continue
+        tables.add(table_name)
 
     # FROM can introduce a comma-delimited table list; each item must be checked.
     for clause_body in _iter_from_clause_bodies(query):
         for clause_part in _split_top_level_commas(clause_body):
             table_references = _extract_table_references_from_from_item(clause_part)
-            tables.update(_normalize_table_identifier(table_reference) for table_reference in table_references)
+            for table_reference in table_references:
+                table_name = _normalize_table_identifier(table_reference)
+                if table_name in cte_names and _is_unqualified_identifier(table_reference):
+                    continue
+                tables.add(table_name)
 
     # Exclude SQL built-in functions that might be mistaken for tables
     tables -= _SQL_BUILTIN_FUNCTIONS
