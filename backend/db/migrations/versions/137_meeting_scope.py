@@ -5,7 +5,6 @@ Revises: 136_web_search_integration
 Create Date: 2026-05-06
 
 """
-
 from __future__ import annotations
 
 from typing import Sequence, Union
@@ -13,6 +12,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import text
+
 
 revision: str = "137_meeting_scope"
 down_revision: Union[str, None] = "136_web_search_integration"
@@ -52,7 +52,8 @@ def upgrade() -> None:
     # meeting remains team-visible; otherwise keep it private to the owner of the
     # most recently synced linked activity. The grouped CTE keeps the update
     # set-based and avoids broad table locks beyond normal UPDATE row locks.
-    conn.execute(text("""
+    conn.execute(
+        text("""
             WITH scoped AS (
                 SELECT
                     a.meeting_id,
@@ -80,7 +81,8 @@ def upgrade() -> None:
                 visibility = scoped.visibility
             FROM scoped
             WHERE scoped.meeting_id = m.id
-        """))
+        """)
+    )
 
     op.create_index("ix_meetings_integration_id", "meetings", ["integration_id"])
     op.create_index("ix_meetings_owner_user_id", "meetings", ["owner_user_id"])
@@ -92,7 +94,8 @@ def upgrade() -> None:
 
     conn.execute(text("DROP POLICY IF EXISTS org_isolation ON meetings"))
     conn.execute(text("DROP POLICY IF EXISTS org_and_user_isolation ON meetings"))
-    conn.execute(text(f"""
+    conn.execute(
+        text(f"""
             CREATE POLICY org_and_user_isolation ON meetings
             FOR ALL
             USING (
@@ -123,14 +126,16 @@ def upgrade() -> None:
                     )
                 )
             )
-        """))
+        """)
+    )
 
 
 def downgrade() -> None:
     conn = op.get_bind()
 
     conn.execute(text("DROP POLICY IF EXISTS org_and_user_isolation ON meetings"))
-    conn.execute(text(f"""
+    conn.execute(
+        text(f"""
             CREATE POLICY org_isolation ON meetings
             FOR ALL
             USING (
@@ -139,7 +144,8 @@ def downgrade() -> None:
                     '{NULL_UUID}'
                 )
             )
-        """))
+        """)
+    )
 
     op.drop_index("ix_meetings_org_visibility", table_name="meetings")
     op.drop_index("ix_meetings_owner_user_id", table_name="meetings")
