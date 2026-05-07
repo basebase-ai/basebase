@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
@@ -14,8 +13,8 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from access_control import RightsContext, check_sql
 from models.app import App
+from services.sql_safety import prepare_safe_sql_query, validate_sql_query
 
 logger = logging.getLogger(__name__)
 
@@ -25,19 +24,11 @@ class AppQueryResponse(BaseModel):
     columns: list[str]
 
 
-_SELECT_RE = re.compile(r"^\s*SELECT\b", re.IGNORECASE)
-_DANGEROUS_RE = re.compile(
-    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|EXEC|EXECUTE)\b",
-    re.IGNORECASE,
-)
-
-
 def validate_sql_is_select(sql: str) -> None:
-    """Raise if the SQL is not a plain SELECT statement."""
-    if not _SELECT_RE.match(sql):
-        raise ValueError("Only SELECT queries are allowed")
-    if _DANGEROUS_RE.search(sql):
-        raise ValueError("Query contains disallowed SQL keywords")
+    """Raise if the SQL is not a safe read query."""
+    is_valid, error = validate_sql_query(sql)
+    if not is_valid:
+        raise ValueError(error or "Only SELECT queries are allowed")
 
 
 def json_serial(obj: Any) -> Any:
@@ -99,28 +90,22 @@ async def run_named_app_query(
         if value is not None:
             bound_params[pname] = value
 
-    sql_upper: str = sql.upper()
-    if "LIMIT" not in sql_upper:
-        sql = f"{sql.rstrip().rstrip(';')} LIMIT 5000"
-
-    rights_ctx = RightsContext(
+    safe_query, safety_error = await prepare_safe_sql_query(
+        query=sql,
         organization_id=organization_id,
         user_id=None,
-        conversation_id=None,
-        is_workflow=False,
+        params=bound_params,
+        log_prefix="AppQueryRunner.run_named_app_query",
     )
-    rights_result = await check_sql(rights_ctx, sql, bound_params)
-    if not rights_result.allowed:
-        raise HTTPException(
-            status_code=403,
-            detail=rights_result.deny_reason or "Query not allowed",
-        )
-    query_to_run: str = (
-        rights_result.transformed_query if rights_result.transformed_query is not None else sql
-    )
-    params_to_use: dict[str, Any] = (
-        rights_result.transformed_params if rights_result.transformed_params is not None else bound_params
-    )
+    if safety_error is not None or safe_query is None:
+        raise HTTPException(status_code=403, detail=safety_error or "Query not allowed")
+
+    query_to_run: str = safe_query.query
+    params_to_use: dict[str, Any] = safe_query.params or {}
+
+    sql_upper: str = query_to_run.upper()
+    if "LIMIT" not in sql_upper:
+        query_to_run = f"{query_to_run.rstrip().rstrip(';')} LIMIT 5000"
 
     try:
         raw_result = await session.execute(text(query_to_run), params_to_use)
