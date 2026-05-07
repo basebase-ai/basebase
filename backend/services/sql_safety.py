@@ -252,9 +252,38 @@ def _is_unqualified_identifier(identifier: str) -> bool:
     return not re.search(r'\s*\.\s*', identifier)
 
 
-def _extract_table_references_from_from_item(clause_part: str) -> set[str]:
-    """Return leading table identifiers from a comma-delimited FROM item."""
-    stripped = clause_part.lstrip()
+def _iter_sql_keyword_positions(sql: str, keyword: str) -> Iterator[int]:
+    """Yield quote-aware positions of a SQL keyword."""
+    index = 0
+    keyword_len = len(keyword)
+    while index < len(sql):
+        char = sql[index]
+        if char in {"'", '"'}:
+            quote = char
+            index += 1
+            while index < len(sql):
+                if sql[index] == quote:
+                    if index + 1 < len(sql) and sql[index + 1] == quote:
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                index += 1
+            continue
+        if (
+            sql[index:index + keyword_len].lower() == keyword.lower()
+            and (index == 0 or not (sql[index - 1].isalnum() or sql[index - 1] == '_'))
+            and (index + keyword_len == len(sql) or not (sql[index + keyword_len].isalnum() or sql[index + keyword_len] == '_'))
+        ):
+            yield index
+            index += keyword_len
+            continue
+        index += 1
+
+
+def _extract_leading_table_reference(table_expression: str) -> set[str]:
+    """Return table identifiers from the leading table reference in an expression."""
+    stripped = table_expression.lstrip()
     if not stripped:
         return set()
 
@@ -272,6 +301,16 @@ def _extract_table_references_from_from_item(clause_part: str) -> set[str]:
 
     match = re.match(rf'({_SQL_QUALIFIED_IDENTIFIER})', stripped, re.IGNORECASE)
     return {match.group(1)} if match else set()
+
+
+def _extract_table_references_from_from_item(clause_part: str) -> set[str]:
+    """Return all table identifiers from a comma-delimited FROM item."""
+    references = _extract_leading_table_reference(clause_part)
+
+    for join_index in _iter_sql_keyword_positions(clause_part, "JOIN"):
+        references.update(_extract_leading_table_reference(clause_part[join_index + len("JOIN"):]))
+
+    return references
 
 
 def extract_tables_from_query(query: str) -> set[str]:

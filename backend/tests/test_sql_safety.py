@@ -185,3 +185,35 @@ def test_extract_tables_from_query_keeps_schema_qualified_table_matching_cte_nam
     )
 
     assert tables == {"contacts", "pending_operations"}
+
+
+def test_extract_tables_from_query_reads_parenthesized_join_target_tables() -> None:
+    tables = sql_safety.extract_tables_from_query(
+        "SELECT * FROM contacts c JOIN (pending_operations p JOIN contacts c2 ON true) x ON true"
+    )
+
+    assert tables == {"contacts", "pending_operations"}
+
+
+@pytest.mark.asyncio
+async def test_prepare_safe_sql_query_rejects_disallowed_parenthesized_join_target() -> None:
+    safe_query, error = await sql_safety.prepare_safe_sql_query(
+        query="SELECT * FROM contacts c JOIN (pending_operations p JOIN contacts c2 ON true) x ON true",
+        organization_id="00000000-0000-0000-0000-000000000001",
+        user_id="00000000-0000-0000-0000-000000000002",
+    )
+
+    assert safe_query is None
+    assert error == "Access to tables not allowed: {'pending_operations'}"
+
+
+def test_extract_tables_from_query_parses_all_tables_then_discards_ctes() -> None:
+    tables = sql_safety.extract_tables_from_query(
+        """
+        WITH recent AS (SELECT * FROM contacts),
+             hidden AS (SELECT * FROM pending_operations)
+        SELECT * FROM recent JOIN hidden ON true
+        """
+    )
+
+    assert tables == {"contacts", "pending_operations"}
