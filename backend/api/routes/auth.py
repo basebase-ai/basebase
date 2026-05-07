@@ -746,13 +746,31 @@ async def sync_user(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid user ID")
 
-    if auth.user_id != user_uuid:
-        raise HTTPException(status_code=403, detail="User ID does not match authenticated user")
-
-    request_email = request.email.strip().lower()
-    auth_email = (auth.email or "").strip().lower()
-    if auth_email and request_email != auth_email:
+    # Email is the durable identity for /users/sync. Validate it strictly:
+    # the request's email must match the JWT-verified email on the auth
+    # context. The JWT signature is already verified upstream, so a
+    # matching email proves request and token belong to the same person.
+    request_email: str = request.email.strip().lower()
+    auth_email: str = (auth.email or "").strip().lower()
+    if not auth_email or request_email != auth_email:
         raise HTTPException(status_code=403, detail="Email does not match authenticated user")
+
+    # NOTE: Do NOT 403 on `auth.user_id != user_uuid` here. `request.id` is
+    # the Supabase auth `sub`, while `auth.user_id` is the DB primary key
+    # — and `_get_user_from_token` falls back to email-lookup when the DB
+    # has no user with that PK (the case for invited / waitlist users
+    # whose row was created with an auto-generated UUID before they
+    # signed in via OAuth). This very endpoint then migrates `users.id`
+    # to the Supabase `sub` further below; a 403 here would create a
+    # deadlock that prevents invited users from completing onboarding.
+    if auth.user_id != user_uuid:
+        logger.info(
+            "User ID mismatch on /users/sync — proceeding with migration: "
+            "auth.user_id=%s request.id=%s email=%s",
+            auth.user_id,
+            user_uuid,
+            auth_email,
+        )
 
     org_uuid: Optional[UUID] = None
     if request.organization_id:
