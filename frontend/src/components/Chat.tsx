@@ -3875,9 +3875,9 @@ function getToolStatusText(
       const query = typeof input?.query === 'string' ? input.query : '';
       const truncatedQuery = query.length > 40 ? query.slice(0, 40) + '...' : query;
       if (isComplete) {
-        const sources = Array.isArray(result?.sources) ? result.sources.length : 0;
-        const sourceText = sources > 0 ? ` (${sources} source${sources === 1 ? '' : 's'})` : '';
-        return `Searched the web for '${truncatedQuery}'${sourceText}`;
+        const citations = Array.isArray(result?.sources) ? result.sources.length : 0;
+        const citationText = citations > 0 ? ` (${citations} citation${citations === 1 ? '' : 's'})` : '';
+        return `Searched the web for '${truncatedQuery}'${citationText}`;
       }
       return `Searching the web for '${truncatedQuery}'...`;
     }
@@ -4504,7 +4504,7 @@ function buildSuggestions(connected: Integration[]): string[] {
     suggestions.push('What are the latest messages in my Slack channels?');
 
   if (suggestions.length < 3)
-    return ['What can you help me with?', 'What data sources can I connect?', 'Show me what you can do'];
+    return ['What can you help me with?', 'What connectors can I connect?', 'Show me what you can do'];
 
   return suggestions.slice(0, 5);
 }
@@ -4531,7 +4531,7 @@ function EmptyState({ onSuggestionClick }: EmptyStateProps): JSX.Element {
           Ask me anything
         </h2>
         <p className="text-surface-400 mb-6 md:mb-8 text-sm md:text-base">
-          Get instant insights from your connected data sources
+          Get instant insights from your connectors
         </p>
         <div className="flex flex-wrap gap-2 justify-center">
           {suggestions.map((text) => (

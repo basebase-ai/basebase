@@ -53,7 +53,7 @@ function adminTabFromPathSegment(segment: string): AdminPanelTab {
   if (s === 'waitlist') return 'waitlist';
   if (s === 'users') return 'users';
   if (s === 'teams') return 'organizations';
-  if (s === 'sources') return 'sources';
+  if (s === 'sources' || s === 'connectors') return 'connectors';
   if (s === 'jobs') return 'jobs';
   if (s === 'graph-magic') return 'graph-magic';
   return 'dashboard';
@@ -64,7 +64,7 @@ const ADMIN_TAB_TO_PATH: Record<AdminPanelTab, string> = {
   waitlist: '/admin/waitlist',
   users: '/admin/users',
   organizations: '/admin/teams',
-  sources: '/admin/sources',
+  connectors: '/admin/connectors',
   jobs: '/admin/jobs',
   'graph-magic': '/admin/graph-magic',
 };

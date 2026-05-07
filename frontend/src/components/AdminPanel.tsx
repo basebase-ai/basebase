@@ -3,7 +3,7 @@
  * 
  * Features:
  * - Waitlist management (invite users)
- * - Future: User management, org management, data source debugging
+ * - Future: User management, org management, connector debugging
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react';
@@ -498,7 +498,7 @@ export function AdminPanel(): JSX.Element {
   const orgMenuRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
-  // Sources tab state
+  // Connectors tab state
   const [adminIntegrations, setAdminIntegrations] = useState<AdminIntegration[]>([]);
   const [integrationsLoading, setIntegrationsLoading] = useState<boolean>(true);
   const [integrationsError, setIntegrationsError] = useState<string | null>(null);
@@ -732,7 +732,7 @@ export function AdminPanel(): JSX.Element {
       void fetchUsers();
     } else if (activeTab === 'organizations') {
       void fetchOrganizations();
-    } else if (activeTab === 'sources') {
+    } else if (activeTab === 'connectors') {
       void fetchIntegrations();
       void fetchQueryOutcomeRate();
     } else if (activeTab === 'jobs') {
@@ -2274,8 +2274,8 @@ export function AdminPanel(): JSX.Element {
           </div>
         )}
 
-        {/* Sources Tab Content */}
-        {activeTab === 'sources' && (
+        {/* Connectors Tab Content */}
+        {activeTab === 'connectors' && (
           <div className="space-y-6">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="rounded-xl border border-surface-800 bg-surface-900 p-4">
@@ -2484,7 +2484,7 @@ export function AdminPanel(): JSX.Element {
             {integrationsLoading && (
               <div className="text-center py-12 text-surface-400">
                 <div className="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-                Loading data sources...
+                Loading connectors...
               </div>
             )}
 
@@ -2497,7 +2497,7 @@ export function AdminPanel(): JSX.Element {
                   </svg>
                 </div>
                 <p className="text-surface-400">
-                  {sourceSearch ? 'No sources match your search' : 'No data sources connected'}
+                  {sourceSearch ? 'No connectors match your search' : 'No connectors connected'}
                 </p>
               </div>
             )}
@@ -2600,7 +2600,7 @@ export function AdminPanel(): JSX.Element {
             {/* Stats */}
             {!integrationsLoading && !integrationsError && (
               <div className="text-sm text-surface-500 text-center">
-                Showing {filteredIntegrations.length} of {adminIntegrations.length} data sources
+                Showing {filteredIntegrations.length} of {adminIntegrations.length} connectors
                 {sourceSearch && ` matching "${sourceSearch}"`}
               </div>
             )}

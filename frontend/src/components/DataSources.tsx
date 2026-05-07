@@ -805,7 +805,7 @@ export function DataSources(): JSX.Element {
     setGithubAutoScrollPending(false);
   }, [allIntegrations.length, githubAutoScrollPending, githubReposExpanded]);
 
-  // Full list of all connectors for the Add Source modal (from API or fallback)
+  // Full list of all connectors for the add-connector modal (from API or fallback)
   const allConnectorsForModal: DisplayIntegration[] = connectorSlugs.map((provider: string): DisplayIntegration => {
     const config = getConnectorDisplay(provider);
     const defaults = config.default_sharing ?? { shareSyncedData: false, shareQueryAccess: false, shareWriteAccess: false };
@@ -2022,7 +2022,7 @@ export function DataSources(): JSX.Element {
     );
   }
 
-  // Filtered list for the Add Source modal (always starts from full connector list)
+  // Filtered list for the add-connector modal (always starts from full connector list)
   const filteredConnectModalIntegrations: DisplayIntegration[] = allConnectorsForModal.filter(
     (i: DisplayIntegration): boolean => {
       if (!connectSearch.trim()) return true;
@@ -2035,8 +2035,48 @@ export function DataSources(): JSX.Element {
     }
   );
 
+  const openAddConnectorModal = (): void => {
+    setShowConnectModal(true);
+    setConnectSearch('');
+  };
+
   return (
     <div className="flex-1 overflow-y-auto overflow-x-hidden">
+      {/* Mobile toolbar — desktop header below is md+ only */}
+      <div className="md:hidden sticky top-0 z-20 flex-shrink-0 bg-surface-950/95 backdrop-blur-sm border-b border-surface-800 px-4 py-2.5 flex flex-wrap items-center justify-end gap-2">
+        {canSyncAllConnectors && (
+          <button
+            type="button"
+            onClick={() => void handleSyncAll()}
+            disabled={syncingAll}
+            className="px-3 py-2 text-sm font-semibold text-surface-100 bg-surface-800 hover:bg-surface-700 border border-surface-600 rounded-lg transition-colors inline-flex items-center gap-2 disabled:opacity-50"
+            title="Sync every connected integration for this organization"
+          >
+            {syncingAll ? (
+              <>
+                <span className="w-4 h-4 border-2 border-surface-400 border-t-transparent rounded-full animate-spin" />
+                Syncing…
+              </>
+            ) : (
+              <>
+                <HiLightningBolt className="w-4 h-4 text-amber-400" />
+                Sync all
+              </>
+            )}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={openAddConnectorModal}
+          className="px-4 py-2 text-sm font-semibold text-white bg-primary-600 hover:bg-primary-500 rounded-lg transition-colors inline-flex items-center gap-2 shadow-lg shadow-primary-600/20"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+          </svg>
+          Add connector
+        </button>
+      </div>
+
       {/* Header - hidden on mobile since AppLayout has mobile header */}
       <header className="hidden md:block sticky top-0 z-20 bg-surface-950 border-b border-surface-800 px-4 md:px-8 py-4 md:py-6">
         <div className="flex items-center justify-between gap-4">
@@ -2070,19 +2110,19 @@ export function DataSources(): JSX.Element {
             )}
             <button
               type="button"
-              onClick={() => { setShowConnectModal(true); setConnectSearch(''); }}
+              onClick={openAddConnectorModal}
               className="px-5 py-2.5 text-sm font-semibold text-white bg-primary-600 hover:bg-primary-500 rounded-lg transition-colors flex items-center gap-2 shadow-lg shadow-primary-600/20"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
               </svg>
-              Add Source
+              Add connector
             </button>
           </div>
         </div>
       </header>
 
-      {/* Connect Source Modal */}
+      {/* Add connector modal */}
       {showConnectModal && (
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh]">
           {/* Backdrop */}
@@ -2094,7 +2134,7 @@ export function DataSources(): JSX.Element {
           <div className="relative bg-surface-900 border border-surface-700 rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
             <div className="p-5 border-b border-surface-700/50">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-surface-100">Connect a Source</h2>
+                <h2 className="text-lg font-semibold text-surface-100">Add a connector</h2>
                 <button
                   onClick={() => setShowConnectModal(false)}
                   className="text-surface-400 hover:text-surface-200 transition-colors"
@@ -2108,7 +2148,7 @@ export function DataSources(): JSX.Element {
                 type="text"
                 value={connectSearch}
                 onChange={(e) => setConnectSearch(e.target.value)}
-                placeholder="Search sources..."
+                placeholder="Search connectors..."
                 autoFocus
                 className="w-full rounded-lg bg-surface-800 border border-surface-600 px-4 py-2.5 text-sm text-surface-100 placeholder:text-surface-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/30"
               />
@@ -2116,7 +2156,7 @@ export function DataSources(): JSX.Element {
             <ul className="max-h-[50vh] overflow-y-auto p-2">
               {connectorsLoading ? (
                 <li className="px-4 py-8 text-center text-sm text-surface-500">
-                  Loading sources...
+                  Loading connectors...
                 </li>
               ) : connectorsError && allConnectorsForModal.length === 0 ? (
                 <li className="px-4 py-8 text-center text-sm text-red-400">
@@ -2124,7 +2164,7 @@ export function DataSources(): JSX.Element {
                 </li>
               ) : filteredConnectModalIntegrations.length === 0 ? (
                 <li className="px-4 py-8 text-center text-sm text-surface-500">
-                  No sources match your search.
+                  No connectors match your search.
                 </li>
               ) : (
                 filteredConnectModalIntegrations.map((integration) => {
@@ -2452,7 +2492,7 @@ export function DataSources(): JSX.Element {
                 </div>
                 <h3 className="text-surface-200 font-medium mb-2">No connectors connected</h3>
                 <p className="text-surface-400 text-sm">
-                  Connect your first data source to get started
+                  Connect your first connector to get started
                 </p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
@@ -2500,7 +2540,7 @@ export function DataSources(): JSX.Element {
                 Looking for something else?{' '}
                 <button
                   type="button"
-                  onClick={() => { setShowConnectModal(true); setConnectSearch(''); }}
+                  onClick={openAddConnectorModal}
                   className="text-primary-400 hover:text-primary-300 underline underline-offset-2"
                 >
                   Browse all connectors

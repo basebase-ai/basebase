@@ -110,6 +110,7 @@ class Settings(BaseSettings):
     NANGO_LINEAR_INTEGRATION_ID: str = "linear"
     NANGO_ASANA_INTEGRATION_ID: str = "asana"
     NANGO_GRANOLA_INTEGRATION_ID: str = "granola-mcp"
+    NANGO_ATTIO_INTEGRATION_ID: str = "attio"
 
     # App
     SECRET_KEY: str = "dev-secret-change-in-production"
@@ -283,6 +284,7 @@ NANGO_INTEGRATION_IDS: dict[str, str] = {
     "linear": settings.NANGO_LINEAR_INTEGRATION_ID,
     "asana": settings.NANGO_ASANA_INTEGRATION_ID,
     "granola": settings.NANGO_GRANOLA_INTEGRATION_ID,
+    "attio": settings.NANGO_ATTIO_INTEGRATION_ID,
 }
 
 # Default sharing settings for each provider when user first connects.
@@ -306,6 +308,7 @@ PROVIDER_SHARING_DEFAULTS: dict[str, SharingDefaults] = {
     # CRMs - typically share synced data with team
     "hubspot": SharingDefaults(share_synced_data=True),
     "salesforce": SharingDefaults(share_synced_data=True),
+    "attio": SharingDefaults(share_synced_data=True),
     "apollo": SharingDefaults(share_synced_data=True),
     # Collaboration tools - share synced data
     "slack": SharingDefaults(share_synced_data=True),

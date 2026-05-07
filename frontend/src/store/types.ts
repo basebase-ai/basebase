@@ -389,6 +389,6 @@ export type AdminPanelTab =
   | "waitlist"
   | "users"
   | "organizations"
-  | "sources"
+  | "connectors"
   | "jobs"
   | "graph-magic";

@@ -1,6 +1,6 @@
 /**
  * Multi-step onboarding wizard for new users with no organization.
- * Steps: Welcome (name + website) → Slack → Data sources → Invite teammates → Free plan → Success
+ * Steps: Welcome (name + website) → Slack → Connectors → Invite teammates → Free plan → Success
  */
 
 import React, { useState, useEffect } from 'react';
@@ -91,7 +91,7 @@ function generateUUID(): string {
 
 const SKIP_MESSAGES: Record<number, string> = {
   2: "Without Slack, Basebase won't respond in your workspace. You can connect Slack later from Connectors. Skip for now?",
-  3: "Fewer connections mean Basebase has less context. You can add sources anytime from Connectors. Skip?",
+  3: "Fewer connections mean Basebase has less context. You can add connectors anytime from Connectors. Skip?",
   4: "You can invite teammates later from Team settings. Skip?",
 };
 
@@ -810,17 +810,17 @@ export function OnboardingWizard({ emailDomain, isInvitedMode = false, isCreatin
             </>
           )}
 
-          {/* Step 3: Data sources */}
+          {/* Step 3: Connectors */}
           {contentStep === 3 && (
             <>
               <div className="mb-6">
                 <h2 className="text-xl font-bold text-surface-50">
-                  {isInvitedMode ? 'Connect your data sources' : 'Give Basebase superpowers'}
+                  {isInvitedMode ? 'Connect your connectors' : 'Give Basebase superpowers'}
                 </h2>
                 <p className="text-surface-300 mt-2 text-sm leading-relaxed">
                   {isInvitedMode
-                    ? 'Team-wide sources are already set up. Connect your personal accounts (email, calendar) so Basebase has full context.'
-                    : 'Now that you can ask Basebase questions directly in Slack, what data sources do you want it to be able to read/write?'
+                    ? 'Team-wide connectors are already set up. Connect your personal accounts (email, calendar) so Basebase has full context.'
+                    : 'Now that you can ask Basebase questions directly in Slack, which connectors do you want it to be able to read/write?'
                   }
                 </p>
               </div>

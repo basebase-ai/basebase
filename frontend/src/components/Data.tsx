@@ -214,7 +214,7 @@ export function Data(): JSX.Element {
     <div className="flex-1 overflow-hidden flex flex-col">
       <header className="sticky top-0 bg-surface-950 border-b border-surface-800 px-4 md:px-8 py-4 md:py-6">
         <h1 className="text-xl md:text-2xl font-bold text-surface-50">Search Data</h1>
-        <p className="text-surface-400 mt-1 text-sm md:text-base">Browse and compare synced data from connected sources</p>
+        <p className="text-surface-400 mt-1 text-sm md:text-base">Browse and compare synced data from your connectors</p>
       </header>
 
       <div className="flex-1 overflow-hidden flex flex-col px-4 md:px-8 py-4 md:py-6">
@@ -243,7 +243,7 @@ export function Data(): JSX.Element {
               onChange={(e) => setSourceSystemFilter(e.target.value)}
               className="px-3 py-2 text-sm font-medium bg-surface-800 border border-surface-700 rounded-lg text-surface-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             >
-              <option value="">All Sources</option>
+              <option value="">All connectors</option>
               {filterOptions.source_systems.map((source) => (
                 <option key={source} value={source}>{source.charAt(0).toUpperCase() + source.slice(1)}</option>
               ))}

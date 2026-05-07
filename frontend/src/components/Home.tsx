@@ -275,7 +275,7 @@ export function Home(): JSX.Element {
 
       <div className="flex-1 overflow-auto flex flex-col">
         <div className="pt-4 pl-2 md:pl-4 flex flex-col min-h-full">
-        {/* Connect data sources banner */}
+        {/* Connect connectors banner */}
         {!hasConnectedSources && (
           <div className="mb-4 md:mb-6 mr-2 md:mr-4 px-1">
             <div className="flex flex-col sm:flex-row items-start gap-3 md:gap-4">
@@ -286,7 +286,7 @@ export function Home(): JSX.Element {
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="text-base md:text-lg font-semibold text-surface-100 mb-1">
-                  Connect your data sources to get started
+                  Connect your connectors to get started
                 </h3>
                 <p className="text-surface-400 text-sm mb-3 md:mb-4">
                   Link your CRM, calendar, and email to unlock AI-powered insights about your revenue pipeline.
