@@ -103,6 +103,35 @@ def _employee_range_to_int(raw_title: str | None) -> int | None:
     return None
 
 
+def _attio_deal_stage_values(stage: str) -> list[dict[str, Any]]:
+    """POST/PATCH deal `stage`: Attio expects `[{\"status\": \"<title or UUID>\"}]`, not `[\"Lead\"]`"""
+    s: str = str(stage).strip()
+    if not s:
+        raise ValueError("stage must be a non-empty pipeline status title or status UUID (e.g. Lead)")
+    return [{"status": s}]
+
+
+def _attio_deal_owner_values(data: dict[str, Any], *, required: bool) -> list[dict[str, Any]] | None:
+    """Standard Attio deals require an owner (workspace member)."""
+    wid: Any = data.get("owner_workspace_member_id") or data.get("owner_id")
+    if wid is not None and str(wid).strip():
+        return [
+            {
+                "referenced_actor_type": "workspace-member",
+                "referenced_actor_id": str(wid).strip(),
+            }
+        ]
+    email: Any = data.get("owner_email")
+    if email is not None and str(email).strip():
+        return [{"workspace_member_email_address": str(email).strip()}]
+    if required:
+        raise ValueError(
+            "create_deal requires owner_email or owner_workspace_member_id "
+            "(Deal owner is required in Attio; use run_on_connector list_workspace_members for IDs)."
+        )
+    return None
+
+
 class AttioConnector(BaseConnector):
     """Connector for Attio CRM (people, companies, deals, notes)."""
 
@@ -179,7 +208,24 @@ class AttioConnector(BaseConnector):
                 description="Create a deal record in Attio",
                 parameters=[
                     {"name": "name", "type": "string", "required": True},
-                    {"name": "stage", "type": "string", "required": False, "description": "Stage status title or ID"},
+                    {
+                        "name": "stage",
+                        "type": "string",
+                        "required": True,
+                        "description": "Deal stage status title or UUID (must match a pipeline stage, e.g. Lead)",
+                    },
+                    {
+                        "name": "owner_email",
+                        "type": "string",
+                        "required": False,
+                        "description": "Workspace member email for Deal owner (required unless owner_workspace_member_id)",
+                    },
+                    {
+                        "name": "owner_workspace_member_id",
+                        "type": "string",
+                        "required": False,
+                        "description": "Workspace member UUID for Deal owner (required unless owner_email)",
+                    },
                     {"name": "value", "type": "number", "required": False, "description": "Deal value amount"},
                     {"name": "currency", "type": "string", "required": False, "description": "ISO currency e.g. USD"},
                     {"name": "company_id", "type": "string", "required": False, "description": "associated_company target_record_id"},
@@ -193,6 +239,8 @@ class AttioConnector(BaseConnector):
                     {"name": "id", "type": "string", "required": True},
                     {"name": "name", "type": "string", "required": False},
                     {"name": "stage", "type": "string", "required": False},
+                    {"name": "owner_email", "type": "string", "required": False},
+                    {"name": "owner_workspace_member_id", "type": "string", "required": False},
                     {"name": "value", "type": "number", "required": False},
                     {"name": "currency", "type": "string", "required": False},
                     {"name": "company_id", "type": "string", "required": False},
@@ -273,8 +321,8 @@ After connecting and syncing, query SQL on `contacts`, `accounts`, `deals`, `act
 - **update_person** — Required: `id` (Attio `record_id`).
 - **create_company** — Required: `name`. Optional: `domains` (array) or `domain` (string). Assert uses `domains`.
 - **update_company** — Required: `id`.
-- **create_deal** — Required: `name`. Optional: `stage`, `value`, `currency`, `company_id`.
-- **update_deal** — Required: `id`.
+- **create_deal** — Required: `name`, `stage` (status title or UUID, e.g. `Lead`), and **either** `owner_email` **or** `owner_workspace_member_id` (standard Attio deals require an owner). Optional: `value`, `currency`, `company_id`.
+- **update_deal** — Required: `id`. Optional: `name`, `stage`, `owner_email`, `owner_workspace_member_id`, `value`, `currency`, `company_id`.
 - **create_note** — Required: `parent_object`, `parent_record_id`, `title`, `content`. Optional: `format` (`plaintext`|`markdown`).
 
 ## Actions (`run_on_connector`)
@@ -848,9 +896,15 @@ After connecting and syncing, query SQL on `contacts`, `accounts`, `deals`, `act
             dn: str = str(d.get("name", "") or "").strip()
             if not dn:
                 raise ValueError("create_deal requires name")
-            values_d: dict[str, Any] = {"name": [{"value": dn}]}
-            if d.get("stage"):
-                values_d["stage"] = [str(d["stage"])]
+            stage_raw: Any = d.get("stage")
+            if stage_raw is None or not str(stage_raw).strip():
+                raise ValueError("create_deal requires stage (pipeline status title or UUID)")
+            owner_vals: list[dict[str, Any]] | None = _attio_deal_owner_values(d, required=True)
+            values_d: dict[str, Any] = {
+                "name": [{"value": dn}],
+                "stage": _attio_deal_stage_values(str(stage_raw)),
+                "owner": owner_vals,
+            }
             if d.get("value") is not None:
                 cur: str = str(d.get("currency") or "USD")
                 values_d["value"] = [{"currency_value": float(d["value"]), "currency_code": cur}]
@@ -870,8 +924,11 @@ After connecting and syncing, query SQL on `contacts`, `accounts`, `deals`, `act
             values_ud: dict[str, Any] = {}
             if d.get("name"):
                 values_ud["name"] = [{"value": str(d["name"])}]
-            if d.get("stage"):
-                values_ud["stage"] = [str(d["stage"])]
+            if d.get("stage") is not None and str(d.get("stage")).strip():
+                values_ud["stage"] = _attio_deal_stage_values(str(d["stage"]))
+            owner_patch: list[dict[str, Any]] | None = _attio_deal_owner_values(d, required=False)
+            if owner_patch is not None:
+                values_ud["owner"] = owner_patch
             if d.get("value") is not None:
                 cur2: str = str(d.get("currency") or "USD")
                 values_ud["value"] = [{"currency_value": float(d["value"]), "currency_code": cur2}]

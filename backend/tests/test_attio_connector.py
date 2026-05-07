@@ -245,6 +245,52 @@ async def test_write_create_person_uses_assert_endpoint(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
+async def test_write_create_deal_sends_stage_and_owner_shapes(monkeypatch: pytest.MonkeyPatch) -> None:
+    c = _connector()
+    recorded: list[dict[str, Any] | None] = []
+
+    async def fake_make_request(
+        self: AttioConnector,
+        method: str,
+        endpoint: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        recorded.append(json_body)
+        return {"data": {"id": {"record_id": "deal-new"}}}
+
+    async def fake_token(self: AttioConnector) -> tuple[str, str]:
+        return ("tok", "")
+
+    monkeypatch.setattr(AttioConnector, "_make_request", fake_make_request)
+    monkeypatch.setattr(AttioConnector, "get_oauth_token", fake_token)
+
+    await c.write(
+        "create_deal",
+        {
+            "name": "GAIA",
+            "stage": "Lead",
+            "owner_email": "founder@example.com",
+            "company_id": "146ddd6c-c2c4-4246-b10f-10c942b53671",
+        },
+    )
+    assert len(recorded) == 1
+    body = recorded[0]
+    assert body is not None
+    vals: dict[str, Any] = body["data"]["values"]
+    assert vals["name"] == [{"value": "GAIA"}]
+    assert vals["stage"] == [{"status": "Lead"}]
+    assert vals["owner"] == [{"workspace_member_email_address": "founder@example.com"}]
+    assert vals["associated_company"] == [
+        {
+            "target_object": "companies",
+            "target_record_id": "146ddd6c-c2c4-4246-b10f-10c942b53671",
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_execute_action_search_records(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _connector()
     recorded: list[tuple[str, str, dict[str, Any] | None]] = []
