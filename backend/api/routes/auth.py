@@ -2302,18 +2302,15 @@ async def update_organization_member(
     org_id: str,
     target_user_id: str,
     request: UpdateMemberRequest,
-    user_id: Optional[str] = None,
+    auth: AuthContext = Depends(get_current_auth),
 ) -> dict[str, Optional[str]]:
     """Update a member row. Users can edit themselves; org/global admins can edit anyone in-org."""
     from models.org_member import OrgMember, ORG_MEMBER_SCOPING_STATUSES
 
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
     try:
         org_uuid = UUID(org_id)
         target_uuid = UUID(target_user_id)
-        requester_uuid = UUID(user_id)
+        requester_uuid = auth.user_id
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
@@ -2451,7 +2448,7 @@ async def update_organization_member_role(
 async def remove_organization_member(
     org_id: str,
     target_user_id: str,
-    user_id: Optional[str] = None,
+    auth: AuthContext = Depends(get_current_auth),
 ) -> dict[str, str]:
     """Remove a member from an organization, and unlink all identities.
 
@@ -2460,13 +2457,10 @@ async def remove_organization_member(
     from models.org_member import OrgMember
     from models.external_identity_mapping import ExternalIdentityMapping
 
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
     try:
         org_uuid = UUID(org_id)
         target_uuid = UUID(target_user_id)
-        requester_uuid = UUID(user_id)
+        requester_uuid = auth.user_id
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
@@ -2544,23 +2538,19 @@ class UpdateGuestUserRequest(BaseModel):
 async def update_organization(
     org_id: str,
     request: UpdateOrganizationRequest,
-    user_id: Optional[str] = None,
+    auth: AuthContext = Depends(get_current_auth),
 ) -> OrganizationResponse:
     """Update organization settings.
 
     Requires org admin for this organization, or global_admin.
     """
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
     try:
         org_uuid = UUID(org_id)
-        user_uuid = UUID(user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
-    async with get_session(organization_id=org_id) as session:
-        requesting_user = await session.get(User, user_uuid)
+    async with get_session(organization_id=org_id, user_id=auth.user_id_str) as session:
+        requesting_user = await session.get(User, auth.user_id)
         if not await _can_administer_org(session, requesting_user, org_uuid):
             raise HTTPException(status_code=403, detail="Org admin or global_admin required for this organization")
 
@@ -2790,7 +2780,7 @@ async def update_guest_user(
 
     user_uuid = auth.user_id
 
-    async with get_session(organization_id=org_id) as session:
+    async with get_session(organization_id=org_id, user_id=auth.user_id_str) as session:
         requesting_user = await session.get(User, user_uuid)
         if not await _can_administer_org(session, requesting_user, org_uuid):
             raise HTTPException(status_code=403, detail="Org admin or global_admin required for this organization")
