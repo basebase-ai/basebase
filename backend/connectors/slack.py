@@ -30,6 +30,16 @@ _SLACK_MESSAGE_PERMALINK_RE: re.Pattern[str] = re.compile(
     re.IGNORECASE,
 )
 _MARKDOWN_TABLE_CODE_BLOCK_TEMPLATE: str = "```\n{table}\n```"
+# A line that contains nothing but a blockquote marker (``>`` or ``> ``).
+# In email-style quoting these mark paragraph breaks inside a quoted reply,
+# but Slack mrkdwn renders them as a literal ``>`` character because there's
+# no content after the marker. We strip them so consecutive ``> ...`` lines
+# collapse into one continuous Slack blockquote instead of leaving stray
+# ``>`` glyphs floating between paragraphs.
+_BARE_BLOCKQUOTE_LINE_RE: re.Pattern[str] = re.compile(
+    r'^[ \t]*>[ \t]*$\n?',
+    re.MULTILINE,
+)
 _markdown_logger = logging.getLogger(__name__)
 _SLACK_ALLOWED_FILE_HOST_SUFFIXES: tuple[str, ...] = ("slack.com",)
 
@@ -41,6 +51,20 @@ def _clean_table_lines(raw: str) -> str:
         line for line in lines if not _SEPARATOR_ROW_RE.match(line.strip())
     ]
     return '\n'.join(filtered)
+
+
+def _strip_bare_blockquote_lines(text: str) -> str:
+    """Drop email-style ``>`` paragraph-separator lines so Slack renders quotes cleanly.
+
+    Slack mrkdwn does not support paragraph breaks inside a single blockquote
+    block: a line that is just ``>`` renders as a literal ``>`` character, and
+    a blank line breaks the quote into separate gray-bar blocks. Forwarded /
+    replied emails routinely include ``>`` lines as paragraph separators inside
+    a quoted reply, which produces stray ``>`` glyphs in the rendered Slack
+    message. Removing those marker-only lines collapses the surrounding
+    ``> ...`` lines into one continuous Slack blockquote.
+    """
+    return _BARE_BLOCKQUOTE_LINE_RE.sub('', text)
 
 
 def markdown_to_mrkdwn(text: str) -> tuple[str, Optional[list[dict[str, Any]]]]:
@@ -72,6 +96,12 @@ def markdown_to_mrkdwn(text: str) -> tuple[str, Optional[list[dict[str, Any]]]]:
         return f'\x00CB{idx}\x00'
 
     text = _FENCE_RE.sub(_extract_fence, text)
+
+    # -- Step 1.5: normalize email-style blockquote paragraph separators ----
+    # Bare ``>`` lines (used as paragraph breaks in forwarded/replied emails)
+    # render as literal ``>`` characters in Slack mrkdwn; strip them now that
+    # fenced content is safely placeholdered out.
+    text = _strip_bare_blockquote_lines(text)
 
     # -- Step 2: wrap bare markdown tables that weren't already fenced ------
     _TABLE_RE: re.Pattern[str] = re.compile(
