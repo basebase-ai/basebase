@@ -6685,6 +6685,7 @@ async def _poll_bulk_operation(
             succeeded: int = int(succeeded_raw) if succeeded_raw else 0
             failed: int = int(failed_raw) if failed_raw else 0
 
+            bulk_snapshot: dict[str, Any] | None
             async with get_session(organization_id=organization_id) as session:
                 result = await session.execute(
                     select(BulkOperation).where(
@@ -6692,19 +6693,33 @@ async def _poll_bulk_operation(
                         BulkOperation.organization_id == UUID(organization_id),
                     )
                 )
-                operation: BulkOperation | None = result.scalar_one_or_none()
+                op_row: BulkOperation | None = result.scalar_one_or_none()
+                if op_row is None:
+                    bulk_snapshot = None
+                else:
+                    # Copy primitives inside the session scope — the ORM instance is
+                    # expired/detached after exit and must not be read outside.
+                    bulk_snapshot = {
+                        "status": op_row.status,
+                        "operation_name": op_row.operation_name or "foreach",
+                        "total_items": op_row.total_items,
+                        "completed_items": op_row.completed_items,
+                        "succeeded_items": op_row.succeeded_items,
+                        "failed_items": op_row.failed_items,
+                        "error": op_row.error,
+                    }
 
-            if not operation:
+            if bulk_snapshot is None:
                 return {"error": f"Bulk operation {op_id} not found."}
 
-            status: str = operation.status
-            op_name: str = operation.operation_name or "foreach"
+            status: str = bulk_snapshot["status"]
+            op_name: str = bulk_snapshot["operation_name"]
 
             if total == 0:
-                total = operation.total_items
-                completed = operation.completed_items
-                succeeded = operation.succeeded_items
-                failed = operation.failed_items
+                total = bulk_snapshot["total_items"]
+                completed = bulk_snapshot["completed_items"]
+                succeeded = bulk_snapshot["succeeded_items"]
+                failed = bulk_snapshot["failed_items"]
 
             if completed != last_completed:
                 last_completed = completed
@@ -6752,8 +6767,9 @@ async def _poll_bulk_operation(
                         f"Completed: {succeeded} succeeded, {failed} failed out of {total}."
                     )
                 elif status == "failed":
-                    response["error"] = operation.error
-                    response["message"] = f"Failed: {operation.error}"
+                    err_text: str | None = bulk_snapshot.get("error")
+                    response["error"] = err_text
+                    response["message"] = f"Failed: {err_text}"
                 else:
                     response["message"] = "Cancelled."
                 return response
