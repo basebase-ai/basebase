@@ -137,7 +137,7 @@ export function GraphMagic(): JSX.Element {
   const [snippets, setSnippets] = useState<Array<{ ref: string; snippet: string; event_time: string; source_display?: string }>>([]);
   const [availableOrgs, setAvailableOrgs] = useState<AdminOrganization[]>([]);
 
-  const partialWarning = graph?.run_metadata?.coverage?.partial ? 'Partial data: some sources failed' : null;
+  const partialWarning = graph?.run_metadata?.coverage?.partial ? 'Partial data: some connectors failed' : null;
 
   useEffect(() => {
     const fetchOrganizations = async (): Promise<void> => {
@@ -438,7 +438,7 @@ export function GraphMagic(): JSX.Element {
           </select>
         </label>
       </div>
-      {partialWarning && <p className="text-xs text-amber-400">Partial data: some sources failed</p>}
+      {partialWarning && <p className="text-xs text-amber-400">Partial data: some connectors failed</p>}
       {error && <p className="text-sm text-red-400">{error}</p>}
       <div className="bg-surface-900 border border-surface-800 rounded-lg p-3 flex-1 min-h-[68vh] relative">
         {graphWithVisuals ? (
@@ -488,11 +488,11 @@ export function GraphMagic(): JSX.Element {
               </div>
               {selectedNode && (
                 <div className="mb-3 grid grid-cols-1 md:grid-cols-3 gap-2 text-xs text-surface-400">
-                  <div>Source (oldest mention): <span className="text-surface-200">{selectedNode.source ?? 'Unknown'}</span></div>
+                  <div>Connector (oldest mention): <span className="text-surface-200">{selectedNode.source ?? 'Unknown'}</span></div>
                   <div>Mentions: <span className="text-surface-200">{selectedNode.mention_count ?? 0}</span></div>
                   <div>Centrality (edges): <span className="text-surface-200">{selectedNode.centrality ?? 0}</span></div>
                   <div>Heat: <span className="text-surface-200">{selectedNode.heat ?? 0}</span></div>
-                  <div>Source diversity: <span className="text-surface-200">{selectedNode.source_diversity ?? 0}</span></div>
+                  <div>Connector diversity: <span className="text-surface-200">{selectedNode.source_diversity ?? 0}</span></div>
                   <div>Momentum (vs prior 7d): <span className="text-surface-200">{(selectedNode.momentum ?? 0).toFixed(2)}x</span></div>
                   <div>Importance score: <span className="text-surface-200">{(selectedNode.importance_score ?? 0).toFixed(3)}</span></div>
                   <div>Breakdown: <span className="text-surface-200">mentions 50% · centrality 35% · heat 15%</span></div>
@@ -501,7 +501,7 @@ export function GraphMagic(): JSX.Element {
               <ul className="space-y-2">
                 {snippets.map((s) => (
                   <li key={s.ref} className="text-sm text-surface-300 border-b border-surface-800 pb-2">
-                    <div className="text-xs text-surface-500">{s.event_time} · {s.source_display ?? 'Unknown source'} · {s.ref}</div>
+                    <div className="text-xs text-surface-500">{s.event_time} · {s.source_display ?? 'Unknown connector'} · {s.ref}</div>
                     <div>{s.snippet}</div>
                   </li>
                 ))}
