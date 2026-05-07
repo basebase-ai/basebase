@@ -1458,6 +1458,14 @@ async def send_message(
             conv_uuid = conversation.id
             await session.commit()
             # Note: don't call refresh() - it can fail due to RLS after commit
+        else:
+            existing_conversation = (
+                await session.execute(
+                    select(Conversation.id).where(Conversation.id == conv_uuid)
+                )
+            ).scalar_one_or_none()
+            if existing_conversation is None:
+                raise HTTPException(status_code=404, detail="Conversation not found")
 
         # Allow users without organization to chat with limited functionality
         orchestrator = ChatOrchestrator(

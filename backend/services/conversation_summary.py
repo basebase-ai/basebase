@@ -180,6 +180,7 @@ async def generate_conversation_summary(
     """
     try:
         conv_uuid = uuid.UUID(conversation_id)
+        org_uuid = uuid.UUID(organization_id)
         formatted: str = ""
         semantic_words: int = 0
         user_display: str = "the user"
@@ -187,9 +188,20 @@ async def generate_conversation_summary(
         summary_word_count_col: int | None = None
 
         async with get_admin_session() as session:
-            conv = await session.get(Conversation, conv_uuid)
+            conv = (
+                await session.execute(
+                    select(Conversation).where(
+                        Conversation.id == conv_uuid,
+                        Conversation.organization_id == org_uuid,
+                    )
+                )
+            ).scalar_one_or_none()
             if not conv:
-                logger.warning("Summary: conversation %s not found", conversation_id)
+                logger.warning(
+                    "Summary: conversation %s not found for organization %s",
+                    conversation_id,
+                    organization_id,
+                )
                 return None
 
             semantic_words = await count_semantic_words_for_conversation(session, conv_uuid)
@@ -255,7 +267,10 @@ async def generate_conversation_summary(
         async with get_admin_session() as session:
             await session.execute(
                 update(Conversation)
-                .where(Conversation.id == conv_uuid)
+                .where(
+                    Conversation.id == conv_uuid,
+                    Conversation.organization_id == org_uuid,
+                )
                 .values(
                     summary=raw_text,
                     summary_word_count=semantic_words,
@@ -287,12 +302,20 @@ async def generate_conversation_title(
     """
     try:
         conv_uuid = uuid.UUID(conversation_id)
+        org_uuid = uuid.UUID(organization_id)
         formatted: str = ""
         semantic_words: int = 0
         user_display: str = "the user"
 
         async with get_admin_session() as session:
-            conv = await session.get(Conversation, conv_uuid)
+            conv = (
+                await session.execute(
+                    select(Conversation).where(
+                        Conversation.id == conv_uuid,
+                        Conversation.organization_id == org_uuid,
+                    )
+                )
+            ).scalar_one_or_none()
             if not conv:
                 return None
             if conv.title_llm_upgraded:
@@ -363,7 +386,10 @@ async def generate_conversation_title(
         async with get_admin_session() as session:
             await session.execute(
                 update(Conversation)
-                .where(Conversation.id == conv_uuid)
+                .where(
+                    Conversation.id == conv_uuid,
+                    Conversation.organization_id == org_uuid,
+                )
                 .values(
                     title=title[:255],
                     title_llm_upgraded=True,
