@@ -563,6 +563,19 @@ class WorkspaceMessenger(BaseMessenger):
 
         Used to gate thread-reply processing — the bot only responds in
         threads where it is already participating.
+
+        This is a system-level routing check executed *before* the inbound
+        user has been resolved, so we cannot populate ``app.current_user_id``
+        on a tenant session. Conversations have a per-user RLS visibility
+        policy (private conversations are only visible to their owner /
+        participants); without the user context, a tenant session would
+        hide private conversations and incorrectly report False here,
+        causing the bot to silently ignore thread replies in active
+        private threads. We therefore use an admin (RLS-bypassing)
+        session for this org-scoped existence check. Subsequent reads
+        and writes of the conversation still go through tenant sessions
+        with full ``(organization_id, user_id)`` context where RLS
+        applies normally.
         """
         ctx: dict[str, Any] = message.messenger_context
         channel_id: str = ctx.get("channel_id", "")
@@ -578,7 +591,7 @@ class WorkspaceMessenger(BaseMessenger):
         if not org_id:
             return False
 
-        async with get_session(organization_id=org_id) as session:
+        async with get_admin_session() as session:
             result = await session.execute(
                 select(Conversation.id)
                 .where(Conversation.organization_id == UUID(org_id))
