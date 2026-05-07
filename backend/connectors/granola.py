@@ -478,6 +478,7 @@ class GranolaConnector(BaseConnector):
                             notes_text=notes_text[:500] if notes_text else None,
                             action_items=parsed.get("action_items_structured"),
                             key_topics=parsed.get("keywords"),
+                            **self._meeting_visibility_fields(),
                             status="completed",
                         )
 

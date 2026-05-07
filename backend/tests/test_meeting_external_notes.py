@@ -169,6 +169,97 @@ class TestToDict:
         assert d["external_notes"] is None
 
 
+class TestMeetingScope:
+    def test_to_dict_includes_scope_fields(self):
+        integration_id = uuid4()
+        owner_user_id = uuid4()
+        m = Meeting(
+            id=uuid4(),
+            organization_id=uuid4(),
+            integration_id=integration_id,
+            owner_user_id=owner_user_id,
+            visibility="owner_only",
+            scheduled_start=datetime(2026, 1, 1),
+            status="scheduled",
+        )
+
+        d = m.to_dict()
+
+        assert d["integration_id"] == str(integration_id)
+        assert d["owner_user_id"] == str(owner_user_id)
+        assert d["visibility"] == "owner_only"
+
+    @pytest.mark.asyncio
+    async def test_private_find_or_create_keeps_meeting_owner_scope(self):
+        from services.meeting_dedup import find_or_create_meeting
+
+        org_id = uuid4()
+        integration_id = uuid4()
+        owner_user_id = uuid4()
+        mock_session = AsyncMock()
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        added = []
+        mock_session.add = lambda obj: added.append(obj)
+        mock_session.commit = AsyncMock()
+        mock_session.refresh = AsyncMock()
+
+        with patch("services.meeting_dedup.get_session") as mock_gs:
+            mock_gs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_gs.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            await find_or_create_meeting(
+                organization_id=org_id,
+                scheduled_start=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+                title="Private Calendar Event",
+                integration_id=integration_id,
+                owner_user_id=owner_user_id,
+                visibility="owner_only",
+            )
+
+        mock_gs.assert_called_once_with(
+            organization_id=str(org_id),
+            user_id=str(owner_user_id),
+        )
+        assert len(added) == 1
+        assert added[0].integration_id == integration_id
+        assert added[0].owner_user_id == owner_user_id
+        assert added[0].visibility == "owner_only"
+
+    @pytest.mark.asyncio
+    async def test_matching_private_meetings_filters_to_same_owner(self):
+        from services.meeting_dedup import find_matching_meeting
+
+        org_id = uuid4()
+        owner_user_id = uuid4()
+        mock_session = AsyncMock()
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        await find_matching_meeting(
+            session=mock_session,
+            organization_id=org_id,
+            scheduled_start=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+            title="Private Calendar Event",
+            owner_user_id=owner_user_id,
+            visibility="owner_only",
+        )
+
+        compiled = str(
+            mock_session.execute.call_args.args[0].compile(
+                compile_kwargs={"literal_binds": True}
+            )
+        )
+        assert "meetings.visibility = 'owner_only'" in compiled
+        assert f"meetings.owner_user_id = '{owner_user_id.hex}'" in compiled
+
+
 # ── Dedup service integration ─────────────────────────────────────
 
 
@@ -203,9 +294,11 @@ class TestFindOrCreateMeetingNotes:
 
         org_id = uuid4()
         mock_session = AsyncMock()
-        mock_session.execute = AsyncMock(
-            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
-        )
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
         # Capture the Meeting that gets added
         added = []
         mock_session.add = lambda obj: added.append(obj)
@@ -275,9 +368,11 @@ class TestFindOrCreateMeetingNotes:
 
         org_id = uuid4()
         mock_session = AsyncMock()
-        mock_session.execute = AsyncMock(
-            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
-        )
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute = AsyncMock(return_value=mock_result)
         added = []
         mock_session.add = lambda obj: added.append(obj)
         mock_session.commit = AsyncMock()

@@ -114,6 +114,8 @@ async def find_matching_meeting(
     scheduled_start: datetime,
     participants: list[dict[str, Any]] | None = None,
     title: str | None = None,
+    owner_user_id: UUID | None = None,
+    visibility: str = "team",
 ) -> Meeting | None:
     """
     Find an existing meeting that matches the given criteria.
@@ -136,13 +138,21 @@ async def find_matching_meeting(
     start_min = scheduled_start - time_window
     start_max = scheduled_start + time_window
     
-    # Query meetings in the time window
+    # Query meetings in the same connector visibility scope. Private
+    # (owner_only) ingests intentionally do not merge into team meetings or
+    # another user's private meetings; this preserves connector sharing
+    # choices on the canonical Meeting row.
+    scope_conditions: list[Any] = [Meeting.visibility == visibility]
+    if visibility == "owner_only":
+        scope_conditions.append(Meeting.owner_user_id == owner_user_id)
+
     result = await session.execute(
         select(Meeting).where(
             and_(
                 Meeting.organization_id == organization_id,
                 Meeting.scheduled_start >= start_min,
                 Meeting.scheduled_start <= start_max,
+                *scope_conditions,
             )
         )
     )
@@ -191,6 +201,9 @@ async def find_or_create_meeting(
     notes_text: str | None = None,
     notes_doc_id: str | None = None,
     status: str = "scheduled",
+    integration_id: str | UUID | None = None,
+    owner_user_id: str | UUID | None = None,
+    visibility: str = "team",
 ) -> Meeting:
     """
     Find an existing meeting or create a new one.
@@ -218,7 +231,12 @@ async def find_or_create_meeting(
     """
     if isinstance(organization_id, str):
         organization_id = UUID(organization_id)
-    
+    if isinstance(integration_id, str):
+        integration_id = UUID(integration_id)
+    if isinstance(owner_user_id, str):
+        owner_user_id = UUID(owner_user_id)
+    visibility = "owner_only" if visibility == "owner_only" else "team"
+
     # Convert to UTC then strip timezone for database compatibility
     from datetime import timezone as tz
     if scheduled_start.tzinfo is not None:
@@ -226,7 +244,10 @@ async def find_or_create_meeting(
     if scheduled_end is not None and scheduled_end.tzinfo is not None:
         scheduled_end = scheduled_end.astimezone(tz.utc).replace(tzinfo=None)
     
-    async with get_session(organization_id=str(organization_id)) as session:
+    async with get_session(
+        organization_id=str(organization_id),
+        user_id=str(owner_user_id) if owner_user_id else None,
+    ) as session:
         # Try to find existing meeting
         meeting = await find_matching_meeting(
             session=session,
@@ -234,12 +255,21 @@ async def find_or_create_meeting(
             scheduled_start=scheduled_start,
             participants=participants,
             title=title,
+            owner_user_id=owner_user_id,
+            visibility=visibility,
         )
         
         if meeting:
             # Update existing meeting with new data
             logger.info("Found existing meeting %s, updating with new data", meeting.id)
             
+            # Keep the meeting scoped to the connector that owns this ingest.
+            # Legacy rows may not have scope fields yet; fill them without
+            # broadening private data to the whole team.
+            meeting.integration_id = integration_id or meeting.integration_id
+            meeting.owner_user_id = owner_user_id or meeting.owner_user_id
+            meeting.visibility = visibility
+
             # Merge participants
             if participants:
                 meeting.participants = merge_participants(meeting.participants, participants)
@@ -290,6 +320,9 @@ async def find_or_create_meeting(
         meeting = Meeting(
             id=uuid4(),
             organization_id=organization_id,
+            integration_id=integration_id,
+            owner_user_id=owner_user_id,
+            visibility=visibility,
             title=title,
             scheduled_start=scheduled_start,
             scheduled_end=scheduled_end,

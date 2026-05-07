@@ -3331,6 +3331,68 @@ class UpdateSharingRequest(BaseModel):
     share_write_access: bool
 
 
+async def _propagate_integration_synced_data_visibility(
+    integration_id: UUID,
+    *,
+    share_synced_data: bool,
+    owner_user_id: UUID | None = None,
+) -> None:
+    """Propagate connector synced-data visibility to already-ingested rows."""
+    new_visibility: str = "team" if share_synced_data else "owner_only"
+    logger.info(
+        "Propagating integration synced-data visibility integration_id=%s visibility=%s",
+        integration_id,
+        new_visibility,
+    )
+
+    async with get_admin_session() as prop_session:
+        # Update in a stable order and only touch rows that need to change to
+        # keep row locks short when sharing settings are toggled.
+        activity_result = await prop_session.execute(
+            text(
+                "UPDATE activities "
+                "SET visibility = :vis "
+                "WHERE integration_id = :iid "
+                "AND visibility IS DISTINCT FROM :vis"
+            ),
+            {"vis": new_visibility, "iid": integration_id},
+        )
+        meeting_result = await prop_session.execute(
+            text(
+                "UPDATE meetings "
+                "SET visibility = :vis, "
+                "owner_user_id = CASE "
+                "WHEN :vis = 'owner_only' AND :owner_user_id IS NOT NULL "
+                "THEN :owner_user_id "
+                "ELSE owner_user_id "
+                "END "
+                "WHERE integration_id = :iid "
+                "AND ("
+                "visibility IS DISTINCT FROM :vis "
+                "OR ("
+                ":vis = 'owner_only' "
+                "AND :owner_user_id IS NOT NULL "
+                "AND owner_user_id IS DISTINCT FROM :owner_user_id"
+                ")"
+                ")"
+            ),
+            {
+                "vis": new_visibility,
+                "iid": integration_id,
+                "owner_user_id": owner_user_id,
+            },
+        )
+        await prop_session.commit()
+
+    logger.info(
+        "Propagated integration synced-data visibility integration_id=%s visibility=%s activities=%s meetings=%s",
+        integration_id,
+        new_visibility,
+        getattr(activity_result, "rowcount", None),
+        getattr(meeting_result, "rowcount", None),
+    )
+
+
 @router.post("/integrations/{integration_id}/sharing")
 async def update_integration_sharing(
     integration_id: str,
@@ -3383,22 +3445,18 @@ async def update_integration_sharing(
         integration.pending_sharing_config = False
         integration.updated_at = datetime.utcnow()
 
-        await session.commit()
-
         org_id_str = str(integration.organization_id)
-        user_id_str = str(integration.user_id) if integration.user_id else ""
+        owner_user_uuid = integration.user_id
+        user_id_str = str(owner_user_uuid) if owner_user_uuid else ""
         provider = integration.connector
 
-    # Propagate share_synced_data to activity visibility
-    new_visibility: str = "team" if request.share_synced_data else "owner_only"
-    async with get_admin_session() as prop_session:
-        await prop_session.execute(
-            text(
-                "UPDATE activities SET visibility = :vis WHERE integration_id = :iid"
-            ),
-            {"vis": new_visibility, "iid": integration_uuid},
-        )
-        await prop_session.commit()
+        await session.commit()
+
+    await _propagate_integration_synced_data_visibility(
+        integration_uuid,
+        share_synced_data=request.share_synced_data,
+        owner_user_id=owner_user_uuid,
+    )
 
     # If this was the initial sharing config, trigger sync now
     if was_pending:
@@ -3458,19 +3516,15 @@ async def patch_integration_sharing(
         integration.share_query_access = request.share_query_access
         integration.share_write_access = request.share_write_access
         integration.updated_at = datetime.utcnow()
+        owner_user_uuid = integration.user_id
 
         await session.commit()
 
-    # Propagate share_synced_data to activity visibility
-    new_visibility: str = "team" if request.share_synced_data else "owner_only"
-    async with get_admin_session() as prop_session:
-        await prop_session.execute(
-            text(
-                "UPDATE activities SET visibility = :vis WHERE integration_id = :iid"
-            ),
-            {"vis": new_visibility, "iid": integration_uuid},
-        )
-        await prop_session.commit()
+    await _propagate_integration_synced_data_visibility(
+        integration_uuid,
+        share_synced_data=request.share_synced_data,
+        owner_user_id=owner_user_uuid,
+    )
 
     return {
         "status": "updated",

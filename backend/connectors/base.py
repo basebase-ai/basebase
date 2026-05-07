@@ -253,10 +253,13 @@ class BaseConnector(ABC):
 
         self._integration = integration
 
-    def _activity_visibility_fields(self) -> dict[str, Any]:
-        """Return integration_id, owner_user_id, visibility for Activity creation.
+    def _scoped_ingest_fields(self) -> dict[str, Any]:
+        """Return ingestion scope fields derived from the active Integration.
 
-        Call after ensure_sync_active. Returns empty dict if no integration.
+        Call after ensure_sync_active. Returns empty dict if no integration has
+        been loaded yet. Calendar/transcript connectors should apply these to
+        both Activity and Meeting rows so private connector data remains visible
+        only to the user who connected it.
         """
         if not self._integration:
             return {}
@@ -265,6 +268,17 @@ class BaseConnector(ABC):
             "owner_user_id": self._integration.user_id,
             "visibility": "team" if self._integration.share_synced_data else "owner_only",
         }
+
+    def _activity_visibility_fields(self) -> dict[str, Any]:
+        """Return integration_id, owner_user_id, visibility for Activity creation.
+
+        Call after ensure_sync_active. Returns empty dict if no integration.
+        """
+        return self._scoped_ingest_fields()
+
+    def _meeting_visibility_fields(self) -> dict[str, Any]:
+        """Return integration_id, owner_user_id, visibility for Meeting ingestion."""
+        return self._scoped_ingest_fields()
 
     async def _resolve_stale_pending_sharing_config(
         self,

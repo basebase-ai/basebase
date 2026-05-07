@@ -370,6 +370,7 @@ class GoogleCalendarConnector(BaseConnector):
                                     title=parsed["summary"],
                                     duration_minutes=parsed["duration_minutes"],
                                     organizer_email=parsed["organizer_email"],
+                                    **self._meeting_visibility_fields(),
                                     status=parsed["meeting_status"],
                                 )
                                 meeting = await session.merge(meeting)
@@ -401,6 +402,7 @@ class GoogleCalendarConnector(BaseConnector):
                                 title=parsed["summary"],
                                 duration_minutes=parsed["duration_minutes"],
                                 organizer_email=parsed["organizer_email"],
+                                **self._meeting_visibility_fields(),
                                 status=parsed["meeting_status"],
                             )
                             meeting = await session.merge(meeting)
@@ -1028,7 +1030,9 @@ class GoogleCalendarConnector(BaseConnector):
         organizer_email = None
         if self.user_id:
             from models.user import User
-            async with get_session(organization_id=self.organization_id) as session:
+            async with get_session(
+                organization_id=self.organization_id, user_id=self.user_id
+            ) as session:
                 user = await session.get(User, uuid.UUID(self.user_id))
                 if user:
                     organizer_email = user.email
@@ -1042,12 +1046,15 @@ class GoogleCalendarConnector(BaseConnector):
             title=title,
             duration_minutes=duration_minutes,
             organizer_email=organizer_email,
+            **self._meeting_visibility_fields(),
             status="scheduled",
         )
 
         # Re-fetch in a new session to set Meet-specific fields and create Activity
         from models.meeting import Meeting
-        async with get_session(organization_id=self.organization_id) as session:
+        async with get_session(
+            organization_id=self.organization_id, user_id=self.user_id
+        ) as session:
             m = await session.get(Meeting, meeting.id)
             m.conference_link = meeting_uri
             m.meet_space_name = meet_space_name
@@ -1092,7 +1099,9 @@ class GoogleCalendarConnector(BaseConnector):
         if not meeting_id:
             raise ValueError("end_huddle requires meeting_id")
 
-        async with get_session(organization_id=self.organization_id) as session:
+        async with get_session(
+            organization_id=self.organization_id, user_id=self.user_id
+        ) as session:
             meeting = await session.get(Meeting, uuid.UUID(meeting_id))
             if not meeting:
                 raise ValueError(f"Meeting {meeting_id} not found")

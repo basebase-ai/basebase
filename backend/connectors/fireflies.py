@@ -269,6 +269,7 @@ class FirefliesConnector(BaseConnector):
                             notes_text=parsed["overview"],
                             action_items=parsed["action_items_structured"],
                             key_topics=parsed["keywords"],
+                            **self._meeting_visibility_fields(),
                             status="completed",
                         )
 
