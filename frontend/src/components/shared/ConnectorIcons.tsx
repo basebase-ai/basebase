@@ -45,6 +45,14 @@ const ApolloIcon: IconType = ({ className, ...props }) => (
   </svg>
 );
 
+/** Stylized mark for Attio CRM (generic geometric, not official logo). */
+const AttioIcon: IconType = ({ className, ...props }) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className={className} {...props}>
+    <path d="M12 2 4 7v10l8 5 8-5V7l-8-5Zm0 2.5 5.5 3.44v6.92L12 18.3l-5.5-3.44V7.94L12 4.5Z" />
+    <path d="M12 8.2 9.2 9.95v3.5L12 15.2l2.8-1.75v-3.5L12 8.2Z" opacity={0.85} />
+  </svg>
+);
+
 export const CONNECTOR_ICON_MAP: Record<string, IconType> = {
   hubspot: SiHubspot,
   salesforce: SiSalesforce,
@@ -64,6 +72,7 @@ export const CONNECTOR_ICON_MAP: Record<string, IconType> = {
   linear: SiLinear,
   jira: SiJira,
   asana: SiAsana,
+  attio: AttioIcon,
   globe: HiGlobeAlt,
   terminal: HiLightningBolt,
   sms: HiDeviceMobile,
@@ -95,6 +104,7 @@ export const CONNECTOR_DISPLAY: Record<string, ConnectorDisplay> = {
   linear: { icon: "linear", color: "from-indigo-500 to-violet-600", label: "Linear" },
   jira: { icon: "jira", color: "from-blue-500 to-blue-600", label: "Jira" },
   asana: { icon: "asana", color: "from-fuchsia-500 to-pink-600", label: "Asana" },
+  attio: { icon: "attio", color: "from-fuchsia-500 to-purple-600", label: "Attio" },
   web_search: { icon: "globe", color: "from-emerald-500 to-teal-600", label: "Web Search" },
   code_sandbox: { icon: "terminal", color: "from-amber-500 to-orange-600", label: "Code Sandbox" },
   twilio: { icon: "sms", color: "from-red-500 to-pink-600", label: "Twilio" },
@@ -130,6 +140,7 @@ export function getConnectorColorClass(color: string): string {
     "from-emerald-500 to-teal-600": "bg-emerald-500",
     "from-lime-500 to-green-600": "bg-lime-500",
     "from-fuchsia-500 to-pink-600": "bg-fuchsia-500",
+    "from-fuchsia-500 to-purple-600": "bg-fuchsia-500",
     "from-amber-500 to-orange-600": "bg-amber-500",
     "from-red-500 to-pink-600": "bg-red-500",
     "from-slate-500 to-slate-600": "bg-slate-500",

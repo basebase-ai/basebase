@@ -446,7 +446,7 @@ This opens an OAuth popup in the user's browser to authorize the connection.
 All connectors are user-scoped: each user connects their own account. For some connectors (e.g. HubSpot, Linear), the user can optionally share query or write access with teammates so others can use the data or act through that connection.
 
 Available connectors include:
-- CRM: hubspot, salesforce
+- CRM: hubspot, salesforce, attio
 - Communication: slack
 - Issue tracking: jira, linear, asana
 - Code: github
