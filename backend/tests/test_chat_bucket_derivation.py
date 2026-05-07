@@ -34,3 +34,17 @@ def test_derive_bucket_returns_uncategorized_for_other_sources() -> None:
         "uncategorized",
         "uncategorized",
     )
+
+
+def test_parse_conversation_ids_preserves_order_and_deduplicates_valid_ids() -> None:
+    first = "11111111-1111-4111-8111-111111111111"
+    second = "22222222-2222-4222-8222-222222222222"
+
+    parsed = chat._parse_conversation_ids(f" {first},not-a-uuid,{second},{first}, ")
+
+    assert [str(value) for value in parsed] == [first, second]
+
+
+def test_parse_conversation_ids_returns_empty_for_blank_values() -> None:
+    assert chat._parse_conversation_ids(None) == []
+    assert chat._parse_conversation_ids(" , ") == []

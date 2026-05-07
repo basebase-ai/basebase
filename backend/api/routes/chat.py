@@ -251,6 +251,29 @@ class ConversationListResponse(BaseModel):
     server_time: str
 
 
+def _parse_conversation_ids(raw_ids: str | None) -> list[UUID]:
+    """Parse comma-separated conversation IDs from a query parameter."""
+    if not raw_ids:
+        return []
+
+    parsed: list[UUID] = []
+    seen: set[UUID] = set()
+    for raw_id in raw_ids.split(","):
+        value = raw_id.strip()
+        if not value:
+            continue
+        try:
+            conversation_id = UUID(value)
+        except ValueError:
+            logger.info("[chat] Ignoring invalid pinned conversation id=%s", value)
+            continue
+        if conversation_id in seen:
+            continue
+        seen.add(conversation_id)
+        parsed.append(conversation_id)
+    return parsed
+
+
 def _normalize_channel_id(source: str | None, source_channel_id: str | None) -> str | None:
     if source != "slack" or not source_channel_id:
         return None
@@ -518,6 +541,7 @@ async def list_conversations(
     scope: Optional[str] = None,
     mine: bool = False,
     search: Optional[str] = None,
+    pinned_ids: Optional[str] = None,
 ) -> ConversationListResponse:
     """List conversations for the authenticated user, ordered by most recent.
 
@@ -525,9 +549,12 @@ async def list_conversations(
         scope: Optional filter - "shared" or "private". If not provided, returns all.
         mine: If true, only return conversations created by the current user.
         search: Optional text search across title, summary, preview, and message content.
+        pinned_ids: Optional comma-separated conversation IDs to include even when
+            they fall outside the recency-limited page.
     """
     org_id = auth.organization_id_str
     normalized_search = (search or "").strip()
+    pinned_conversation_ids = _parse_conversation_ids(pinned_ids)
 
     async with get_session(organization_id=org_id, user_id=auth.user_id) as session:
         # Fast path: query without Slack filter first
@@ -597,6 +624,21 @@ async def list_conversations(
         # can keep pagination controls enabled immediately while we reconcile
         # Slack-only rows that may need to be merged into the visible page.
         slack_user_ids = await _get_slack_user_ids(auth, session=session)
+        pinned_rows: list[Conversation] = []
+        if pinned_conversation_ids and not normalized_search:
+            pinned_result = await session.execute(
+                select(Conversation)
+                .where(Conversation.type != "workflow")
+                .where(Conversation.id.in_(pinned_conversation_ids))
+                .where(_build_conversation_access_filter(auth, slack_user_ids))
+            )
+            pinned_rows = list(pinned_result.scalars().all())
+            logger.info(
+                "[chat] Including pinned conversation summaries requested=%d accessible=%d user=%s",
+                len(pinned_conversation_ids),
+                len(pinned_rows),
+                auth.user_id_str,
+            )
         # Slack-only rows must be considered before advancing cursor pagination.
         # For non-cursor requests, we only reconcile on the first page (offset=0)
         # to avoid reordering/duplication issues on legacy offset pages. Older
@@ -691,6 +733,17 @@ async def list_conversations(
         if conversations and has_more:
             last = conversations[-1]
             next_cursor = _encode_cursor(last.updated_at, last.id)
+
+        if pinned_rows:
+            seen_ids = {c.id for c in conversations}
+            for conv in pinned_rows:
+                if conv.id not in seen_ids:
+                    conversations.append(conv)
+                    seen_ids.add(conv.id)
+            conversations.sort(
+                key=lambda c: (c.updated_at, c.id),
+                reverse=True,
+            )
 
         # Collect all participant user IDs to fetch in one query
         all_participant_ids: set[UUID] = set()

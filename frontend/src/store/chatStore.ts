@@ -402,8 +402,14 @@ export const useChatStore = create<ChatState>()(
           server_time?: string;
         };
 
+        const pinnedChatIds = useUIStore.getState().pinnedChatIds;
+        const query = new URLSearchParams({ limit: "20" });
+        if (pinnedChatIds.length > 0) {
+          query.set("pinned_ids", pinnedChatIds.join(","));
+        }
+
         const { data, error } = await apiRequest<ConversationApiResponse>(
-          `/chat/conversations?limit=20`,
+          `/chat/conversations?${query.toString()}`,
         );
 
         if (error) {
