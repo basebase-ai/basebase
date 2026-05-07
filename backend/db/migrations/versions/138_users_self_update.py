@@ -1,17 +1,18 @@
 """Restrict users writes to self, org admins, or global admins.
 
-Revision ID: 137_users_self_update
-Revises: 136_web_search_integration
+Revision ID: 138_users_self_update
+Revises: 137_meeting_scope
 Create Date: 2026-05-06
 """
+
 from __future__ import annotations
 
 from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "137_users_self_update"
-down_revision: Union[str, None] = "136_web_search_integration"
+revision: str = "138_users_self_update"
+down_revision: Union[str, None] = "137_meeting_scope"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -113,38 +114,30 @@ def upgrade() -> None:
     op.execute("DROP POLICY IF EXISTS users_update ON users")
     op.execute("DROP POLICY IF EXISTS users_delete ON users")
 
-    op.execute(
-        f"""
+    op.execute(f"""
         CREATE POLICY users_select ON users
         FOR SELECT
         USING ({_USER_VISIBLE_IN_ORG})
-        """
-    )
+        """)
 
-    op.execute(
-        f"""
+    op.execute(f"""
         CREATE POLICY users_insert ON users
         FOR INSERT
         WITH CHECK (current_app_user_is_global_admin())
-        """
-    )
+        """)
 
-    op.execute(
-        f"""
+    op.execute(f"""
         CREATE POLICY users_update ON users
         FOR UPDATE
         USING (({_USER_VISIBLE_IN_ORG}) AND ({_CAN_WRITE_USER}))
         WITH CHECK (({_USER_VISIBLE_IN_ORG}) AND ({_CAN_WRITE_USER}))
-        """
-    )
+        """)
 
-    op.execute(
-        f"""
+    op.execute(f"""
         CREATE POLICY users_delete ON users
         FOR DELETE
         USING (current_app_user_is_global_admin())
-        """
-    )
+        """)
 
 
 def downgrade() -> None:
@@ -153,13 +146,11 @@ def downgrade() -> None:
     op.execute("DROP POLICY IF EXISTS users_update ON users")
     op.execute("DROP POLICY IF EXISTS users_delete ON users")
 
-    op.execute(
-        f"""
+    op.execute(f"""
         CREATE POLICY org_isolation ON users
         FOR ALL
         USING ({_USER_VISIBLE_IN_ORG})
-        """
-    )
+        """)
 
     op.execute(
         "REVOKE EXECUTE ON FUNCTION current_app_user_is_org_admin(uuid) FROM revtops_app"

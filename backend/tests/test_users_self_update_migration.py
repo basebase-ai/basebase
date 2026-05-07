@@ -10,14 +10,14 @@ MIGRATION_PATH = (
     / "db"
     / "migrations"
     / "versions"
-    / "137_users_self_update.py"
+    / "138_users_self_update.py"
 )
 
 
 class TestUsersSelfUpdateMigration:
     def _load_migration(self) -> ModuleType:
         spec = importlib.util.spec_from_file_location(
-            "migration_137_users_self_update", MIGRATION_PATH
+            "migration_138_users_self_update", MIGRATION_PATH
         )
         assert spec is not None
         assert spec.loader is not None
@@ -28,6 +28,8 @@ class TestUsersSelfUpdateMigration:
     def test_revision_ids_fit_alembic_limit(self) -> None:
         mig = self._load_migration()
 
+        assert mig.revision == "138_users_self_update"
+        assert mig.down_revision == "137_meeting_scope"
         assert len(mig.revision) <= 32
         assert isinstance(mig.down_revision, str)
         assert len(mig.down_revision) <= 32
@@ -81,5 +83,10 @@ class TestUsersSelfUpdateMigration:
         assert "DROP POLICY IF EXISTS users_delete ON users" in combined_sql
         assert "CREATE POLICY org_isolation ON users" in combined_sql
         assert "FOR ALL" in combined_sql
-        assert "DROP FUNCTION IF EXISTS current_app_user_is_org_admin(uuid)" in combined_sql
-        assert "DROP FUNCTION IF EXISTS current_app_user_is_global_admin()" in combined_sql
+        assert (
+            "DROP FUNCTION IF EXISTS current_app_user_is_org_admin(uuid)"
+            in combined_sql
+        )
+        assert (
+            "DROP FUNCTION IF EXISTS current_app_user_is_global_admin()" in combined_sql
+        )
