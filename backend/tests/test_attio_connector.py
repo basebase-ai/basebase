@@ -326,6 +326,33 @@ async def test_execute_action_search_records(monkeypatch: pytest.MonkeyPatch) ->
 
 
 @pytest.mark.asyncio
+async def test_execute_action_list_statuses_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    c = _connector()
+    recorded: list[tuple[str, str]] = []
+
+    async def fake_make_request(
+        self: AttioConnector,
+        method: str,
+        endpoint: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        recorded.append((method, endpoint))
+        return {"data": [{"title": "Lead", "id": {"status_id": "s1"}}]}
+
+    async def fake_token(self: AttioConnector) -> tuple[str, str]:
+        return ("tok", "")
+
+    monkeypatch.setattr(AttioConnector, "_make_request", fake_make_request)
+    monkeypatch.setattr(AttioConnector, "get_oauth_token", fake_token)
+
+    out: dict[str, Any] = await c.execute_action("list_statuses", {})
+    assert recorded == [("GET", "/v2/objects/deals/attributes/stage/statuses")]
+    assert out["data"][0]["title"] == "Lead"
+
+
+@pytest.mark.asyncio
 async def test_get_schema_builds_manifest(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _connector()
     calls: list[tuple[str, str]] = []

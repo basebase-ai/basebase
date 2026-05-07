@@ -300,6 +300,27 @@ class AttioConnector(BaseConnector):
                     {"name": "offset", "type": "integer", "required": False},
                 ],
             ),
+            ConnectorAction(
+                name="list_statuses",
+                description=(
+                    "GET /v2/objects/{object}/attributes/{attribute}/statuses — "
+                    "list selectable status values (titles and IDs). Default: deals.stage for pipeline stages."
+                ),
+                parameters=[
+                    {
+                        "name": "object",
+                        "type": "string",
+                        "required": False,
+                        "description": "Object api_slug (default: deals)",
+                    },
+                    {
+                        "name": "attribute",
+                        "type": "string",
+                        "required": False,
+                        "description": "Status attribute api_slug (default: stage)",
+                    },
+                ],
+            ),
         ],
         nango_integration_id="attio",
         query_description=(
@@ -321,7 +342,7 @@ After connecting and syncing, query SQL on `contacts`, `accounts`, `deals`, `act
 - **update_person** — Required: `id` (Attio `record_id`).
 - **create_company** — Required: `name`. Optional: `domains` (array) or `domain` (string). Assert uses `domains`.
 - **update_company** — Required: `id`.
-- **create_deal** — Required: `name`, `stage` (status title or UUID, e.g. `Lead`), and **either** `owner_email` **or** `owner_workspace_member_id` (standard Attio deals require an owner). Optional: `value`, `currency`, `company_id`.
+- **create_deal** — Required: `name`, `stage` (must match a configured pipeline status **title** or **status UUID**), and **either** `owner_email` **or** `owner_workspace_member_id`. Call **`list_statuses`** first (default: deals + stage) to see exact titles/IDs for this workspace—do not guess. Optional: `value`, `currency`, `company_id`.
 - **update_deal** — Required: `id`. Optional: `name`, `stage`, `owner_email`, `owner_workspace_member_id`, `value`, `currency`, `company_id`.
 - **create_note** — Required: `parent_object`, `parent_record_id`, `title`, `content`. Optional: `format` (`plaintext`|`markdown`).
 
@@ -332,6 +353,7 @@ After connecting and syncing, query SQL on `contacts`, `accounts`, `deals`, `act
 - **list_workspace_members** — no params.
 - **list_lists** — no params.
 - **list_list_entries** — `list` (slug or id), optional `filter`, `sorts`, `limit`, `offset`.
+- **list_statuses** — Optional `object` (default `deals`), optional `attribute` (default `stage`). Returns workspace-specific status titles/UUIDs; **use before create_deal** so `stage` matches Attio.
 """,
     )
 
@@ -1033,5 +1055,14 @@ After connecting and syncing, query SQL on `contacts`, `accounts`, `deals`, `act
                 "POST",
                 f"/v2/lists/{lst}/entries/query",
                 json_body=body_le,
+            )
+        if action == "list_statuses":
+            obj_ls: str = str(raw.get("object") or "deals").strip()
+            attr_ls: str = str(raw.get("attribute") or "stage").strip()
+            if not obj_ls or not attr_ls:
+                raise ValueError("list_statuses requires non-empty object and attribute (or omit both for defaults deals/stage)")
+            return await self._make_request(
+                "GET",
+                f"/v2/objects/{obj_ls}/attributes/{attr_ls}/statuses",
             )
         raise ValueError(f"Unknown Attio action: {action}")
