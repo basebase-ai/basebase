@@ -2588,7 +2588,7 @@ export function Chat({
                         toolApprovals={toolApprovals}
                         onArtifactClick={(a) => { setCurrentArtifactId(a.id); setCurrentAttachmentId(null); setCurrentAttachmentMeta(null); }}
                         onAttachmentClick={(id, meta) => { setCurrentAttachmentId(id); setCurrentAttachmentMeta(meta); setCurrentArtifactId(null); }}
-                        onAppClick={(app: AppBlock["app"]) => { setPreviewAppId(app.id); setPreviewCollapsed(false); setPreviewDismissed(false); setCurrentArtifactId(null); setCurrentAttachmentId(null); setCurrentAttachmentMeta(null); }}
+                        onAppClick={(app: AppBlock["app"]) => { setPreviewAppId(app.id); setPreviewArmed(true); setPreviewCollapsed(false); setPreviewDismissed(false); setCurrentArtifactId(null); setCurrentAttachmentId(null); setCurrentAttachmentMeta(null); }}
                         onToolApprove={handleToolApprove}
                         onToolCancel={handleToolCancel}
                         onToolClick={(block) => setSelectedToolCall({
