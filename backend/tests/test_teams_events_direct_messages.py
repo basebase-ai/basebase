@@ -132,3 +132,44 @@ def test_process_message_activity_persists_only_public_channel_messages(monkeypa
     asyncio.run(_run(personal_chat_activity))
 
     assert persisted == ["channel"]
+
+
+def test_refresh_jwks_fetches_only_botframework_openid(monkeypatch) -> None:
+    called_urls: list[str] = []
+
+    async def _fake_fetch_jwks_from_openid(_client, openid_url: str):
+        called_urls.append(openid_url)
+        return [{"kid": "kid-1", "kty": "RSA", "n": "n", "e": "AQAB"}]
+
+    async def _run() -> None:
+        teams_events._merged_jwks_keys = []
+        teams_events._jwks_fetched_at = 0.0
+        await teams_events._refresh_jwks()
+
+    monkeypatch.setattr(teams_events, "_fetch_jwks_from_openid", _fake_fetch_jwks_from_openid)
+    asyncio.run(_run())
+
+    assert called_urls == [teams_events.BOT_OPENID_URL]
+
+
+def test_verify_teams_jwt_rejects_unexpected_issuer(monkeypatch) -> None:
+    class _FakeJwk:
+        def to_pem(self) -> bytes:
+            return b"fake-pem"
+
+    monkeypatch.setattr(teams_events.settings, "MICROSOFT_APP_ID", "app-id", raising=False)
+    monkeypatch.setattr(teams_events.jwt, "get_unverified_header", lambda _token: {"kid": "kid-1"})
+    monkeypatch.setattr(teams_events.jwk, "construct", lambda *_args, **_kwargs: _FakeJwk())
+    monkeypatch.setattr(
+        teams_events.jwt,
+        "decode",
+        lambda *_args, **_kwargs: {"aud": "app-id", "exp": 9999999999, "iss": "https://evil.example"},
+    )
+
+    teams_events._merged_jwks_keys = [{"kid": "kid-1"}]
+
+    try:
+        teams_events._verify_teams_jwt("fake-token")
+        assert False, "Expected ValueError for unexpected issuer"
+    except ValueError as exc:
+        assert "Unexpected token issuer" in str(exc)

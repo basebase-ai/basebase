@@ -33,7 +33,7 @@ router = APIRouter()
 BOT_OPENID_URL: str = "https://login.botframework.com/v1/.well-known/openidconfiguration"
 JWKS_CACHE_TTL_SECONDS: int = 3600
 
-# Merged key set from Bot Framework + tenant-specific OpenID endpoints
+# Cached key set from Bot Framework OpenID endpoint
 _merged_jwks_keys: list[dict[str, Any]] = []
 _jwks_fetched_at: float = 0.0
 
@@ -103,17 +103,16 @@ async def _fetch_jwks_from_openid(client: httpx.AsyncClient, openid_url: str) ->
 
 
 async def _refresh_jwks() -> None:
-    """Fetch and merge JWKS from Bot Framework + tenant-specific OpenID endpoints."""
+    """Fetch JWKS from Bot Framework OpenID endpoint."""
     global _merged_jwks_keys, _jwks_fetched_at
     now: float = time.monotonic()
     if _merged_jwks_keys and (now - _jwks_fetched_at) < JWKS_CACHE_TTL_SECONDS:
         return
 
-    all_keys: list[dict[str, Any]] = []
-    seen_kids: set[str] = set()
-
     async with httpx.AsyncClient() as client:
-        # 1. Bot Framework OpenID (multi-tenant / emulator tokens)
+        all_keys: list[dict[str, Any]] = []
+        seen_kids: set[str] = set()
+
         try:
             keys = await _fetch_jwks_from_openid(client, BOT_OPENID_URL)
             for k in keys:
@@ -123,38 +122,6 @@ async def _refresh_jwks() -> None:
                     seen_kids.add(kid)
         except Exception as exc:
             logger.warning("[teams_events] Failed to fetch Bot Framework JWKS: %s", exc)
-
-        # 2. Tenant-specific OpenID (single-tenant bot tokens)
-        tenant_id: str | None = settings.MICROSOFT_TENANT_ID
-        if tenant_id:
-            tenant_openid_url: str = (
-                f"https://login.microsoftonline.com/{tenant_id}/v2.0/"
-                ".well-known/openid-configuration"
-            )
-            try:
-                keys = await _fetch_jwks_from_openid(client, tenant_openid_url)
-                for k in keys:
-                    kid = k.get("kid", "")
-                    if kid and kid not in seen_kids:
-                        all_keys.append(k)
-                        seen_kids.add(kid)
-            except Exception as exc:
-                logger.warning("[teams_events] Failed to fetch tenant JWKS: %s", exc)
-
-        # 3. Common Azure AD fallback (covers both single/multi tenant edge cases)
-        common_openid_url: str = (
-            "https://login.microsoftonline.com/common/v2.0/"
-            ".well-known/openid-configuration"
-        )
-        try:
-            keys = await _fetch_jwks_from_openid(client, common_openid_url)
-            for k in keys:
-                kid = k.get("kid", "")
-                if kid and kid not in seen_kids:
-                    all_keys.append(k)
-                    seen_kids.add(kid)
-        except Exception as exc:
-            logger.debug("[teams_events] Failed to fetch common JWKS: %s", exc)
 
     if not all_keys:
         raise RuntimeError("Could not fetch any JWKS keys")
@@ -166,9 +133,8 @@ async def _refresh_jwks() -> None:
 def _verify_teams_jwt(token: str) -> dict[str, Any]:
     """Verify Bot Framework Bearer token and return claims.
 
-    Uses merged JWKS from Bot Framework + Azure AD endpoints.
-    Validates audience and expiry; issuer is not strictly checked
-    because single-tenant and multi-tenant tokens use different issuers.
+    Uses JWKS from Bot Framework OpenID endpoint.
+    Validates audience, expiry, and issuer.
     """
     app_id: str | None = settings.MICROSOFT_APP_ID
     if not app_id:
@@ -198,6 +164,12 @@ def _verify_teams_jwt(token: str) -> dict[str, Any]:
         audience=app_id,
         options={"verify_aud": True, "verify_exp": True, "verify_iss": False},
     )
+
+    issuer: str = str(payload.get("iss") or "").rstrip("/")
+    allowed_issuers: set[str] = {"https://api.botframework.com"}
+    if issuer not in allowed_issuers:
+        raise ValueError(f"Unexpected token issuer: {issuer or '<missing>'}")
+
     return payload
 
 
