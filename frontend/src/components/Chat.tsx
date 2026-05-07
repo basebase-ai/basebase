@@ -500,6 +500,7 @@ export function Chat({
 
   // App preview panel state
   const [previewAppId, setPreviewAppId] = useState<string | null>(null);
+  const [previewArmed, setPreviewArmed] = useState(false);
   const [previewCollapsed, setPreviewCollapsed] = useState(false);
   const [previewDismissed, setPreviewDismissed] = useState(false);
   const [previewHeight, setPreviewHeight] = useState(300);
@@ -780,8 +781,9 @@ export function Chat({
       const latestApp = conversationApps[conversationApps.length - 1];
       if (latestApp) {
         setPreviewAppId(latestApp.id);
-        setPreviewCollapsed(false);
-        setPreviewDismissed(false);
+        if (previewArmed && !previewDismissed) {
+          setPreviewCollapsed(false);
+        }
       }
     }
     // Default to latest app if no selection yet
@@ -792,7 +794,7 @@ export function Chat({
       }
     }
     prevAppCountRef.current = conversationApps.length;
-  }, [conversationApps, previewAppId]);
+  }, [conversationApps, previewAppId, previewArmed, previewDismissed]);
 
   // Track if this conversation has uncommitted changes (write tools completed)
   const hasUncommittedChanges = useMemo(() => {
@@ -892,6 +894,7 @@ export function Chat({
     setCurrentAttachmentId(null);
     setCurrentAttachmentMeta(null);
     // Reset preview state for new conversation
+    setPreviewArmed(false);
     setPreviewDismissed(false);
     setPreviewAppId(null);
     setPreviewCollapsed(false);
@@ -2434,8 +2437,34 @@ export function Chat({
       <div className="flex-1 flex overflow-hidden">
         {/* Messages column (vertical flex with optional app preview above) */}
         <div ref={dragContainerRef} className={`flex flex-col md:transition-[width] md:duration-300 md:ease-in-out ${currentArtifact ? 'md:w-1/2' : ''} flex-1 min-w-0 min-h-0`}>
+          {/* App preview launcher (requires explicit click to execute app code) */}
+          {conversationApps.length > 0 && (!previewArmed || previewDismissed) && (
+            <div className="border-b border-surface-800 bg-surface-900/90 px-3 md:px-5 py-2.5">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs md:text-sm text-surface-300">
+                  App preview is available for this conversation.
+                </p>
+                <button
+                  type="button"
+                  className="px-2.5 py-1.5 rounded-md text-xs font-medium bg-primary-600 hover:bg-primary-500 text-white transition-colors"
+                  onClick={() => {
+                    const latestApp = conversationApps[conversationApps.length - 1];
+                    if (latestApp && previewAppId === null) {
+                      setPreviewAppId(latestApp.id);
+                    }
+                    setPreviewDismissed(false);
+                    setPreviewArmed(true);
+                    setPreviewCollapsed(false);
+                  }}
+                >
+                  Open app preview
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* App preview panel (above messages) */}
-          {conversationApps.length > 0 && !previewDismissed && (
+          {conversationApps.length > 0 && previewArmed && !previewDismissed && (
             <>
               <AppPreviewPanel
                 apps={conversationApps}
@@ -2532,7 +2561,7 @@ export function Chat({
                         toolApprovals={toolApprovals}
                         onArtifactClick={(a) => { setCurrentArtifactId(a.id); setCurrentAttachmentId(null); setCurrentAttachmentMeta(null); }}
                         onAttachmentClick={(id, meta) => { setCurrentAttachmentId(id); setCurrentAttachmentMeta(meta); setCurrentArtifactId(null); }}
-                        onAppClick={(app: AppBlock["app"]) => { setPreviewAppId(app.id); setPreviewCollapsed(false); setPreviewDismissed(false); setCurrentArtifactId(null); setCurrentAttachmentId(null); setCurrentAttachmentMeta(null); }}
+                        onAppClick={(app: AppBlock["app"]) => { setPreviewAppId(app.id); setPreviewArmed(true); setPreviewCollapsed(false); setPreviewDismissed(false); setCurrentArtifactId(null); setCurrentAttachmentId(null); setCurrentAttachmentMeta(null); }}
                         onToolApprove={handleToolApprove}
                         onToolCancel={handleToolCancel}
                         onToolClick={(block) => setSelectedToolCall({
