@@ -423,17 +423,16 @@ After connecting and syncing, query SQL on `contacts`, `accounts`, `deals`, `act
         raise last_exc
 
     def _incremental_record_filter(self) -> dict[str, Any] | None:
-        """Broad incremental filter: created or interaction timestamps."""
+        """Incremental filter for record queries (sync_since).
+
+        Use only ``created_at`` — attributes like ``last_email_interaction`` are
+        not on every object (e.g. companies/deals) and may be absent in some
+        workspaces, which makes Attio return 400 ``Unknown attribute slug``.
+        """
         if self.sync_since is None:
             return None
         iso: str = _iso_utc_z(self.sync_since)
-        return {
-            "$or": [
-                {"created_at": {"$gte": iso}},
-                {"last_email_interaction": {"interacted_at": {"$gte": iso}}},
-                {"last_calendar_interaction": {"interacted_at": {"$gte": iso}}},
-            ]
-        }
+        return {"created_at": {"$gte": iso}}
 
     async def _paginate_object_records(
         self,
