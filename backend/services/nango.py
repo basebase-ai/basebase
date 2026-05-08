@@ -236,6 +236,9 @@ class NangoClient:
             token = credentials["apiKey"]
         elif "token" in credentials:
             token = credentials["token"]
+        elif "oauth_token" in credentials:
+            # OAuth 1.0a (e.g. Trello via Nango): user token for upstream API
+            token = credentials["oauth_token"]
         else:
             print(f"[Nango] Full credentials object: {credentials}")
             raise ValueError(f"No token found for {integration_id}:{connection_id}")
