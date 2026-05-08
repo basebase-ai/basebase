@@ -2058,33 +2058,33 @@ export function DataSources(): JSX.Element {
 
   return (
     <div className="flex-1 overflow-y-auto overflow-x-hidden">
-      {/* Mobile — overflow menu */}
+      {/* Mobile — Browse connectors + overflow for Sync all */}
       <div className="sticky top-0 z-20 flex-shrink-0 border-b border-surface-800 bg-surface-950/95 px-4 py-2 backdrop-blur-sm md:hidden">
-        <div className="flex justify-end">
-          <div className="relative" data-page-overflow-root>
-            <button
-              type="button"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() => setPageOverflowOpen((o) => !o)}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-surface-700 text-surface-300 hover:bg-surface-800"
-              aria-expanded={pageOverflowOpen}
-              aria-label="Open menu"
-            >
-              <HiDotsVertical className="h-5 w-5" />
-            </button>
-            {pageOverflowOpen && (
-              <div className="absolute right-0 top-full z-30 mt-1 min-w-[11rem] rounded-lg border border-surface-700 bg-surface-900 py-1 shadow-lg">
-                <button
-                  type="button"
-                  className="w-full px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800"
-                  onClick={() => {
-                    setPageOverflowOpen(false);
-                    openAddConnectorModal();
-                  }}
-                >
-                  Browse connectors
-                </button>
-                {canSyncAllConnectors && (
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={openAddConnectorModal}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-surface-600 px-3 py-2 text-sm font-medium text-surface-100 transition-colors hover:bg-surface-800"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            Browse connectors
+          </button>
+          {canSyncAllConnectors && (
+            <div className="relative shrink-0" data-page-overflow-root>
+              <button
+                type="button"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => setPageOverflowOpen((o) => !o)}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-surface-700 text-surface-300 hover:bg-surface-800"
+                aria-expanded={pageOverflowOpen}
+                aria-label="More actions"
+              >
+                <HiDotsVertical className="h-5 w-5" />
+              </button>
+              {pageOverflowOpen && (
+                <div className="absolute right-0 top-full z-30 mt-1 min-w-[11rem] rounded-lg border border-surface-700 bg-surface-900 py-1 shadow-lg">
                   <button
                     type="button"
                     disabled={syncingAll}
@@ -2106,10 +2106,10 @@ export function DataSources(): JSX.Element {
                       </>
                     )}
                   </button>
-                )}
-              </div>
-            )}
-          </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
