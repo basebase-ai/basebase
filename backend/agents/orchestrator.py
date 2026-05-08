@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import re
+import redis.asyncio as aioredis
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, AsyncGenerator, Sequence
@@ -25,7 +26,7 @@ from sqlalchemy import select, update
 
 from agents.registry import format_tool_status
 from agents.tools import execute_tool, get_tools, get_tool_defs_for_context
-from config import settings
+from config import get_redis_connection_kwargs, settings
 from services.llm_adapter import (
     AnthropicAdapter,
     LLMConfig,
@@ -47,6 +48,61 @@ from models.memory import Memory
 from services.anthropic_health import report_anthropic_call_failure, report_anthropic_call_success
 
 logger = logging.getLogger(__name__)
+
+
+def _workflow_tool_progress_channel(organization_id: str) -> str:
+    """Redis pub/sub channel for workflow tool progress within one organization."""
+    return f"workflow_tool_progress:{organization_id}"
+
+
+async def _publish_tool_progress_update(
+    *,
+    organization_id: str,
+    conversation_id: str,
+    tool_id: str,
+    tool_name: str,
+    result: dict[str, Any],
+    status: str,
+) -> bool:
+    """Publish a tool progress update for API websocket processes to fan out."""
+    payload = {
+        "type": "tool_progress",
+        "conversation_id": conversation_id,
+        "tool_id": tool_id,
+        "tool_name": tool_name,
+        "result": result,
+        "status": status,
+    }
+    redis_client: aioredis.Redis | None = None
+    try:
+        redis_client = aioredis.from_url(
+            settings.REDIS_URL,
+            **get_redis_connection_kwargs(decode_responses=True),
+        )
+        subscriber_count = await redis_client.publish(
+            _workflow_tool_progress_channel(organization_id),
+            _json_dumps(payload),
+        )
+        logger.debug(
+            "[update_tool_result] Published tool progress: conv=%s tool=%s status=%s subscribers=%s",
+            conversation_id[:8] if conversation_id else None,
+            tool_id[:8] if tool_id else None,
+            status,
+            subscriber_count,
+        )
+        return True
+    except Exception as exc:
+        logger.warning(
+            "[update_tool_result] Failed to publish tool progress via Redis: conv=%s tool=%s status=%s error=%s",
+            conversation_id[:8] if conversation_id else None,
+            tool_id[:8] if tool_id else None,
+            status,
+            exc,
+        )
+        return False
+    finally:
+        if redis_client is not None:
+            await redis_client.aclose()
 
 
 def _normalize_model_lookup_key(model: str) -> str:
@@ -239,7 +295,7 @@ async def update_tool_result(
     Update a tool call's result in an existing conversation message.
     
     This enables long-running tools (like foreach) to report progress
-    that the frontend can poll for and display.
+    that websocket API processes can push to clients via Redis pub/sub.
     
     Args:
         conversation_id: The conversation containing the tool call
@@ -308,16 +364,17 @@ async def update_tool_result(
             
             logger.info(f"[update_tool_result] SUCCESS: Updated tool {tool_id[:8]} with status={status}")
             
-            # Broadcast progress to connected websockets
+            # Publish progress from the process that actually updated the tool.
+            # Workflow tools often run inside Celery workers, so in-memory API
+            # websocket fanout is not shared with the executing process. Redis
+            # pub/sub lets API websocket processes push worker-originated deltas.
             if organization_id:
-                from api.websockets import broadcast_tool_progress
-                # Get tool name from the block
                 tool_name: str = "unknown"
                 for block in new_blocks:
                     if block.get("id") == tool_id:
                         tool_name = block.get("name", "unknown")
                         break
-                await broadcast_tool_progress(
+                await _publish_tool_progress_update(
                     organization_id=organization_id,
                     conversation_id=conversation_id,
                     tool_id=tool_id,

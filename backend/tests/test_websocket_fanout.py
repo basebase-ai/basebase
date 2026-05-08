@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from typing import Any
 
@@ -139,3 +140,84 @@ def test_task_manager_broadcast_snapshots_message_before_session_close(monkeypat
 
     asyncio.run(_run())
     assert captured_payloads == [{"id": "assistant-msg-1", "role": "assistant", "content_blocks": []}]
+
+
+def test_normalize_tool_progress_payload_accepts_valid_json() -> None:
+    payload = websockets._normalize_tool_progress_payload(  # noqa: SLF001
+        '{"type":"tool_progress","conversation_id":"conv-1","tool_id":"tool-1","tool_name":"foreach","result":{"completed":1},"status":"running"}'
+    )
+
+    assert payload == {
+        "type": "tool_progress",
+        "conversation_id": "conv-1",
+        "tool_id": "tool-1",
+        "tool_name": "foreach",
+        "result": {"completed": 1},
+        "status": "running",
+    }
+
+
+def test_normalize_tool_progress_payload_rejects_missing_ids() -> None:
+    payload = websockets._normalize_tool_progress_payload('{"tool_id":"tool-1"}')  # noqa: SLF001
+
+    assert payload is None
+
+
+def test_stream_workflow_tool_status_sends_worker_published_delta(monkeypatch: Any) -> None:
+    class _FakePubSub:
+        def __init__(self) -> None:
+            self.subscribed: list[str] = []
+            self.closed = False
+            self._messages = [
+                {
+                    "type": "message",
+                    "data": '{"conversation_id":"conv-1","tool_id":"tool-1","tool_name":"foreach","result":{"completed":2},"status":"running"}',
+                },
+            ]
+
+        async def subscribe(self, channel: str) -> None:
+            self.subscribed.append(channel)
+
+        async def get_message(self, **_kwargs: Any) -> dict[str, Any] | None:
+            if self._messages:
+                return self._messages.pop(0)
+            await asyncio.sleep(0)
+            raise asyncio.CancelledError()
+
+        async def unsubscribe(self, _channel: str) -> None:
+            return None
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class _FakeRedis:
+        def __init__(self) -> None:
+            self.pubsub_instance = _FakePubSub()
+            self.closed = False
+
+        def pubsub(self) -> _FakePubSub:
+            return self.pubsub_instance
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    fake_redis = _FakeRedis()
+    monkeypatch.setattr(websockets.aioredis, "from_url", lambda *_args, **_kwargs: fake_redis)
+
+    socket = _FakeSocket()
+
+    async def _run() -> None:
+        task = asyncio.create_task(
+            websockets._stream_workflow_tool_status(socket, "org-1")  # noqa: SLF001
+        )
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    asyncio.run(_run())
+
+    assert fake_redis.pubsub_instance.subscribed == ["workflow_tool_progress:org-1"]
+    assert socket.messages == [
+        '{"type": "tool_progress", "conversation_id": "conv-1", "tool_id": "tool-1", "tool_name": "foreach", "result": {"completed": 2}, "status": "running"}'
+    ]
+    assert fake_redis.pubsub_instance.closed is True
+    assert fake_redis.closed is True

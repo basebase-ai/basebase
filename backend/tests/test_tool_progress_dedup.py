@@ -1,20 +1,6 @@
 import asyncio
-import sys
-import types
 from types import SimpleNamespace
 from uuid import uuid4
-
-_fake_websockets = types.ModuleType("api.websockets")
-
-async def _noop_broadcast_sync_progress(**_kwargs: object) -> None:
-    return None
-
-async def _noop_broadcast_tool_progress(**_kwargs: object) -> None:
-    return None
-
-_fake_websockets.broadcast_sync_progress = _noop_broadcast_sync_progress
-_fake_websockets.broadcast_tool_progress = _noop_broadcast_tool_progress
-sys.modules.setdefault("api.websockets", _fake_websockets)
 
 from agents import orchestrator
 
@@ -65,10 +51,11 @@ def test_update_tool_result_skips_duplicate_progress_updates(monkeypatch) -> Non
         ]
     )
     fake_session = _FakeSession(message)
-    broadcasts: list[dict[str, object]] = []
+    published: list[dict[str, object]] = []
 
-    async def _fake_broadcast_tool_progress(**kwargs: object) -> None:
-        broadcasts.append(kwargs)
+    async def _fake_publish_tool_progress_update(**kwargs: object) -> bool:
+        published.append(kwargs)
+        return True
 
     monkeypatch.setattr(
         orchestrator,
@@ -76,9 +63,9 @@ def test_update_tool_result_skips_duplicate_progress_updates(monkeypatch) -> Non
         lambda **_kwargs: _FakeSessionContext(fake_session),
     )
     monkeypatch.setattr(
-        sys.modules["api.websockets"],
-        "broadcast_tool_progress",
-        _fake_broadcast_tool_progress,
+        orchestrator,
+        "_publish_tool_progress_update",
+        _fake_publish_tool_progress_update,
     )
 
     updated = asyncio.run(
@@ -93,7 +80,7 @@ def test_update_tool_result_skips_duplicate_progress_updates(monkeypatch) -> Non
 
     assert updated is False
     assert fake_session.commit_calls == 0
-    assert broadcasts == []
+    assert published == []
     assert message.content_blocks[0]["result"] == {"message": "Writing to Linear"}
 
 
@@ -113,10 +100,11 @@ def test_update_tool_result_allows_status_change_with_same_result(monkeypatch) -
         ]
     )
     fake_session = _FakeSession(message)
-    broadcasts: list[dict[str, object]] = []
+    published: list[dict[str, object]] = []
 
-    async def _fake_broadcast_tool_progress(**kwargs: object) -> None:
-        broadcasts.append(kwargs)
+    async def _fake_publish_tool_progress_update(**kwargs: object) -> bool:
+        published.append(kwargs)
+        return True
 
     monkeypatch.setattr(
         orchestrator,
@@ -124,9 +112,9 @@ def test_update_tool_result_allows_status_change_with_same_result(monkeypatch) -
         lambda **_kwargs: _FakeSessionContext(fake_session),
     )
     monkeypatch.setattr(
-        sys.modules["api.websockets"],
-        "broadcast_tool_progress",
-        _fake_broadcast_tool_progress,
+        orchestrator,
+        "_publish_tool_progress_update",
+        _fake_publish_tool_progress_update,
     )
 
     updated = asyncio.run(
@@ -142,7 +130,7 @@ def test_update_tool_result_allows_status_change_with_same_result(monkeypatch) -
     assert updated is True
     assert fake_session.commit_calls == 1
     assert message.content_blocks[0]["status"] == "complete"
-    assert broadcasts == [
+    assert published == [
         {
             "organization_id": organization_id,
             "conversation_id": conversation_id,
