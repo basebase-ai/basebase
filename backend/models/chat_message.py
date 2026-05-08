@@ -30,7 +30,7 @@ class ChatMessage(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     conversation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=True, index=True
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=True, index=True
     )
     # user_id is nullable for Slack conversations where we don't know the RevTops user
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(

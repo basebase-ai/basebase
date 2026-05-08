@@ -144,7 +144,11 @@ class Conversation(Base):
 
     # Relationships
     messages: Mapped[list["ChatMessage"]] = relationship(
-        "ChatMessage", back_populates="conversation", order_by="ChatMessage.created_at"
+        "ChatMessage",
+        back_populates="conversation",
+        order_by="ChatMessage.created_at",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     workflow: Mapped[Optional["Workflow"]] = relationship(
         "Workflow", back_populates="conversations"
@@ -153,7 +157,10 @@ class Conversation(Base):
         "ChangeSession", back_populates="conversation"
     )
     notifications: Mapped[list["Notification"]] = relationship(
-        "Notification", back_populates="conversation"
+        "Notification",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
     def to_dict(self) -> dict[str, Any]:

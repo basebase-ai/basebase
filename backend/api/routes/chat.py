@@ -29,7 +29,7 @@ import redis.asyncio as aioredis
 
 
 from pydantic import BaseModel
-from sqlalchemy import and_, column, or_, select
+from sqlalchemy import and_, column, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth_middleware import AuthContext, get_current_auth
@@ -1179,6 +1179,23 @@ async def delete_conversation(
 
         if not is_owner and not is_admin:
             raise HTTPException(status_code=403, detail="Only the conversation creator or an org admin can delete it")
+
+        # Delete messages explicitly before deleting the conversation. Without this,
+        # SQLAlchemy may try to NULL chat_messages.conversation_id during flush, but
+        # the chat_messages RLS WITH CHECK policy requires the row to remain linked
+        # to a visible conversation. Deleting children first avoids that invalid
+        # transitional update and leaves remaining dependent rows to their FK actions.
+        messages_result = await session.execute(
+            delete(ChatMessage).where(ChatMessage.conversation_id == conv_uuid)
+        )
+        deleted_messages = messages_result.rowcount or 0
+        logger.info(
+            "[chat] Deleting conversation %s for org=%s user=%s; deleted %d messages first",
+            conversation_id,
+            org_id,
+            auth.user_id,
+            deleted_messages,
+        )
 
         await session.delete(conversation)
         await session.commit()
