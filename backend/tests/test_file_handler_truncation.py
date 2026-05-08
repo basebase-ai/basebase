@@ -3,7 +3,7 @@ import sys
 import types
 import zipfile
 
-from services.file_handler import StoredFile, _pptx_to_text_block, _pptx_slide_sort_key, pdf_to_text_block
+from services.file_handler import StoredFile, _pptx_slide_sort_key, pdf_to_text_block, pptx_to_text_block
 
 
 def test_pdf_to_text_block_truncates_to_first_250k_chars(monkeypatch):
@@ -51,7 +51,7 @@ def test_pptx_to_text_block_uses_numeric_slide_order_and_250k_truncation():
         zf.writestr("ppt/slides/slide2.xml", "<s2>" + ("Z" * 260_000))
 
     sf = StoredFile("2", "deck.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", len(payload.getvalue()), payload.getvalue())
-    block = _pptx_to_text_block(sf)
+    block = pptx_to_text_block(sf)
     text = block["text"]
 
     assert text.index("<s1>") < text.index("<s2>")

@@ -245,11 +245,11 @@ def build_claude_content_blocks(
         elif mime == PDF_MIME:
             blocks.append(_pdf_block(sf))
         elif mime == XLSX_MIME or sf.filename.endswith(".xlsx"):
-            blocks.append(_xlsx_to_text_block(sf))
+            blocks.append(xlsx_to_text_block(sf))
         elif mime == DOCX_MIME or sf.filename.endswith(".docx"):
-            blocks.append(_docx_to_text_block(sf))
+            blocks.append(docx_to_text_block(sf))
         elif mime == PPTX_MIME or sf.filename.endswith(".pptx"):
-            blocks.append(_pptx_to_text_block(sf))
+            blocks.append(pptx_to_text_block(sf))
         elif _is_text_mime(mime) or sf.filename.endswith(".csv"):
             blocks.append(_text_file_block(sf))
         else:
@@ -339,7 +339,7 @@ def pdf_to_text_block(sf: StoredFile) -> dict[str, Any]:
     }
 
 
-def _xlsx_to_text_block(sf: StoredFile) -> dict[str, Any]:
+def xlsx_to_text_block(sf: StoredFile) -> dict[str, Any]:
     """Parse XLSX to CSV text using openpyxl."""
     try:
         import openpyxl
@@ -387,7 +387,7 @@ def _xlsx_to_text_block(sf: StoredFile) -> dict[str, Any]:
         }
 
 
-def _docx_to_text_block(sf: StoredFile) -> dict[str, Any]:
+def docx_to_text_block(sf: StoredFile) -> dict[str, Any]:
     """Extract the main document XML from a DOCX and send it raw — Claude groks XML natively."""
     import zipfile
 
@@ -412,7 +412,7 @@ def _docx_to_text_block(sf: StoredFile) -> dict[str, Any]:
         }
 
 
-def _pptx_to_text_block(sf: StoredFile) -> dict[str, Any]:
+def pptx_to_text_block(sf: StoredFile) -> dict[str, Any]:
     """Extract all slide XML from a PPTX and concatenate — same ZIP-of-XML approach as DOCX."""
     import zipfile
 
@@ -493,3 +493,9 @@ def _pptx_slide_sort_key(name: str) -> tuple[int, str]:
         return (int(numeric_part), name)
     except ValueError:
         return (10**9, name)
+
+
+# Back-compat with imports of previous private names
+_xlsx_to_text_block = xlsx_to_text_block
+_docx_to_text_block = docx_to_text_block
+_pptx_to_text_block = pptx_to_text_block

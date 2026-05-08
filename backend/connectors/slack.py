@@ -1398,22 +1398,40 @@ Returns normalized messages for one channel since a cutoff (does not write to th
         mime_type: str = str((file_data or {}).get("mimetype") or "application/octet-stream")
         size: int = len(raw_bytes)
 
-        content_text: str | None = None
-        if mime_type.startswith("text/") or filename.lower().endswith((".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".xml")):
-            content_text = raw_bytes.decode("utf-8", errors="replace")
-        elif mime_type == "application/pdf" or filename.lower().endswith(".pdf"):
-            from services.file_handler import StoredFile, pdf_to_text_block
+        from services.file_handler import (
+            DOCX_MIME,
+            PDF_MIME,
+            PPTX_MIME,
+            StoredFile,
+            XLSX_MIME,
+            docx_to_text_block,
+            pdf_to_text_block,
+            pptx_to_text_block,
+            xlsx_to_text_block,
+        )
 
-            block = pdf_to_text_block(
-                StoredFile(
-                    upload_id="slack_query_file",
-                    filename=filename,
-                    mime_type=mime_type,
-                    size=size,
-                    data=raw_bytes,
-                )
-            )
-            content_text = str(block.get("text") or "")
+        sf = StoredFile(
+            upload_id="slack_query_file",
+            filename=filename,
+            mime_type=mime_type,
+            size=size,
+            data=raw_bytes,
+        )
+
+        content_text: str | None = None
+        lower_name: str = filename.lower()
+        if mime_type.startswith("text/") or lower_name.endswith(
+            (".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".xml")
+        ):
+            content_text = raw_bytes.decode("utf-8", errors="replace")
+        elif mime_type == PDF_MIME or lower_name.endswith(".pdf"):
+            content_text = str(pdf_to_text_block(sf).get("text") or "")
+        elif mime_type == DOCX_MIME or lower_name.endswith(".docx"):
+            content_text = str(docx_to_text_block(sf).get("text") or "")
+        elif mime_type == PPTX_MIME or lower_name.endswith(".pptx"):
+            content_text = str(pptx_to_text_block(sf).get("text") or "")
+        elif mime_type == XLSX_MIME or lower_name.endswith(".xlsx"):
+            content_text = str(xlsx_to_text_block(sf).get("text") or "")
 
         if content_text is not None:
             max_chars = 200_000

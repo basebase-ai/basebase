@@ -1,4 +1,6 @@
 import asyncio
+import io
+import zipfile
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -189,6 +191,121 @@ def test_query_read_file_by_url_returns_base64_for_binary(monkeypatch) -> None:
     assert result["file"]["mime_type"] == "application/octet-stream"
     assert result["file"]["content_base64"] == "AQI="
     assert "Binary file returned as base64" in result["file"]["note"]
+
+
+def _minimal_docx_bytes() -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("word/document.xml", b"<hello/>")
+    return buf.getvalue()
+
+
+def test_query_read_file_docx_returns_extracted_text(monkeypatch) -> None:
+    connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
+    docx_bytes: bytes = _minimal_docx_bytes()
+
+    async def _fake_make_request(method: str, endpoint: str, **kwargs: object):
+        assert method == "GET"
+        assert endpoint == "files.info"
+        assert kwargs.get("params") == {"file": "F456"}
+        return {
+            "ok": True,
+            "file": {
+                "id": "F456",
+                "name": "whitepaper.docx",
+                "mimetype": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "url_private_download": "https://files.slack.com/files-pri/T/F456/download/whitepaper.docx",
+            },
+        }
+
+    async def _fake_download_file(url_private: str) -> bytes:
+        assert "F456" in url_private
+        return docx_bytes
+
+    monkeypatch.setattr(connector, "_make_request", _fake_make_request)
+    monkeypatch.setattr(connector, "download_file", _fake_download_file)
+
+    result = asyncio.run(connector.query("read_file:F456"))
+    assert result["ok"] is True
+    assert result["file"]["filename"] == "whitepaper.docx"
+    assert "<hello/>" in result["file"]["content"]
+    assert "Word XML" in result["file"]["content"]
+    assert "content_base64" not in result["file"]
+
+
+def _minimal_pptx_bytes() -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("ppt/slides/slide1.xml", b"<slide_one/>")
+    return buf.getvalue()
+
+
+def test_query_read_file_pptx_returns_extracted_text(monkeypatch) -> None:
+    connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
+    pptx_bytes: bytes = _minimal_pptx_bytes()
+
+    async def _fake_make_request(method: str, endpoint: str, **kwargs: object):
+        return {
+            "ok": True,
+            "file": {
+                "id": "F789",
+                "name": "deck.pptx",
+                "mimetype": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                "url_private_download": "https://files.slack.com/files-pri/T/F789/download/deck.pptx",
+            },
+        }
+
+    async def _fake_download_file(url_private: str) -> bytes:
+        return pptx_bytes
+
+    monkeypatch.setattr(connector, "_make_request", _fake_make_request)
+    monkeypatch.setattr(connector, "download_file", _fake_download_file)
+
+    result = asyncio.run(connector.query("read_file:F789"))
+    assert result["ok"] is True
+    assert result["file"]["filename"] == "deck.pptx"
+    assert "<slide_one/>" in result["file"]["content"]
+    assert "content_base64" not in result["file"]
+
+
+def _minimal_xlsx_bytes() -> bytes:
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws["A1"] = "cell_a1"
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+def test_query_read_file_xlsx_returns_extracted_text(monkeypatch) -> None:
+    connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
+    xlsx_bytes: bytes = _minimal_xlsx_bytes()
+
+    async def _fake_make_request(method: str, endpoint: str, **kwargs: object):
+        return {
+            "ok": True,
+            "file": {
+                "id": "F321",
+                "name": "sheet.xlsx",
+                "mimetype": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "url_private_download": "https://files.slack.com/files-pri/T/F321/download/sheet.xlsx",
+            },
+        }
+
+    async def _fake_download_file(url_private: str) -> bytes:
+        return xlsx_bytes
+
+    monkeypatch.setattr(connector, "_make_request", _fake_make_request)
+    monkeypatch.setattr(connector, "download_file", _fake_download_file)
+
+    result = asyncio.run(connector.query("read_file:F321"))
+    assert result["ok"] is True
+    assert result["file"]["filename"] == "sheet.xlsx"
+    assert "cell_a1" in result["file"]["content"]
+    assert "content_base64" not in result["file"]
 
 
 def test_query_read_file_rejects_non_slack_url(monkeypatch) -> None:
