@@ -43,8 +43,8 @@ interface SandpackAppRendererProps {
   /** Use unauthenticated /api/public/apps/:id and query routes (no Bearer token). */
   publicMode?: boolean;
   onError?: (message: string) => void;
-  /** If true, skip screenshot capture (screenshot already exists). */
-  hasScreenshot?: boolean;
+  /** If false, skip saving a latest snapshot after the app renders. */
+  captureSnapshot?: boolean;
 }
 
 // ---- helpers --------------------------------------------------------------
@@ -349,7 +349,7 @@ export function SandpackAppRenderer({
   embedToken,
   publicMode = false,
   onError,
-  hasScreenshot,
+  captureSnapshot = true,
 }: SandpackAppRendererProps): JSX.Element {
   const [tokenData, setTokenData] = useState<AppTokenData | null>(null);
   const [appCode, setAppCode] = useState<string | null>(initialCode ?? null);
@@ -614,9 +614,11 @@ export function SandpackAppRenderer({
     void fetchToken();
   }, [fetchToken, tokenRetry]);
 
-  // Screenshot capture: after iframe loads and data settles, capture via html2canvas
+  // Snapshot capture: after iframe loads and data settles, save the latest rendered view.
+  // This runs on opened/full app surfaces (not list cards), so galleries can display
+  // the last opened/created snapshot without re-rendering app code in list views.
   useEffect(() => {
-    if (hasScreenshot || screenshotCapturedRef.current || embedToken || publicMode) return;
+    if (!captureSnapshot || screenshotCapturedRef.current || embedToken || publicMode) return;
     if (!iframeRef.current || !tokenData || !appCode) return;
 
     // Try capture at 3s, retry at 6s if first attempt skipped (still loading)
@@ -684,7 +686,7 @@ export function SandpackAppRenderer({
 
     const timer = setTimeout(tryCapture, 3000);
     return () => clearTimeout(timer);
-  }, [appId, tokenData, appCode, hasScreenshot, embedToken, publicMode]);
+  }, [appId, tokenData, appCode, captureSnapshot, embedToken, publicMode]);
 
   if (error) {
     return (

@@ -1002,11 +1002,20 @@ async def save_screenshot(
             raise HTTPException(status_code=404, detail="App not found")
 
         config = dict(app.widget_config) if app.widget_config else {}
+        captured_at = datetime.utcnow().isoformat() + "Z"
         config["screenshot"] = body.screenshot
+        config["screenshot_captured_at"] = captured_at
         app.widget_config = config
+        logger.info(
+            "Saved latest app snapshot app_id=%s organization_id=%s captured_at=%s bytes=%d",
+            app_id,
+            auth.organization_id_str,
+            captured_at,
+            len(body.screenshot),
+        )
         await session.commit()
 
-    return {"status": "ok"}
+    return {"status": "ok", "screenshot_captured_at": captured_at}
 
 
 # ---------------------------------------------------------------------------
