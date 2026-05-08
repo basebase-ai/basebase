@@ -1469,7 +1469,12 @@ Use `write_on_connector(connector='linear', operation='...', data={...})` with `
     # ── LISTEN: Inbound webhooks (issue done → workflow triggers) ───────
 
     @staticmethod
-    def verify_webhook(raw_body: bytes, headers: dict[str, str], secret: str) -> bool:
+    def verify_webhook(
+        raw_body: bytes,
+        headers: dict[str, str],
+        secret: str,
+        **_: Any,
+    ) -> bool:
         """Verify Linear webhook HMAC-SHA256 signature (Linear-Signature header)."""
         signature_header: str | None = headers.get("linear-signature") or headers.get("Linear-Signature")
         if not signature_header or not secret:

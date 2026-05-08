@@ -26,6 +26,10 @@ _TOKEN_CACHE_TTL_SECONDS: int = 300
 logger = logging.getLogger(__name__)
 
 
+def _str_present(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
 def _token_cache_key(integration_id: str, connection_id: str) -> tuple[str, str]:
     return (integration_id, connection_id)
 
@@ -236,8 +240,15 @@ class NangoClient:
             token = credentials["apiKey"]
         elif "token" in credentials:
             token = credentials["token"]
+        elif "oauth_token" in credentials:
+            # OAuth 1.0a (e.g. Trello via Nango): user token for upstream API
+            token = credentials["oauth_token"]
         else:
-            print(f"[Nango] Full credentials object: {credentials}")
+            cred_keys: list[str] = sorted(credentials.keys())
+            print(
+                f"[Nango] No token field matched for {integration_id}:{connection_id}; "
+                f"credential_keys={cred_keys}"
+            )
             raise ValueError(f"No token found for {integration_id}:{connection_id}")
 
         async with self._ensure_token_cache_lock():
@@ -260,7 +271,17 @@ class NangoClient:
             Full credentials dict (may include access_token, refresh_token, etc.)
         """
         connection = await self.get_connection(integration_id, connection_id)
-        return connection.get("credentials", {})
+        merged: dict[str, Any] = dict(connection.get("credentials") or {})
+        # OAuth1 (e.g. Trello): per-connection payload has user tokens only; some installs expose
+        # the app consumer key on connection_config instead of inside credentials.
+        cc = connection.get("connection_config")
+        if isinstance(cc, dict) and not _str_present(merged.get("oauth_client_id")):
+            for src_key in ("oauth_client_id", "client_id", "consumer_key", "api_key"):
+                val = cc.get(src_key)
+                if _str_present(val):
+                    merged["oauth_client_id"] = str(val).strip()
+                    break
+        return merged
 
     async def list_connections(
         self,

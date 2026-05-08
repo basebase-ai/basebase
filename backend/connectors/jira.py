@@ -769,7 +769,12 @@ class JiraConnector(BaseConnector):
     # ── LISTEN: Inbound webhooks ─────────────────────────────────────────
 
     @staticmethod
-    def verify_webhook(raw_body: bytes, headers: dict[str, str], secret: str) -> bool:
+    def verify_webhook(
+        raw_body: bytes,
+        headers: dict[str, str],
+        secret: str,
+        **_: Any,
+    ) -> bool:
         """Verify Jira webhook signature (X-Hub-Signature header)."""
         signature_header: str | None = (
             headers.get("x-hub-signature") or headers.get("X-Hub-Signature")

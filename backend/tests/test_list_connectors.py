@@ -29,7 +29,7 @@ def test_builtin_with_auth_fields_classified_as_custom_credentials() -> None:
 
 def test_oauth_connectors_classified_as_oauth() -> None:
     by_slug = {c["slug"]: c for c in _list()}
-    for slug in ("slack", "salesforce", "hubspot", "github", "attio"):
+    for slug in ("slack", "salesforce", "hubspot", "github", "attio", "trello"):
         if slug in by_slug:
             assert by_slug[slug]["connection_flow"] == "oauth", (
                 f"{slug} should be classified as oauth"
