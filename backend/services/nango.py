@@ -244,7 +244,11 @@ class NangoClient:
             # OAuth 1.0a (e.g. Trello via Nango): user token for upstream API
             token = credentials["oauth_token"]
         else:
-            print(f"[Nango] Full credentials object: {credentials}")
+            cred_keys: list[str] = sorted(credentials.keys())
+            print(
+                f"[Nango] No token field matched for {integration_id}:{connection_id}; "
+                f"credential_keys={cred_keys}"
+            )
             raise ValueError(f"No token found for {integration_id}:{connection_id}")
 
         async with self._ensure_token_cache_lock():

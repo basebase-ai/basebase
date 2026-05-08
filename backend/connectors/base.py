@@ -586,7 +586,10 @@ class BaseConnector(ABC):
         print(f"[Connector] Getting token from Nango for {self.source_system}, connection_id={connection_id}")
         try:
             self._token = await nango.get_token(nango_integration_id, connection_id)
-            print(f"[Connector] Got token for {self.source_system}: {self._token[:20]}...")
+            print(
+                f"[Connector] Retrieved token from Nango for provider={self.source_system} "
+                f"connection_id={connection_id}"
+            )
             return self._token, ""
         except Exception as e:
             print(f"[Connector] Failed to get token: {e}")
