@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -10,6 +11,25 @@ from api.main import app
 from api.routes import auth
 
 client = TestClient(app)
+
+
+class _ScalarResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+
+class _FakeSessionContext:
+    def __init__(self, session):
+        self._session = session
+
+    async def __aenter__(self):
+        return self._session
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
 
 
 def test_update_organization_rejects_unauthenticated_user_id_query() -> None:
@@ -134,3 +154,67 @@ def test_update_organization_member_rejects_unauthenticated_user_id_query() -> N
     )
 
     assert response.status_code == 401
+
+
+def test_update_organization_member_allows_org_admin_to_edit_other_org_user(
+    monkeypatch,
+) -> None:
+    """Org admins must be able to administer another user's org-scoped profile."""
+    org_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    admin_user_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    target_user_id = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+
+    admin_user = SimpleNamespace(id=admin_user_id, role="member", roles=[])
+    target_membership = SimpleNamespace(
+        id=UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+        user_id=target_user_id,
+        organization_id=org_id,
+        status="active",
+        role="member",
+        title=None,
+        reports_to_membership_id=None,
+    )
+
+    class FakeSession:
+        committed = False
+
+        async def get(self, model, model_id):
+            if model is auth.User and model_id == admin_user_id:
+                return admin_user
+            return None
+
+        async def execute(self, _query):
+            return _ScalarResult(target_membership)
+
+        async def commit(self):
+            self.committed = True
+
+    fake_session = FakeSession()
+
+    async def allow_admin(_session, user, checked_org_id):
+        assert _session is fake_session
+        assert user is admin_user
+        assert checked_org_id == org_id
+        return True
+
+    monkeypatch.setattr(
+        auth, "get_admin_session", lambda: _FakeSessionContext(fake_session)
+    )
+    monkeypatch.setattr(auth, "_can_administer_org", allow_admin)
+
+    response = asyncio.run(
+        auth.update_organization_member(
+            org_id=str(org_id),
+            target_user_id=str(target_user_id),
+            request=auth.UpdateMemberRequest(title="VP Sales"),
+            auth=SimpleNamespace(user_id=admin_user_id),
+        )
+    )
+
+    assert response == {
+        "status": "updated",
+        "title": "VP Sales",
+        "reports_to_membership_id": None,
+    }
+    assert target_membership.title == "VP Sales"
+    assert fake_session.committed is True
