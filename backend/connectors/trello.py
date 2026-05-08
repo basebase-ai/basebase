@@ -187,6 +187,8 @@ class TrelloConnector(BaseConnector):
         api_key: str | None = (
             _str_or_none(creds.get("oauth_client_id"))
             or _str_or_none(raw.get("oauth_client_id"))
+            or _str_or_none(raw.get("oauth_consumer_key"))
+            or _str_or_none(raw.get("consumer_key"))
             or _str_or_none(creds.get("client_id"))
             or _str_or_none(creds.get("api_key"))
         )
@@ -196,9 +198,11 @@ class TrelloConnector(BaseConnector):
         if not api_key:
             api_key = _str_or_none(extra.get("trello_api_key"))
         if not api_key:
+            api_key = _str_or_none(settings.TRELLO_API_KEY)
+        if not api_key:
             raise ValueError(
-                "Missing Trello API key. Add oauth_client_id from Nango or "
-                "integration.extra_data['trello_api_key'] (Power-Up key)."
+                "Missing Trello API key. Set TRELLO_API_KEY in the backend env (same Power-Up / "
+                "OAuth client id as in Nango), or put it in integration.extra_data['trello_api_key']."
             )
         return {"key": api_key, "token": token}
 

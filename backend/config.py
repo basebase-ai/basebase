@@ -112,6 +112,9 @@ class Settings(BaseSettings):
     NANGO_GRANOLA_INTEGRATION_ID: str = "granola-mcp"
     NANGO_ATTIO_INTEGRATION_ID: str = "attio"
     NANGO_TRELLO_INTEGRATION_ID: str = "trello"
+    # Trello REST uses ?key=&token=; token comes from Nango; key is the Power-Up OAuth app key
+    # (same client id as in your Nango Trello integration). Nango OAuth1 responses omit this.
+    TRELLO_API_KEY: Optional[str] = None
 
     # App
     SECRET_KEY: str = "dev-secret-change-in-production"

@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -83,3 +84,27 @@ def test_verify_webhook_rejects_bad_signature() -> None:
 @pytest.mark.asyncio
 async def test_process_webhook_ignores_non_action_payload() -> None:
     assert TrelloConnector.process_webhook_payload({}) == []
+
+
+@pytest.mark.asyncio
+async def test_auth_params_uses_trello_api_key_from_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from config import settings
+
+    monkeypatch.setattr(settings, "TRELLO_API_KEY", "powerup-key-from-env")
+    conn = TrelloConnector(
+        "00000000-0000-0000-0000-000000000001",
+        "00000000-0000-0000-0000-000000000002",
+    )
+    conn.get_oauth_token = AsyncMock(return_value=("user-oauth-token", ""))
+    conn.get_credentials = AsyncMock(
+        return_value={
+            "type": "OAUTH1",
+            "oauth_token": "x",
+            "oauth_token_secret": "y",
+            "raw": {},
+        }
+    )
+    params: dict[str, str] = await conn._auth_params()
+    assert params == {"key": "powerup-key-from-env", "token": "user-oauth-token"}
