@@ -301,9 +301,7 @@ async def broadcast_conversation_message(
 from models.conversation import Conversation
 from models.database import get_session
 from models.user import User
-from models.chat_message import ChatMessage
-from models.workflow import WorkflowRun
-from sqlalchemy import and_, select
+from sqlalchemy import select
 
 
 def _generate_title(message: str) -> str:
@@ -335,123 +333,139 @@ def _warn_org_required_rejection(
     )
 
 
-async def _collect_running_workflow_tool_updates(organization_id: str) -> list[dict]:
-    """
-    Collect running workflow tool states from persisted chat messages.
+WORKFLOW_TOOL_PROGRESS_PUBSUB_POLL_SECONDS: float = 1.5
+WORKFLOW_TOOL_PROGRESS_SANITY_TIMEOUT_SECONDS: float = 60.0
 
-    This is used to keep clients in sync when tool execution happens inside
-    Celery workers (separate process) where in-memory websocket broadcasters
-    are not shared with the API process.
-    """
-    from models.conversation import Conversation
 
-    updates: list[dict] = []
-    logger.debug("[WebSocket] Collecting running workflow tool updates for org %s", organization_id)
-    async with get_session(organization_id=organization_id) as session:
-        run_rows = await session.execute(
-            select(WorkflowRun.output)
-            .where(
-                and_(
-                    WorkflowRun.organization_id == UUID(organization_id),
-                    WorkflowRun.status == "running",
-                )
+async def _subscribe_workflow_tool_progress(websocket: WebSocket, organization_id: str) -> None:
+    """Subscribe this websocket to Redis-published workflow tool progress."""
+    from services.tool_progress_pubsub import (
+        TOOL_PROGRESS_TERMINAL_STATUSES,
+        build_tool_progress_event,
+        get_tool_progress_redis,
+        tool_progress_channel,
+    )
+
+    channel: str = tool_progress_channel(organization_id)
+    redis = await get_tool_progress_redis()
+    pubsub = redis.pubsub()
+    active_tools: dict[str, dict[str, object]] = {}
+    last_worker_message_at: float | None = None
+
+    logger.info(
+        "[WebSocket] Subscribing to workflow tool progress channel=%s org=%s",
+        channel,
+        organization_id,
+    )
+    try:
+        await pubsub.subscribe(channel)
+        while True:
+            message = await pubsub.get_message(
+                ignore_subscribe_messages=True,
+                timeout=WORKFLOW_TOOL_PROGRESS_PUBSUB_POLL_SECONDS,
             )
-        )
+            now = asyncio.get_running_loop().time()
 
-        conversation_ids: list[UUID] = []
-        for output in run_rows.scalars().all():
-            if not isinstance(output, dict):
+            if message is None:
+                if (
+                    active_tools
+                    and last_worker_message_at is not None
+                    and now - last_worker_message_at >= WORKFLOW_TOOL_PROGRESS_SANITY_TIMEOUT_SECONDS
+                ):
+                    logger.error(
+                        "[WebSocket] Tool progress worker silence timeout after %.0fs org=%s active_tools=%s",
+                        WORKFLOW_TOOL_PROGRESS_SANITY_TIMEOUT_SECONDS,
+                        organization_id,
+                        list(active_tools),
+                    )
+                    timed_out_tools = list(active_tools.values())
+                    active_tools.clear()
+                    for timed_out in timed_out_tools:
+                        timeout_event = build_tool_progress_event(
+                            conversation_id=str(timed_out.get("conversation_id", "")),
+                            tool_id=str(timed_out.get("tool_id", "")),
+                            tool_name=str(timed_out.get("tool_name", "unknown")),
+                            result={
+                                "error": "Tool progress timed out while waiting for worker updates.",
+                                "message": "Tool progress timed out while waiting for worker updates.",
+                            },
+                            status="complete",
+                        )
+                        sent = await _send_with_timeout(
+                            websocket, json.dumps(timeout_event, default=str)
+                        )
+                        if not sent:
+                            logger.debug(
+                                "[WebSocket] Closing tool progress subscription after timeout send failure org=%s",
+                                organization_id,
+                            )
+                            return
+                    last_worker_message_at = None
                 continue
-            conv_id = output.get("conversation_id")
-            if not conv_id:
+
+            raw_data = message.get("data")
+            if not raw_data:
                 continue
             try:
-                conversation_ids.append(UUID(str(conv_id)))
-            except ValueError:
+                event = json.loads(
+                    raw_data if isinstance(raw_data, str) else raw_data.decode("utf-8")
+                )
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                logger.warning(
+                    "[WebSocket] Ignoring invalid tool progress pub/sub payload channel=%s: %s",
+                    channel,
+                    exc,
+                )
                 continue
 
-        if not conversation_ids:
-            logger.debug("[WebSocket] No running workflow conversations found for org %s", organization_id)
-            return updates
+            if not isinstance(event, dict) or event.get("type") != "tool_progress":
+                logger.debug("[WebSocket] Ignoring unexpected tool progress event: %s", event)
+                continue
 
-        message_rows = await session.execute(
-            select(ChatMessage)
-            .join(Conversation, ChatMessage.conversation_id == Conversation.id)
-            .where(
-                and_(
-                    Conversation.id.in_(conversation_ids),
-                    Conversation.type == "workflow",
-                    ChatMessage.role == "assistant",
-                    ChatMessage.content_blocks.isnot(None),
-                )
-            )
-            .order_by(ChatMessage.created_at.desc())
-        )
+            key = f"{event.get('conversation_id')}:{event.get('tool_id')}"
+            status = str(event.get("status") or "running")
+            if status in TOOL_PROGRESS_TERMINAL_STATUSES:
+                active_tools.pop(key, None)
+            else:
+                active_tools[key] = event
+            last_worker_message_at = now
 
-        for message in message_rows.scalars().all():
-            for block in message.content_blocks or []:
-                if block.get("type") != "tool_use":
-                    continue
-                status = block.get("status")
-                if status not in {"running", "streaming", "pending"}:
-                    continue
-                updates.append(
-                    {
-                        "conversation_id": str(message.conversation_id),
-                        "tool_id": str(block.get("id", "")),
-                        "tool_name": str(block.get("name", "unknown")),
-                        "result": block.get("result") if isinstance(block.get("result"), dict) else {},
-                        "status": "running",
-                    }
-                )
-
-    return updates
-
-
-async def _stream_workflow_tool_status(websocket: WebSocket, organization_id: str) -> None:
-    """Poll persisted workflow tool states and push deltas to this websocket."""
-    last_sent: dict[str, str] = {}
-    consecutive_errors: int = 0
-    BASE_INTERVAL: float = 1.5
-    MAX_BACKOFF: float = 30.0
-    logger.info("[WebSocket] Starting workflow tool status stream for org %s", organization_id)
-    while True:
-        try:
-            updates = await _collect_running_workflow_tool_updates(organization_id)
-            consecutive_errors = 0
-            for update in updates:
-                key: str = f"{update['conversation_id']}:{update['tool_id']}"
-                signature: str = json.dumps(update.get("result") or {}, sort_keys=True, default=str)
-                signature = f"{update.get('status')}::{signature}"
-                if last_sent.get(key) == signature:
-                    continue
-                await websocket.send_text(
-                    json.dumps(
-                        {
-                            "type": "tool_progress",
-                            **update,
-                        }
-                    )
-                )
+            sent = await _send_with_timeout(websocket, json.dumps(event, default=str))
+            if not sent:
                 logger.debug(
-                    "[WebSocket] Sent workflow tool status: conv=%s tool=%s",
-                    update["conversation_id"],
-                    update["tool_id"],
+                    "[WebSocket] Closing tool progress subscription after send failure org=%s",
+                    organization_id,
                 )
-                last_sent[key] = signature
-        except Exception as exc:
-            consecutive_errors += 1
-            if consecutive_errors <= 3:
-                logger.warning("[WebSocket] Workflow status stream error: %s", exc)
-            elif consecutive_errors == 4:
-                logger.warning(
-                    "[WebSocket] Workflow status stream error (suppressing further): %s", exc
-                )
-        sleep_time: float = min(
-            BASE_INTERVAL * (2 ** consecutive_errors) if consecutive_errors > 0 else BASE_INTERVAL,
-            MAX_BACKOFF,
+                return
+            logger.debug(
+                "[WebSocket] Forwarded tool progress from Redis: conv=%s tool=%s status=%s",
+                event.get("conversation_id"),
+                event.get("tool_id"),
+                status,
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "[WebSocket] Tool progress subscription failed for org %s: %s",
+            organization_id,
+            exc,
         )
-        await asyncio.sleep(sleep_time)
+    finally:
+        try:
+            await pubsub.unsubscribe(channel)
+            await pubsub.close()
+        except Exception as exc:
+            logger.debug(
+                "[WebSocket] Error closing tool progress pub/sub channel=%s: %s",
+                channel,
+                exc,
+            )
+        logger.info(
+            "[WebSocket] Stopped workflow tool progress subscription channel=%s org=%s",
+            channel,
+            organization_id,
+        )
 
 
 async def _execute_tool_approval(
@@ -635,7 +649,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         if organization_id:
             sync_broadcaster.register(organization_id, websocket)
             workflow_status_task = asyncio.create_task(
-                _stream_workflow_tool_status(websocket, organization_id)
+                _subscribe_workflow_tool_progress(websocket, organization_id)
             )
         
         # Register for conversation message broadcasts (multi-user support)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from typing import Any
 
@@ -139,3 +140,136 @@ def test_task_manager_broadcast_snapshots_message_before_session_close(monkeypat
 
     asyncio.run(_run())
     assert captured_payloads == [{"id": "assistant-msg-1", "role": "assistant", "content_blocks": []}]
+
+
+def test_workflow_tool_progress_subscription_forwards_redis_events(monkeypatch: Any) -> None:
+    socket = _FakeSocket()
+    event = {
+        "type": "tool_progress",
+        "conversation_id": "conv-1",
+        "tool_id": "tool-1",
+        "tool_name": "query_on_connector",
+        "result": {"message": "Still working"},
+        "status": "running",
+    }
+
+    class _FakePubSub:
+        def __init__(self) -> None:
+            self.sent = False
+            self.subscribed: list[str] = []
+
+        async def subscribe(self, channel: str) -> None:
+            self.subscribed.append(channel)
+
+        async def get_message(self, **_kwargs: Any) -> dict[str, Any] | None:
+            if not self.sent:
+                self.sent = True
+                return {"data": json.dumps(event)}
+            await asyncio.sleep(10)
+            return None
+
+        async def unsubscribe(self, _channel: str) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeRedis:
+        def __init__(self) -> None:
+            self.pubsub_instance = _FakePubSub()
+
+        def pubsub(self) -> _FakePubSub:
+            return self.pubsub_instance
+
+    fake_redis = _FakeRedis()
+
+    async def _fake_get_tool_progress_redis() -> _FakeRedis:
+        return fake_redis
+
+    monkeypatch.setattr(
+        __import__("services.tool_progress_pubsub", fromlist=["get_tool_progress_redis"]),
+        "get_tool_progress_redis",
+        _fake_get_tool_progress_redis,
+    )
+
+    async def _run() -> None:
+        task = asyncio.create_task(
+            websockets._subscribe_workflow_tool_progress(socket, "org-1")  # noqa: SLF001
+        )
+        while not socket.messages:
+            await asyncio.sleep(0.001)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_run())
+    assert fake_redis.pubsub_instance.subscribed == ["tool_progress:org-1"]
+    assert json.loads(socket.messages[0]) == event
+
+
+def test_workflow_tool_progress_subscription_times_out_silent_worker(monkeypatch: Any) -> None:
+    socket = _FakeSocket()
+    running_event = {
+        "type": "tool_progress",
+        "conversation_id": "conv-timeout",
+        "tool_id": "tool-timeout",
+        "tool_name": "foreach",
+        "result": {"message": "Still working"},
+        "status": "running",
+    }
+
+    class _FakePubSub:
+        def __init__(self) -> None:
+            self.sent_running = False
+
+        async def subscribe(self, _channel: str) -> None:
+            return None
+
+        async def get_message(self, **_kwargs: Any) -> dict[str, Any] | None:
+            if not self.sent_running:
+                self.sent_running = True
+                return {"data": json.dumps(running_event)}
+            await asyncio.sleep(0.002)
+            return None
+
+        async def unsubscribe(self, _channel: str) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeRedis:
+        def pubsub(self) -> _FakePubSub:
+            return _FakePubSub()
+
+    async def _fake_get_tool_progress_redis() -> _FakeRedis:
+        return _FakeRedis()
+
+    monkeypatch.setattr(websockets, "WORKFLOW_TOOL_PROGRESS_SANITY_TIMEOUT_SECONDS", 0.005)
+    monkeypatch.setattr(websockets, "WORKFLOW_TOOL_PROGRESS_PUBSUB_POLL_SECONDS", 0.001)
+    monkeypatch.setattr(
+        __import__("services.tool_progress_pubsub", fromlist=["get_tool_progress_redis"]),
+        "get_tool_progress_redis",
+        _fake_get_tool_progress_redis,
+    )
+
+    async def _run() -> None:
+        task = asyncio.create_task(
+            websockets._subscribe_workflow_tool_progress(socket, "org-1")  # noqa: SLF001
+        )
+        while len(socket.messages) < 2:
+            await asyncio.sleep(0.001)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_run())
+    timeout_event = json.loads(socket.messages[1])
+    assert timeout_event["conversation_id"] == "conv-timeout"
+    assert timeout_event["tool_id"] == "tool-timeout"
+    assert timeout_event["status"] == "complete"
+    assert "timed out" in timeout_event["result"]["error"]

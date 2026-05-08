@@ -307,26 +307,28 @@ async def update_tool_result(
             await session.commit()
             
             logger.info(f"[update_tool_result] SUCCESS: Updated tool {tool_id[:8]} with status={status}")
-            
-            # Broadcast progress to connected websockets
-            if organization_id:
-                from api.websockets import broadcast_tool_progress
-                # Get tool name from the block
-                tool_name: str = "unknown"
-                for block in new_blocks:
-                    if block.get("id") == tool_id:
-                        tool_name = block.get("name", "unknown")
-                        break
-                await broadcast_tool_progress(
-                    organization_id=organization_id,
-                    conversation_id=conversation_id,
-                    tool_id=tool_id,
-                    tool_name=tool_name,
-                    result=result,
-                    status=status,
-                )
-            
-            return True
+
+            tool_name: str = "unknown"
+            for block in new_blocks:
+                if block.get("id") == tool_id:
+                    tool_name = block.get("name", "unknown")
+                    break
+
+        # Publish progress after the DB transaction scope is closed. Redis
+        # pub/sub is best-effort and should never hold database resources.
+        if organization_id:
+            from services.tool_progress_pubsub import publish_tool_progress
+
+            await publish_tool_progress(
+                organization_id=organization_id,
+                conversation_id=conversation_id,
+                tool_id=tool_id,
+                tool_name=tool_name,
+                result=result,
+                status=status,
+            )
+
+        return True
             
     except Exception as e:
         logger.error(f"[update_tool_result] Error: {e}")
