@@ -749,7 +749,7 @@ function ChatAccordion({
       remaining -= selected.length;
       return selected;
     };
-    const limitedPinned = take(pinned.sort(byNewest));
+    const limitedPinned = pinned.sort(byNewest);
     const limitedDirect = take(direct.sort(byNewest));
     const limitedChannels = channelSections
       .map((section) => ({ ...section, chats: take(section.chats) }))
