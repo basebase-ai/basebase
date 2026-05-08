@@ -779,8 +779,17 @@ class BaseConnector(ABC):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def verify_webhook(raw_body: bytes, headers: dict[str, str], secret: str) -> bool:
-        """Verify webhook signature. Override in connectors that support LISTEN with webhooks."""
+    def verify_webhook(
+        raw_body: bytes,
+        headers: dict[str, str],
+        secret: str,
+        **kwargs: Any,
+    ) -> bool:
+        """Verify webhook signature. Override in connectors that support LISTEN with webhooks.
+
+        Optional kwargs (e.g. ``request_url``) are passed from the HTTP layer for providers
+        that sign body + callback URL (e.g. Trello).
+        """
         raise NotImplementedError("Webhook verification not implemented")
 
     @staticmethod

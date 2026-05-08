@@ -15,6 +15,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
+from starlette.responses import Response
 from sqlalchemy import select
 
 from config import BUILTIN_CONNECTORS, get_provider_sharing_defaults
@@ -151,7 +152,10 @@ async def handle_connector_webhook(
             detail=f"Webhook secret not configured. Set extra_data.{meta.webhook_secret_extra_data_key}.",
         )
 
-    if not connector_cls.verify_webhook(raw_body, headers_dict, secret):
+    request_url: str = str(request.url)
+    if not connector_cls.verify_webhook(
+        raw_body, headers_dict, secret, request_url=request_url
+    ):
         logger.warning("[connectors] Invalid webhook signature for %s org %s", provider, organization_id)
         raise HTTPException(status_code=401, detail="Invalid signature")
 
@@ -176,3 +180,29 @@ async def handle_connector_webhook(
         )
 
     return {"ok": "true"}
+
+
+@router.head("/webhook/{provider}/{organization_id}", response_model=None)
+async def handle_connector_webhook_head(
+    provider: str, organization_id: str
+) -> Response:
+    """
+    Trello (and others) send HTTP HEAD to verify the callback URL when creating a webhook.
+    Return 200 when the connector supports LISTEN webhooks for this path.
+    """
+    try:
+        UUID(organization_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid organization_id")
+
+    registry: dict[str, type[Any]] = discover_connectors()
+    connector_cls: type[Any] | None = registry.get(provider)
+    if not connector_cls or not hasattr(connector_cls, "meta"):
+        raise HTTPException(status_code=404, detail="Connector not found")
+    meta = connector_cls.meta
+    if Capability.LISTEN not in meta.capabilities or not meta.webhook_secret_extra_data_key:
+        raise HTTPException(
+            status_code=404,
+            detail="Connector does not accept webhooks",
+        )
+    return Response(status_code=200)

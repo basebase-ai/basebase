@@ -45,6 +45,22 @@ const ApolloIcon: IconType = ({ className, ...props }) => (
   </svg>
 );
 
+/** Trello brand mark (canonical board logo; fill matches official blue on light UI). */
+const TrelloIcon: IconType = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    xmlns="http://www.w3.org/2000/svg"
+    aria-hidden
+    className={className}
+    {...props}
+  >
+    <path
+      fill="currentColor"
+      d="M21.147 0H2.853A2.853 2.853 0 0 0 0 2.853v18.294A2.853 2.853 0 0 0 2.853 24h18.294A2.853 2.853 0 0 0 24 21.147V2.853A2.853 2.853 0 0 0 21.147 0ZM10.707 19.207c0 .643-.523 1.167-1.167 1.167H5.565c-.643 0-1.167-.523-1.167-1.167V6.565c0-.643.523-1.167 1.167-1.167h4.075c.643 0 1.167.523 1.167 1.167v12.642Zm10.028-10.68c0 .643-.523 1.167-1.167 1.167h-4.075c-.643 0-1.167-.523-1.167-1.167V6.565c0-.643.523-1.167 1.167-1.167h4.075c.643 0 1.167.523 1.167 1.167v2.063Z"
+    />
+  </svg>
+);
+
 /** Attio brand mark (paths from attio.com Storyblok asset; stroke uses theme color). */
 const AttioIcon: IconType = ({ className, ...props }) => (
   <svg viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" className={className} {...props}>
@@ -80,6 +96,7 @@ export const CONNECTOR_ICON_MAP: Record<string, IconType> = {
   linear: SiLinear,
   jira: SiJira,
   asana: SiAsana,
+  trello: TrelloIcon,
   attio: AttioIcon,
   globe: HiGlobeAlt,
   terminal: HiLightningBolt,
@@ -112,6 +129,7 @@ export const CONNECTOR_DISPLAY: Record<string, ConnectorDisplay> = {
   linear: { icon: "linear", color: "from-indigo-500 to-violet-600", label: "Linear" },
   jira: { icon: "jira", color: "from-blue-500 to-blue-600", label: "Jira" },
   asana: { icon: "asana", color: "from-fuchsia-500 to-pink-600", label: "Asana" },
+  trello: { icon: "trello", color: "from-blue-600 to-sky-500", label: "Trello" },
   attio: { icon: "attio", color: "from-fuchsia-500 to-purple-600", label: "Attio" },
   web_search: { icon: "globe", color: "from-emerald-500 to-teal-600", label: "Web Search" },
   code_sandbox: { icon: "terminal", color: "from-amber-500 to-orange-600", label: "Code Sandbox" },
@@ -153,6 +171,7 @@ export function getConnectorColorClass(color: string): string {
     "from-red-500 to-pink-600": "bg-red-500",
     "from-slate-500 to-slate-600": "bg-slate-500",
     "from-cyan-500 to-blue-600": "bg-cyan-500",
+    "from-blue-600 to-sky-500": "bg-blue-600",
   };
   return colorMap[color] ?? "bg-surface-600";
 }

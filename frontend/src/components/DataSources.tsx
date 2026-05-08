@@ -65,6 +65,7 @@ const INTEGRATION_CONFIG_FALLBACK: Record<string, IntegrationConfigEntry> = {
   linear: { name: 'Linear', description: 'Issue tracking - sync and manage teams, projects, and issues', icon: 'linear', color: 'from-indigo-500 to-violet-600', scope: 'user' },
   jira: { name: 'Jira', description: 'Issue tracking - sync projects and issues from Atlassian Jira', icon: 'jira', color: 'from-blue-500 to-blue-600', scope: 'user' },
   asana: { name: 'Asana', description: 'Tasks and projects - sync and manage workspaces, projects, and tasks', icon: 'asana', color: 'from-fuchsia-500 to-pink-600', scope: 'user' },
+  trello: { name: 'Trello', description: 'Boards and cards – sync workspaces, boards, lists, and cards', icon: 'trello', color: 'from-blue-600 to-sky-500', scope: 'user' },
   web_search: { name: 'Web Search', description: 'Web search and URL fetching — enable for the agent to search the web or fetch pages', icon: 'globe', color: 'from-emerald-500 to-teal-600', scope: 'organization' },
   code_sandbox: { name: 'Code Sandbox', description: 'Run shell commands and scripts in a secure sandbox (Python, Node, bash)', icon: 'terminal', color: 'from-amber-500 to-orange-600', scope: 'organization' },
   twilio: { name: 'Twilio', description: 'Send SMS messages to phone numbers', icon: 'sms', color: 'from-red-500 to-pink-600', scope: 'organization' },

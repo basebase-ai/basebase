@@ -111,6 +111,7 @@ class Settings(BaseSettings):
     NANGO_ASANA_INTEGRATION_ID: str = "asana"
     NANGO_GRANOLA_INTEGRATION_ID: str = "granola-mcp"
     NANGO_ATTIO_INTEGRATION_ID: str = "attio"
+    NANGO_TRELLO_INTEGRATION_ID: str = "trello"
 
     # App
     SECRET_KEY: str = "dev-secret-change-in-production"
@@ -285,6 +286,7 @@ NANGO_INTEGRATION_IDS: dict[str, str] = {
     "asana": settings.NANGO_ASANA_INTEGRATION_ID,
     "granola": settings.NANGO_GRANOLA_INTEGRATION_ID,
     "attio": settings.NANGO_ATTIO_INTEGRATION_ID,
+    "trello": settings.NANGO_TRELLO_INTEGRATION_ID,
 }
 
 # Default sharing settings for each provider when user first connects.
@@ -316,6 +318,7 @@ PROVIDER_SHARING_DEFAULTS: dict[str, SharingDefaults] = {
     "linear": SharingDefaults(share_synced_data=True),
     "asana": SharingDefaults(share_synced_data=True),
     "jira": SharingDefaults(share_synced_data=True),
+    "trello": SharingDefaults(share_synced_data=True),
     # Personal tools - private by default
     "google_calendar": SharingDefaults(),
     "gmail": SharingDefaults(),
