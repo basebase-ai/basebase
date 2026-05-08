@@ -12,7 +12,18 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Nango from '@nangohq/frontend';
-import { HiGlobeAlt, HiUserGroup, HiX, HiCog, HiShare, HiLockClosed, HiChevronDown, HiLightningBolt, HiLink } from 'react-icons/hi';
+import {
+  HiGlobeAlt,
+  HiUserGroup,
+  HiX,
+  HiCog,
+  HiShare,
+  HiLockClosed,
+  HiChevronDown,
+  HiLightningBolt,
+  HiLink,
+  HiDotsVertical,
+} from 'react-icons/hi';
 import { API_BASE, apiRequest, getAuthenticatedRequestHeaders } from '../lib/api';
 import { useAppStore, useIntegrations, useIntegrationsLoading, type Integration, type SyncStats } from '../store';
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -82,17 +93,6 @@ const isSharedWithTeam = (sharing: {
   shareQueryAccess: boolean;
   shareWriteAccess: boolean;
 }): boolean => sharing.shareSyncedData || sharing.shareQueryAccess || sharing.shareWriteAccess;
-
-// Common integrations to show as tiles when org has zero connected (display order)
-const COMMON_INTEGRATION_KEYS: ReadonlyArray<string> = [
-  'hubspot',
-  'salesforce',
-  'slack',
-  'gmail',
-  'google_calendar',
-  'zoom',
-  'apollo',
-];
 
 // Extended integration type with display info
 interface DisplayIntegration extends Integration {
@@ -471,7 +471,7 @@ export function DataSources(): JSX.Element {
   const [githubReposExpanded, setGithubReposExpanded] = useState(false);
   const [githubRequiresRepoReview, setGithubRequiresRepoReview] = useState(false);
   const [githubAutoScrollPending, setGithubAutoScrollPending] = useState(false);
-  const connectorCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const connectorCardRefs = useRef<Record<string, HTMLLIElement | null>>({});
   
   // Live sync progress from WebSocket
   const [syncProgress, setSyncProgress] = useState<Record<string, number>>({});
@@ -500,8 +500,12 @@ export function DataSources(): JSX.Element {
   }
   const [disconnectModal, setDisconnectModal] = useState<DisconnectModalState | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
-  /** Which integration tile id has the "resync from" dropdown open (null = closed). */
-  const [resyncMenuOpenForId, setResyncMenuOpenForId] = useState<string | null>(null);
+  /** Which integration row id has the overflow menu open (null = closed). */
+  const [rowMenuOpenForId, setRowMenuOpenForId] = useState<string | null>(null);
+  /** Provider slug for slide-out detail drawer (null = closed). */
+  const [detailProvider, setDetailProvider] = useState<string | null>(null);
+  /** Desktop header page overflow (Sync all, mobile-only helpers). */
+  const [pageOverflowOpen, setPageOverflowOpen] = useState<boolean>(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
   const [disconnectSuccess, setDisconnectSuccess] = useState<string | null>(null);
   const [sharingError, setSharingError] = useState<string | null>(null);
@@ -517,15 +521,35 @@ export function DataSources(): JSX.Element {
   }, [user?.roles, activeMembership?.role]);
 
   useEffect(() => {
-    if (resyncMenuOpenForId === null) return;
+    if (rowMenuOpenForId === null) return;
     const onPointerDown = (e: PointerEvent): void => {
       const t = e.target as HTMLElement | null;
-      if (t?.closest('[data-resync-menu-root]')) return;
-      setResyncMenuOpenForId(null);
+      if (t?.closest('[data-row-menu-root]')) return;
+      setRowMenuOpenForId(null);
     };
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [resyncMenuOpenForId]);
+  }, [rowMenuOpenForId]);
+
+  useEffect(() => {
+    if (detailProvider === null) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setDetailProvider(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [detailProvider]);
+
+  useEffect(() => {
+    if (!pageOverflowOpen) return;
+    const onPointerDown = (e: PointerEvent): void => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest('[data-page-overflow-root]')) return;
+      setPageOverflowOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [pageOverflowOpen]);
 
   const connectBuiltinConnector = useCallback(
     async (
@@ -1490,7 +1514,13 @@ export function DataSources(): JSX.Element {
   const fromTeamConnectors = allIntegrations.filter(
     (i) => i.connected && !i.currentUserConnected && i.scope === 'user' && i.teamConnections.length > 0
   );
-  const availableIntegrations = allIntegrations.filter((i) => !i.connected);
+
+  const sortByConnectorName = (a: DisplayIntegration, b: DisplayIntegration): number =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+
+  const myConnectorsSorted: DisplayIntegration[] = [...myConnectors].sort(sortByConnectorName);
+  const orgConnectorsSorted: DisplayIntegration[] = [...orgConnectors].sort(sortByConnectorName);
+  const fromTeamConnectorsSorted: DisplayIntegration[] = [...fromTeamConnectors].sort(sortByConnectorName);
 
   const renderIcon = (iconId: string): JSX.Element => {
     if (isImageIcon(iconId)) {
@@ -1500,13 +1530,245 @@ export function DataSources(): JSX.Element {
     return <IconComponent className="w-8 h-8" />;
   };
 
-  // Tile state type for unified rendering
+  const renderIconCompact = (iconId: string): JSX.Element => {
+    if (isImageIcon(iconId)) {
+      return <img src={iconId} alt="" className="h-6 w-6 rounded-md object-cover" />;
+    }
+    const IconComponent = ICON_MAP[iconId] ?? HiGlobeAlt;
+    return <IconComponent className="h-5 w-5 text-surface-400" />;
+  };
+
+  // Tile state type for unified rendering (available only used in modal / legacy helpers)
   type TileState = 'connected' | 'org-connected' | 'team-only' | 'available';
 
-  // Unified integration tile component
-  const renderIntegrationTile = (
+  const connectedIntegrationPool: DisplayIntegration[] = [
+    ...myConnectorsSorted,
+    ...orgConnectorsSorted,
+    ...fromTeamConnectorsSorted,
+  ];
+  const detailIntegration: DisplayIntegration | null =
+    detailProvider === null
+      ? null
+      : connectedIntegrationPool.find((i) => i.provider === detailProvider) ?? null;
+
+  const detailTileState: TileState | null =
+    detailIntegration === null
+      ? null
+      : myConnectorsSorted.some((i) => i.provider === detailIntegration.provider)
+        ? 'connected'
+        : orgConnectorsSorted.some((i) => i.provider === detailIntegration.provider)
+          ? 'org-connected'
+          : 'team-only';
+
+  const renderSharingBadgeBlock = (integration: DisplayIntegration, state: TileState): JSX.Element | null => {
+    if (state !== 'connected') return null;
+    if (isSharedWithTeam(integration)) {
+      return (
+        <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs bg-primary-500/20 text-primary-400">
+          <HiShare className="h-3 w-3" />
+          Shared with team
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs bg-surface-700 text-surface-400">
+        <HiLockClosed className="h-3 w-3" />
+        Private
+      </span>
+    );
+  };
+
+  const renderTeamInfoBlock = (integration: DisplayIntegration, state: TileState): JSX.Element | null => {
+    if (state === 'team-only' || state === 'org-connected' || integration.teamTotal === 0) return null;
+    const connectedCount = integration.teamConnections.length;
+    const names = integration.teamConnections.map((tc) => tc.userName);
+    const displayNames = names.slice(0, 3);
+    const remaining = names.length - 3;
+    const nameText =
+      remaining > 0 ? `${displayNames.join(', ')}, +${remaining} more` : displayNames.join(', ');
+    return (
+      <div className="mt-4 border-t border-surface-700/50 pt-4">
+        <div className="flex items-center gap-2 text-sm text-surface-400">
+          <HiUserGroup className="h-4 w-4" />
+          <span>
+            {connectedCount}/{integration.teamTotal} team members connected
+          </span>
+        </div>
+        {connectedCount > 0 && <p className="mt-1 pl-6 text-xs text-surface-500">{nameText}</p>}
+      </div>
+    );
+  };
+
+  const renderSlackDetailBlock = (integration: DisplayIntegration, state: TileState): JSX.Element | null => {
+    if (integration.provider !== 'slack' || state !== 'connected') return null;
+    return (
+      <div className="mt-4 space-y-3 border-t border-surface-700/50 pt-4">
+        <div className="space-y-1 text-xs text-surface-400">
+          <p>
+            <strong className="text-surface-300">To sync:</strong> Invite @Basebase to channels—type{' '}
+            <code className="text-surface-300">/invite @Basebase</code> or add it from channel details.
+          </p>
+          <p>
+            <strong className="text-surface-300">To chat:</strong> Mention @Basebase in any channel it&apos;s in;
+            it&apos;ll reply in the thread.
+          </p>
+        </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <h4 className="text-sm font-semibold text-surface-100">Slack Identity</h4>
+            <p className="mt-0.5 text-xs text-surface-400">
+              {slackMappings.length > 0
+                ? `${slackMappings.length} linked email${slackMappings.length !== 1 ? 's' : ''}`
+                : 'Link your Slack email to connect your account'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowSlackVerificationModal(true)}
+            className="rounded-lg border border-primary-500/30 px-3 py-1.5 text-xs font-medium text-primary-300 transition-colors hover:bg-primary-500/10"
+          >
+            {slackMappings.length > 0 ? 'Manage' : 'Link Account'}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderGitHubDetailBlock = (integration: DisplayIntegration, state: TileState): JSX.Element | null => {
+    if (integration.provider !== 'github' || state !== 'connected') return null;
+    const trackedCount = githubTrackedIds.size;
+    const trackedNames =
+      githubTrackedNames.length > 0
+        ? githubTrackedNames
+        : githubAvailableRepos.filter((r) => githubTrackedIds.has(r.github_repo_id)).map((r) => r.full_name);
+    const showCompact = trackedCount > 0 && !githubReposExpanded;
+
+    const toggleRepo = (id: number): void => {
+      setGithubSelectedIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+    };
+    const selectAll = (): void => setGithubSelectedIds(new Set(githubAvailableRepos.map((r) => r.github_repo_id)));
+    const selectNone = (): void => setGithubSelectedIds(new Set());
+
+    return (
+      <div className="mt-4 space-y-3 border-t border-surface-700/50 pt-4">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h4 className="text-sm font-semibold text-surface-100">Repos to track</h4>
+            <p className="mt-0.5 text-xs text-surface-400">
+              {showCompact
+                ? `${trackedCount} repo${trackedCount !== 1 ? 's' : ''} tracked`
+                : 'Select which repositories to sync. Tracking for this team.'}
+            </p>
+          </div>
+          {showCompact && (
+            <button
+              type="button"
+              onClick={() => setGithubReposExpanded(true)}
+              className="whitespace-nowrap text-xs font-medium text-primary-400 hover:text-primary-300"
+            >
+              Change
+            </button>
+          )}
+        </div>
+        {showCompact ? (
+          <p className="text-sm text-surface-300">{trackedNames.length > 0 ? trackedNames.join(', ') : '—'}</p>
+        ) : (
+          <>
+            {githubReposError && <p className="text-xs text-red-400">{githubReposError}</p>}
+            {githubReposLoading ? (
+              <p className="text-sm text-surface-500">Loading repos…</p>
+            ) : githubAvailableRepos.length === 0 ? (
+              <p className="text-sm text-surface-500">No repos found. Check GitHub scopes (e.g. repo).</p>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={selectAll}
+                    className="text-xs text-primary-400 hover:text-primary-300"
+                  >
+                    Select all
+                  </button>
+                  <span className="text-surface-600">|</span>
+                  <button
+                    type="button"
+                    onClick={selectNone}
+                    className="text-xs text-primary-400 hover:text-primary-300"
+                  >
+                    Select none
+                  </button>
+                  {trackedCount > 0 && (
+                    <>
+                      <span className="text-surface-600">|</span>
+                      <button
+                        type="button"
+                        onClick={() => setGithubReposExpanded(false)}
+                        className="text-xs text-primary-400 hover:text-primary-300"
+                      >
+                        Done
+                      </button>
+                    </>
+                  )}
+                </div>
+                <ul className="max-h-48 space-y-1.5 overflow-y-auto rounded-lg border border-surface-700/60 p-2">
+                  {githubAvailableRepos.map((repo) => {
+                    const id = repo.github_repo_id;
+                    const checked = githubSelectedIds.has(id);
+                    return (
+                      <li key={id} className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id={`gh-repo-drawer-${id}`}
+                          checked={checked}
+                          onChange={() => toggleRepo(id)}
+                          className="rounded border-surface-600 bg-surface-800 text-primary-500 focus:ring-primary-500"
+                        />
+                        <label
+                          htmlFor={`gh-repo-drawer-${id}`}
+                          className="min-w-0 flex-1 cursor-pointer truncate text-sm text-surface-200"
+                        >
+                          <span className="font-medium">{repo.full_name}</span>
+                          {repo.is_private && <span className="ml-2 text-xs text-surface-500">Private</span>}
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <button
+                  type="button"
+                  onClick={() => void handleGitHubTrackRepos()}
+                  disabled={githubSaving}
+                  className="rounded-lg border border-primary-500/30 px-3 py-2 text-sm font-medium text-primary-300 transition-colors hover:bg-primary-500/10 disabled:opacity-50"
+                >
+                  {githubSaving ? 'Saving…' : 'Save tracked repos'}
+                </button>
+              </>
+            )}
+          </>
+        )}
+        <p className="text-xs text-surface-500">
+          If you want to map users other than yourself, admins can manage identity mappings in the{' '}
+          <button
+            type="button"
+            onClick={openTeamMembersPanel}
+            className="text-primary-400 underline hover:text-primary-300"
+          >
+            Team UI
+          </button>
+          .
+        </p>
+      </div>
+    );
+  };
+
+  const renderConnectorRow = (
     integration: DisplayIntegration,
-    state: TileState
+    state: TileState,
   ): JSX.Element => {
     const isConnecting = connectingProvider === integration.provider;
     const codeSandboxConnectBlocked = integration.provider === 'code_sandbox' && !canConnectCodeSandbox;
@@ -1518,500 +1780,245 @@ export function DataSources(): JSX.Element {
     const isSyncing = syncingProviders.has(integration.provider) || isStartingSync;
     const isDisconnecting = disconnectingProviders.has(integration.provider);
 
-    // State-specific styling - no amber for team-only
-    const cardClass = isDisconnecting
-      ? 'card p-4 opacity-50 pointer-events-none transition-opacity duration-200'
-      : 'card p-4';
+    const hasSyncCapability: boolean = getConnectorDisplay(integration.provider).hasSync !== false;
+    const showResyncInMenu: boolean =
+      (state === 'connected' || state === 'org-connected') &&
+      integration.provider !== 'google_drive' &&
+      hasSyncCapability;
 
-    const iconOpacity = state === 'available' ? 'opacity-60' : '';
-
-    // Badge config by state
-    const badgeConfig: Record<TileState, { text: string; className: string } | null> = {
-      'connected': { text: 'Connected', className: 'bg-emerald-500/20 text-emerald-400' },
-      'org-connected': { text: 'Connected for team', className: 'bg-emerald-500/20 text-emerald-400' },
-      'team-only': { text: 'From team', className: 'bg-surface-700 text-surface-300' },
-      'available': null,
-    };
-    const badge = badgeConfig[state];
-
-    // Button config by state
-    const getButtonConfig = (): { text: string; className: string; action: () => void; disabled: boolean; hidden?: boolean } => {
+    const getButtonConfig = (): {
+      text: string;
+      className: string;
+      action: () => void;
+      disabled: boolean;
+      hidden?: boolean;
+    } => {
       if (state === 'connected' || state === 'org-connected') {
-        // Apollo, artifacts, apps, web_search, code_sandbox, twilio — no sync, on-demand only
-        if (getConnectorDisplay(integration.provider).hasSync === false) {
-          return {
-            text: '',
-            className: '',
-            action: () => {},
-            disabled: true,
-            hidden: true,
-          };
+        if (!hasSyncCapability) {
+          return { text: '', className: '', action: () => {}, disabled: true, hidden: true };
         }
-        // Org-connected: anyone can sync (no owner restriction)
         return {
           text: isSyncing ? 'Syncing...' : 'Sync',
-          className: 'px-4 py-2 text-sm font-medium text-surface-200 bg-surface-800 hover:bg-surface-700 disabled:opacity-50 rounded-lg transition-colors',
+          className:
+            'inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-surface-600 bg-surface-800 px-3 text-xs font-medium text-surface-200 transition-colors hover:bg-surface-700 disabled:opacity-50',
           action: () => void handleSync(integration.provider),
           disabled: isSyncing,
         };
       }
-      // team-only and available: show Connect
       return {
-        text: codeSandboxConnectBlocked
-          ? 'Admins only'
-          : (isConnecting ? 'Connecting...' : 'Connect'),
+        text: codeSandboxConnectBlocked ? 'Admins only' : isConnecting ? 'Connecting...' : 'Connect',
         className: codeSandboxConnectBlocked
-          ? 'px-4 py-2 text-sm font-medium text-surface-500 border border-surface-700 rounded-lg cursor-not-allowed'
-          : 'px-4 py-2 text-sm font-medium text-primary-400 border border-primary-500/30 hover:bg-primary-500/10 disabled:opacity-50 rounded-lg transition-colors',
-        action: () => { void handleConnect(integration.provider); },
+          ? 'inline-flex h-7 cursor-not-allowed items-center rounded-lg border border-surface-700 px-3 text-xs font-medium text-surface-500'
+          : 'inline-flex h-7 items-center justify-center rounded-lg border border-primary-500/30 px-3 text-xs font-medium text-primary-400 transition-colors hover:bg-primary-500/10 disabled:opacity-50',
+        action: () => {
+          void handleConnect(integration.provider);
+        },
         disabled: isConnecting || codeSandboxConnectBlocked,
       };
     };
     const buttonConfig = getButtonConfig();
 
-    // Sharing status badge (no "Setup required" - we use sensible defaults on connect)
-    const renderSharingBadge = (): JSX.Element | null => {
-      if (state !== 'connected') return null;
+    const canDisconnect: boolean =
+      (state === 'connected' && integration.isOwner) || state === 'org-connected';
 
-      if (isSharedWithTeam(integration)) {
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-primary-500/20 text-primary-400">
-            <HiShare className="w-3 h-3" />
-            Shared with team
-          </span>
-        );
-      }
+    const showRowMenu: boolean =
+      (state === 'connected' && integration.isOwner) ||
+      state === 'team-only' ||
+      showResyncInMenu ||
+      canDisconnect;
 
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-surface-700 text-surface-400">
-          <HiLockClosed className="w-3 h-3" />
-          Private
-        </span>
-      );
-    };
-
-    // Team connections info (for connected tiles; team-only/org-connected shows "Connected by" in body)
-    const renderTeamInfo = (): JSX.Element | null => {
-      if (state === 'team-only' || state === 'org-connected' || integration.teamTotal === 0) return null;
-
-      const connectedCount = integration.teamConnections.length;
-      const names = integration.teamConnections.map((tc) => tc.userName);
-      const displayNames = names.slice(0, 3);
-      const remaining = names.length - 3;
-      const nameText = remaining > 0
-        ? `${displayNames.join(', ')}, +${remaining} more`
-        : displayNames.join(', ');
-
-      return (
-        <div className="mt-3 pt-3 border-t border-surface-700/50">
-          <div className="flex items-center gap-2 text-sm text-surface-400">
-            <HiUserGroup className="w-4 h-4" />
-            <span>{connectedCount}/{integration.teamTotal} team members connected</span>
-          </div>
-          {connectedCount > 0 && (
-            <p className="text-xs text-surface-500 mt-1 pl-6">{nameText}</p>
-          )}
-        </div>
-      );
-    };
-
-    const renderSlackMapping = (): JSX.Element | null => {
-      if (integration.provider !== 'slack' || state !== 'connected') return null;
-
-      return (
-        <div className="mt-4 pt-4 border-t border-surface-700/50 space-y-3">
-          <div className="text-xs text-surface-400 space-y-1">
-            <p><strong className="text-surface-300">To sync:</strong> Invite @Basebase to channels—type <code className="text-surface-300">/invite @Basebase</code> or add it from channel details.</p>
-            <p><strong className="text-surface-300">To chat:</strong> Mention @Basebase in any channel it's in; it'll reply in the thread.</p>
-          </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <h4 className="text-sm font-semibold text-surface-100">Slack Identity</h4>
-              <p className="text-xs text-surface-400 mt-0.5">
-                {slackMappings.length > 0
-                  ? `${slackMappings.length} linked email${slackMappings.length !== 1 ? 's' : ''}`
-                  : 'Link your Slack email to connect your account'}
-              </p>
-            </div>
-            <button
-              onClick={() => setShowSlackVerificationModal(true)}
-              className="px-3 py-1.5 text-xs font-medium text-primary-300 border border-primary-500/30 hover:bg-primary-500/10 rounded-lg transition-colors"
-            >
-              {slackMappings.length > 0 ? 'Manage' : 'Link Account'}
-            </button>
-          </div>
-        </div>
-      );
-    };
-
-    const renderGitHubRepos = (): JSX.Element | null => {
-      if (integration.provider !== 'github' || state !== 'connected') return null;
-      const trackedCount = githubTrackedIds.size;
-      const trackedNames =
-        githubTrackedNames.length > 0
-          ? githubTrackedNames
-          : githubAvailableRepos
-              .filter((r) => githubTrackedIds.has(r.github_repo_id))
-              .map((r) => r.full_name);
-      const showCompact = trackedCount > 0 && !githubReposExpanded;
-
-      const toggleRepo = (id: number): void => {
-        setGithubSelectedIds((prev) => {
-          const next = new Set(prev);
-          if (next.has(id)) next.delete(id);
-          else next.add(id);
-          return next;
-        });
-      };
-      const selectAll = (): void => setGithubSelectedIds(new Set(githubAvailableRepos.map((r) => r.github_repo_id)));
-      const selectNone = (): void => setGithubSelectedIds(new Set());
-
-      return (
-        <div className="mt-4 pt-4 border-t border-surface-700/50 space-y-3">
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <h4 className="text-sm font-semibold text-surface-100">
-                Repos to track
-              </h4>
-              <p className="text-xs text-surface-400 mt-0.5">
-                {showCompact
-                  ? `${trackedCount} repo${trackedCount !== 1 ? 's' : ''} tracked`
-                  : 'Select which repositories to sync. Tracking for this team.'}
-              </p>
-            </div>
-            {showCompact && (
-              <button
-                type="button"
-                onClick={() => setGithubReposExpanded(true)}
-                className="text-xs font-medium text-primary-400 hover:text-primary-300 whitespace-nowrap"
-              >
-                Change
-              </button>
-            )}
-          </div>
-          {showCompact ? (
-            <p className="text-sm text-surface-300">
-              {trackedNames.length > 0 ? trackedNames.join(', ') : '—'}
-            </p>
-          ) : (
-            <>
-              {githubReposError && (
-                <p className="text-xs text-red-400">{githubReposError}</p>
-              )}
-              {githubReposLoading ? (
-                <p className="text-sm text-surface-500">Loading repos…</p>
-              ) : githubAvailableRepos.length === 0 ? (
-                <p className="text-sm text-surface-500">No repos found. Check GitHub scopes (e.g. repo).</p>
-              ) : (
-                <>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={selectAll}
-                      className="text-xs text-primary-400 hover:text-primary-300"
-                    >
-                      Select all
-                    </button>
-                    <span className="text-surface-600">|</span>
-                    <button
-                      type="button"
-                      onClick={selectNone}
-                      className="text-xs text-primary-400 hover:text-primary-300"
-                    >
-                      Select none
-                    </button>
-                    {trackedCount > 0 && (
-                      <>
-                        <span className="text-surface-600">|</span>
-                        <button
-                          type="button"
-                          onClick={() => setGithubReposExpanded(false)}
-                          className="text-xs text-primary-400 hover:text-primary-300"
-                        >
-                          Done
-                        </button>
-                      </>
-                    )}
-                  </div>
-                  <ul className="max-h-48 overflow-y-auto space-y-1.5 rounded-lg border border-surface-700/60 p-2">
-                    {githubAvailableRepos.map((repo) => {
-                      const id = repo.github_repo_id;
-                      const checked = githubSelectedIds.has(id);
-                      return (
-                        <li key={id} className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            id={`gh-repo-${id}`}
-                            checked={checked}
-                            onChange={() => toggleRepo(id)}
-                            className="rounded border-surface-600 bg-surface-800 text-primary-500 focus:ring-primary-500"
-                          />
-                          <label htmlFor={`gh-repo-${id}`} className="text-sm text-surface-200 cursor-pointer truncate flex-1 min-w-0">
-                            <span className="font-medium">{repo.full_name}</span>
-                            {repo.is_private && (
-                              <span className="ml-2 text-xs text-surface-500">Private</span>
-                            )}
-                          </label>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                  <button
-                    type="button"
-                    onClick={() => void handleGitHubTrackRepos()}
-                    disabled={githubSaving}
-                    className="px-3 py-2 text-sm font-medium text-primary-300 border border-primary-500/30 hover:bg-primary-500/10 disabled:opacity-50 rounded-lg"
-                  >
-                    {githubSaving ? 'Saving…' : 'Save tracked repos'}
-                  </button>
-                </>
-              )}
-            </>
-          )}
-          <p className="text-xs text-surface-500">
-            If you want to map users other than yourself, admins can manage identity mappings in the{' '}
-            <button
-              type="button"
-              onClick={openTeamMembersPanel}
-              className="text-primary-400 hover:text-primary-300 underline"
-            >
-              Team UI
-            </button>
-            .
-          </p>
-        </div>
-      );
-    };
+    const menuBtnClass =
+      'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-surface-600 text-surface-300 transition-colors hover:bg-surface-800 disabled:opacity-50';
 
     return (
-      <div
+      <li
         key={integration.id}
-        className={cardClass}
+        className={
+          isDisconnecting ? 'pointer-events-none opacity-50 transition-opacity duration-200' : undefined
+        }
         ref={(el) => {
           connectorCardRefs.current[integration.provider] = el;
         }}
       >
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
-          {/* Icon and name row on mobile */}
-          <div className="flex items-center gap-3 sm:gap-4">
-            <div className={`${isImageIcon(integration.icon) ? '' : getColorClass(integration.color) + ' p-2.5 sm:p-3 text-white'} rounded-xl ${iconOpacity} flex-shrink-0 w-[52px] h-[52px] sm:w-14 sm:h-14 flex items-center justify-center overflow-hidden`}>
-              {renderIcon(integration.icon)}
-            </div>
-
-            {/* Content */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="font-medium text-surface-100">{integration.name}</h3>
-                {badge && (
-                  <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${badge.className}`}>
-                    {badge.text}
-                  </span>
+        <div className="flex items-center gap-2 px-2 py-2 sm:gap-3">
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left outline-none ring-primary-500/40 hover:bg-surface-900/80 focus-visible:ring-2 sm:gap-3"
+            onClick={() => setDetailProvider(integration.provider)}
+            title={integration.name}
+          >
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-surface-900">
+              {renderIconCompact(integration.icon)}
+            </span>
+            <span className="flex min-w-0 flex-1 items-center gap-2">
+              <span className="truncate text-sm text-surface-100">{integration.name}</span>
+              {integration.provider.startsWith('mcp_') && (
+                <span className="shrink-0 rounded bg-surface-700 px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide text-surface-400">
+                  Custom
+                </span>
+              )}
+              {(state === 'org-connected' || state === 'team-only') && (
+                <span className="shrink-0 rounded bg-surface-800 px-1.5 py-0 text-[10px] font-medium text-surface-500">
+                  Team
+                </span>
+              )}
+              {(state === 'connected' || state === 'org-connected') &&
+                integration.lastError &&
+                !isSyncing && (
+                  <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" title={integration.lastError} />
                 )}
-                {renderSharingBadge()}
-              </div>
-              <p className="text-sm text-surface-400 mt-0.5 hidden sm:block">{integration.description}</p>
-              {state === 'connected' && integration.connectedBy && !integration.isOwner && (
-                <p className="text-xs text-surface-500 mt-1 hidden sm:block">
-                  Connected by {integration.connectedBy}
-                </p>
-              )}
-              {(state === 'connected' || state === 'org-connected') && integration.lastSyncAt && !isSyncing && (
-                <p className="text-xs text-surface-500 mt-1 hidden sm:block">
-                  Last synced: {new Date(integration.lastSyncAt).toLocaleString()}
-                </p>
-              )}
-              {(state === 'connected' || state === 'org-connected') && (isStartingSync || syncProgress[integration.provider] !== undefined || integration.syncStats) && (
-                <p className="text-xs text-surface-400 mt-1 hidden sm:block">
-                  {isStartingSync ? (
-                    <span className="text-primary-400">Starting sync…</span>
-                  ) : syncProgress[integration.provider] !== undefined ? (
-                    <span className="text-primary-400">
-                      Syncing{syncStep[integration.provider] ? ` ${syncStep[integration.provider]}` : ''}... {getActivityLabel(integration.provider, syncProgress[integration.provider] ?? 0, syncStep[integration.provider])}
-                    </span>
-                  ) : integration.syncStats ? (
-                    formatSyncStats(integration.syncStats, integration.provider)
-                  ) : null}
-                </p>
-              )}
-              {(state === 'connected' || state === 'org-connected') && integration.lastError && !isSyncing && (
-                <p className="text-xs text-red-400 mt-1">Error: {integration.lastError}</p>
-              )}
-              {state === 'org-connected' && (
-                <div className="mt-2 text-xs text-surface-400">
-                  <p>
-                    Connected by {integration.teamConnections.map((tc) => tc.userName).join(', ')}
-                  </p>
-                </div>
-              )}
-              {state === 'team-only' && (
-                <div className="mt-2 space-y-1 text-xs text-surface-400">
-                  <p>
-                    Connected by {integration.teamConnections.map((tc) => tc.userName).join(', ')}
-                  </p>
-                  {integration.shareSyncedData || integration.shareQueryAccess || integration.shareWriteAccess ? (
-                    <p className="text-surface-300">
-                      Shared with you:{' '}
-                      {[
-                        integration.shareSyncedData && 'synced data',
-                        integration.shareQueryAccess && 'query access',
-                        integration.shareWriteAccess && 'write access',
-                      ].filter(Boolean).join(', ')}
-                    </p>
-                  ) : (
-                    <p className="text-surface-500">No sharing enabled yet</p>
-                  )}
-                </div>
-              )}
-              {state === 'available' && codeSandboxConnectBlocked && (
-                <p className="mt-2 text-xs text-amber-400">
-                  Requires organization admin or global admin access to connect.
-                </p>
-              )}
-            </div>
-          </div>
+            </span>
+          </button>
 
-          {/* Actions - full width on mobile, right-aligned on desktop */}
-          <div className="flex items-center gap-2 sm:flex-shrink-0 sm:ml-auto">
-            {/* Settings button for owners */}
-            {state === 'connected' && integration.isOwner && (
+          {!buttonConfig.hidden && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                buttonConfig.action();
+              }}
+              disabled={buttonConfig.disabled}
+              className={buttonConfig.className}
+            >
+              {(isConnecting || isSyncing) && (
+                <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                  />
+                </svg>
+              )}
+              {buttonConfig.text}
+            </button>
+          )}
+
+          {showRowMenu ? (
+            <div className="relative shrink-0" data-row-menu-root>
               <button
-                onClick={() => handleOpenSharingSettings(integration)}
-                title="Sharing settings"
-                className="p-2 text-surface-400 hover:text-surface-200 hover:bg-surface-800 rounded-lg transition-colors"
+                type="button"
+                className={menuBtnClass}
+                aria-expanded={rowMenuOpenForId === integration.id}
+                aria-haspopup="menu"
+                aria-label="More actions"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() =>
+                  setRowMenuOpenForId((cur) => (cur === integration.id ? null : integration.id))
+                }
               >
-                <HiCog className="w-5 h-5" />
+                <HiChevronDown className="h-4 w-4" />
               </button>
-            )}
-            {!buttonConfig.hidden && (() => {
-              const showResyncSplit: boolean =
-                (state === 'connected' || state === 'org-connected') &&
-                integration.provider !== 'google_drive' &&
-                getConnectorDisplay(integration.provider).hasSync !== false;
-
-              if (showResyncSplit) {
-                const baseBtn: string =
-                  'text-sm font-medium text-surface-200 bg-surface-800 hover:bg-surface-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2';
-                return (
-                  <div
-                    data-resync-menu-root
-                    className="relative z-10 flex flex-1 sm:flex-initial rounded-lg border border-surface-700 overflow-visible"
-                  >
+              {rowMenuOpenForId === integration.id && (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full z-[200] mt-1 min-w-[12rem] rounded-lg border border-surface-700 bg-surface-900 py-1 shadow-lg"
+                >
+                  {state === 'connected' && integration.isOwner && (
                     <button
                       type="button"
-                      onClick={() => void handleSync(integration.provider)}
-                      disabled={buttonConfig.disabled}
-                      className={`${baseBtn} px-3 sm:px-4 py-2 flex-1 sm:flex-initial rounded-l-lg border-0`}
+                      role="menuitem"
+                      className="w-full px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800"
+                      onClick={() => {
+                        setRowMenuOpenForId(null);
+                        handleOpenSharingSettings(integration);
+                      }}
                     >
-                      {(isConnecting || isSyncing) && (
-                        <svg className="w-4 h-4 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
-                      )}
-                      {isSyncing ? 'Syncing...' : 'Sync'}
+                      Configure sharing
                     </button>
-                    <div className="relative flex">
+                  )}
+                  {state === 'team-only' && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="w-full px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800"
+                      onClick={() => {
+                        setRowMenuOpenForId(null);
+                        void handleConnect(integration.provider);
+                      }}
+                    >
+                      Connect your account
+                    </button>
+                  )}
+                  {showResyncInMenu && (
+                    <>
                       <button
                         type="button"
-                        title="Resync from earlier time"
-                        disabled={buttonConfig.disabled}
-                        onPointerDown={(e) => {
-                          e.stopPropagation();
+                        role="menuitem"
+                        className="w-full px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-50"
+                        disabled={isSyncing}
+                        onClick={() => {
+                          setRowMenuOpenForId(null);
+                          void handleSync(integration.provider);
                         }}
-                        onClick={() =>
-                          setResyncMenuOpenForId((cur) =>
-                            cur === integration.id ? null : integration.id,
-                          )}
-                        className={`${baseBtn} px-2 py-2 border-l border-surface-700 rounded-r-lg`}
-                        aria-expanded={resyncMenuOpenForId === integration.id}
-                        aria-haspopup="menu"
                       >
-                        <HiChevronDown className="w-4 h-4" />
+                        Sync now
                       </button>
-                      {resyncMenuOpenForId === integration.id && (
-                        <div
-                          role="menu"
-                          className="absolute right-0 top-full mt-1 z-[200] min-w-[11rem] rounded-lg border border-surface-700 bg-surface-900 py-1 shadow-lg"
-                        >
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="w-full text-left px-3 py-2 text-sm text-surface-200 hover:bg-surface-800"
-                            onClick={() => {
-                              setResyncMenuOpenForId(null);
-                              void handleSync(integration.provider, isoUtcSubtractMs(RESYNC_OFFSET_MS.hours24));
-                            }}
-                          >
-                            Last 24 hours
-                          </button>
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="w-full text-left px-3 py-2 text-sm text-surface-200 hover:bg-surface-800"
-                            onClick={() => {
-                              setResyncMenuOpenForId(null);
-                              void handleSync(integration.provider, isoUtcSubtractMs(RESYNC_OFFSET_MS.days7));
-                            }}
-                          >
-                            Last 7 days
-                          </button>
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="w-full text-left px-3 py-2 text-sm text-surface-200 hover:bg-surface-800"
-                            onClick={() => {
-                              setResyncMenuOpenForId(null);
-                              void handleSync(integration.provider, isoUtcSubtractMs(RESYNC_OFFSET_MS.days30));
-                            }}
-                          >
-                            Last 30 days
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              }
-
-              return (
-                <button
-                  onClick={buttonConfig.action}
-                  disabled={buttonConfig.disabled}
-                  className={`${buttonConfig.className} flex items-center justify-center gap-2 flex-1 sm:flex-initial`}
-                >
-                  {(isConnecting || isSyncing) && (
-                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="w-full px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-50"
+                        disabled={isSyncing}
+                        onClick={() => {
+                          setRowMenuOpenForId(null);
+                          void handleSync(integration.provider, isoUtcSubtractMs(RESYNC_OFFSET_MS.hours24));
+                        }}
+                      >
+                        Resync · last 24 hours
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="w-full px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-50"
+                        disabled={isSyncing}
+                        onClick={() => {
+                          setRowMenuOpenForId(null);
+                          void handleSync(integration.provider, isoUtcSubtractMs(RESYNC_OFFSET_MS.days7));
+                        }}
+                      >
+                        Resync · last 7 days
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="w-full px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-50"
+                        disabled={isSyncing}
+                        onClick={() => {
+                          setRowMenuOpenForId(null);
+                          void handleSync(integration.provider, isoUtcSubtractMs(RESYNC_OFFSET_MS.days30));
+                        }}
+                      >
+                        Resync · last 30 days
+                      </button>
+                    </>
                   )}
-                  {buttonConfig.text}
-                </button>
-              );
-            })()}
-            {((state === 'connected' && integration.isOwner) || state === 'org-connected') && (
-              <button
-                onClick={() => void handleDisconnect(integration.provider)}
-                disabled={isDisconnecting}
-                className="px-3 sm:px-4 py-2 text-sm font-medium text-red-400 hover:text-red-300 hover:bg-red-500/10 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
-              >
-                {isDisconnecting && (
-                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                )}
-                {isDisconnecting ? 'Disconnecting...' : 'Disconnect'}
-              </button>
-            )}
-          </div>
+                  {canDisconnect && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-surface-800 disabled:opacity-50"
+                      disabled={isDisconnecting}
+                      onClick={() => {
+                        setRowMenuOpenForId(null);
+                        void handleDisconnect(integration.provider);
+                      }}
+                    >
+                      {isDisconnecting ? 'Disconnecting…' : 'Disconnect'}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="h-7 w-7 shrink-0" aria-hidden />
+          )}
         </div>
-
-        {/* Team connections footer */}
-        {renderTeamInfo()}
-        {renderSlackMapping()}
-        {renderGitHubRepos()}
-      </div>
+        {isSyncing && (
+          <div className="mx-2 mb-1 h-0.5 overflow-hidden rounded-full bg-primary-500/20">
+            <div className="h-full w-1/3 animate-pulse rounded-full bg-primary-400/80" />
+          </div>
+        )}
+      </li>
     );
   };
 
@@ -2041,84 +2048,124 @@ export function DataSources(): JSX.Element {
     setConnectSearch('');
   };
 
+  const openCustomMcpForm = (): void => {
+    setMcpName('');
+    setMcpEndpointUrl('');
+    setMcpBearerToken('');
+    setMcpError(null);
+    setShowMcpForm(true);
+  };
+
   return (
     <div className="flex-1 overflow-y-auto overflow-x-hidden">
-      {/* Mobile toolbar — desktop header below is md+ only */}
-      <div className="md:hidden sticky top-0 z-20 flex-shrink-0 bg-surface-950/95 backdrop-blur-sm border-b border-surface-800 px-4 py-2.5 flex flex-wrap items-center justify-end gap-2">
-        {canSyncAllConnectors && (
-          <button
-            type="button"
-            onClick={() => void handleSyncAll()}
-            disabled={syncingAll}
-            className="px-3 py-2 text-sm font-semibold text-surface-100 bg-surface-800 hover:bg-surface-700 border border-surface-600 rounded-lg transition-colors inline-flex items-center gap-2 disabled:opacity-50"
-            title="Sync every connected integration for this organization"
-          >
-            {syncingAll ? (
-              <>
-                <span className="w-4 h-4 border-2 border-surface-400 border-t-transparent rounded-full animate-spin" />
-                Syncing…
-              </>
-            ) : (
-              <>
-                <HiLightningBolt className="w-4 h-4 text-amber-400" />
-                Sync all
-              </>
+      {/* Mobile — overflow menu */}
+      <div className="sticky top-0 z-20 flex-shrink-0 border-b border-surface-800 bg-surface-950/95 px-4 py-2 backdrop-blur-sm md:hidden">
+        <div className="flex justify-end">
+          <div className="relative" data-page-overflow-root>
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => setPageOverflowOpen((o) => !o)}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-surface-700 text-surface-300 hover:bg-surface-800"
+              aria-expanded={pageOverflowOpen}
+              aria-label="Open menu"
+            >
+              <HiDotsVertical className="h-5 w-5" />
+            </button>
+            {pageOverflowOpen && (
+              <div className="absolute right-0 top-full z-30 mt-1 min-w-[11rem] rounded-lg border border-surface-700 bg-surface-900 py-1 shadow-lg">
+                <button
+                  type="button"
+                  className="w-full px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800"
+                  onClick={() => {
+                    setPageOverflowOpen(false);
+                    openAddConnectorModal();
+                  }}
+                >
+                  Browse connectors
+                </button>
+                {canSyncAllConnectors && (
+                  <button
+                    type="button"
+                    disabled={syncingAll}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-50"
+                    onClick={() => {
+                      setPageOverflowOpen(false);
+                      void handleSyncAll();
+                    }}
+                  >
+                    {syncingAll ? (
+                      <>
+                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-surface-400 border-t-transparent" />
+                        Syncing…
+                      </>
+                    ) : (
+                      <>
+                        <HiLightningBolt className="h-4 w-4 text-amber-400" />
+                        Sync all
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
             )}
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={openAddConnectorModal}
-          className="px-4 py-2 text-sm font-semibold text-white bg-primary-600 hover:bg-primary-500 rounded-lg transition-colors inline-flex items-center gap-2 shadow-lg shadow-primary-600/20"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-          </svg>
-          Add connector
-        </button>
+          </div>
+        </div>
       </div>
 
-      {/* Header - hidden on mobile since AppLayout has mobile header */}
-      <header className="hidden md:block sticky top-0 z-20 bg-surface-950 border-b border-surface-800 px-4 md:px-8 py-4 md:py-6">
+      <header className="sticky top-0 z-20 hidden border-b border-surface-800 bg-surface-950 px-4 py-4 md:block md:px-8 md:py-5">
         <div className="flex items-center justify-between gap-4">
           <div>
             <h1 className="text-xl font-bold text-surface-100">Connectors</h1>
-            <p className="text-surface-400 mt-1 text-sm">
-              Connect your sales tools to unlock AI-powered insights
-            </p>
+            <p className="mt-1 text-sm text-surface-400">Connect your tools so the AI can use them.</p>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {canSyncAllConnectors && (
-              <button
-                type="button"
-                onClick={() => void handleSyncAll()}
-                disabled={syncingAll}
-                className="px-4 py-2.5 text-sm font-semibold text-surface-100 bg-surface-800 hover:bg-surface-700 border border-surface-600 rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
-                title="Sync every connected integration for this organization"
-              >
-                {syncingAll ? (
-                  <>
-                    <span className="w-4 h-4 border-2 border-surface-400 border-t-transparent rounded-full animate-spin" />
-                    Syncing…
-                  </>
-                ) : (
-                  <>
-                    <HiLightningBolt className="w-4 h-4 text-amber-400" />
-                    Sync all
-                  </>
-                )}
-              </button>
-            )}
+          <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
               onClick={openAddConnectorModal}
-              className="px-5 py-2.5 text-sm font-semibold text-white bg-primary-600 hover:bg-primary-500 rounded-lg transition-colors flex items-center gap-2 shadow-lg shadow-primary-600/20"
+              className="rounded-lg border border-surface-600 px-4 py-2 text-sm font-medium text-surface-100 transition-colors hover:bg-surface-800"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-              Add connector
+              Browse connectors
             </button>
+            {canSyncAllConnectors && (
+              <div className="relative" data-page-overflow-root>
+                <button
+                  type="button"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => setPageOverflowOpen((o) => !o)}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-surface-600 text-surface-300 hover:bg-surface-800"
+                  aria-expanded={pageOverflowOpen}
+                  aria-label="More actions"
+                >
+                  <HiDotsVertical className="h-5 w-5" />
+                </button>
+                {pageOverflowOpen && (
+                  <div className="absolute right-0 top-full z-30 mt-1 min-w-[11rem] rounded-lg border border-surface-700 bg-surface-900 py-1 shadow-lg">
+                    <button
+                      type="button"
+                      disabled={syncingAll}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-50"
+                      onClick={() => {
+                        setPageOverflowOpen(false);
+                        void handleSyncAll();
+                      }}
+                    >
+                      {syncingAll ? (
+                        <>
+                          <span className="h-4 w-4 animate-spin rounded-full border-2 border-surface-400 border-t-transparent" />
+                          Syncing…
+                        </>
+                      ) : (
+                        <>
+                          <HiLightningBolt className="h-4 w-4 text-amber-400" />
+                          Sync all
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -2135,7 +2182,7 @@ export function DataSources(): JSX.Element {
           <div className="relative bg-surface-900 border border-surface-700 rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
             <div className="p-5 border-b border-surface-700/50">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-surface-100">Add a connector</h2>
+                <h2 className="text-lg font-semibold text-surface-100">Browse connectors</h2>
                 <button
                   onClick={() => setShowConnectModal(false)}
                   className="text-surface-400 hover:text-surface-200 transition-colors"
@@ -2475,132 +2522,303 @@ export function DataSources(): JSX.Element {
         </div>
       )}
 
-      <div className="max-w-4xl mx-auto px-4 md:px-8 py-4 md:py-8 space-y-6 md:space-y-10">
-        {/* My connectors */}
-        <section>
-          <h2 className="text-lg font-semibold text-surface-100 mb-4 flex items-center gap-2">
-            <span className="w-2 h-2 bg-emerald-500 rounded-full" />
-            My connectors ({myConnectors.length})
-          </h2>
+      <div className="mx-auto max-w-4xl space-y-8 px-4 py-6 md:space-y-10 md:px-8 md:py-6">
+        {connectedIntegrationPool.length === 0 ? (
+          <div className="rounded-lg border border-surface-800 bg-surface-900/30 px-6 py-10 text-center">
+            <p className="text-sm text-surface-400">
+              No connectors yet.{' '}
+              <button
+                type="button"
+                onClick={openAddConnectorModal}
+                className="font-medium text-primary-400 underline underline-offset-2 hover:text-primary-300"
+              >
+                Browse connectors
+              </button>{' '}
+              to add one.
+            </p>
+          </div>
+        ) : (
+          <>
+            {myConnectorsSorted.length > 0 && (
+              <section>
+                <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-surface-500">
+                  My connectors
+                </h2>
+                <ul className="divide-y divide-surface-800 rounded-lg border border-surface-800 bg-surface-950/40">
+                  {myConnectorsSorted.map((integration) => renderConnectorRow(integration, 'connected'))}
+                </ul>
+              </section>
+            )}
 
-          {myConnectors.length === 0 ? (
-            <div className="card p-6 md:p-8">
-              <div className="text-center mb-6">
-                <div className="w-16 h-16 rounded-full bg-surface-800 flex items-center justify-center mx-auto mb-4">
-                  <svg className="w-8 h-8 text-surface-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                </div>
-                <h3 className="text-surface-200 font-medium mb-2">No connectors connected</h3>
-                <p className="text-surface-400 text-sm">
-                  Connect your first connector to get started
+            {orgConnectorsSorted.length > 0 && (
+              <section>
+                <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-surface-500">
+                  Team connectors
+                </h2>
+                <p className="mb-2 text-xs text-surface-500">
+                  Org-wide connectors. Anyone on the team can sync or disconnect.
                 </p>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
-                {COMMON_INTEGRATION_KEYS.filter(
-                  (provider) =>
-                    connectorSlugs.includes(provider) &&
-                    availableIntegrations.some((i) => i.provider === provider),
-                ).map((provider) => {
-                  const config = getConnectorDisplay(provider);
-                  const isConnecting = connectingProvider === provider;
-                  return (
-                    <button
-                      key={provider}
-                      type="button"
-                      onClick={() => { void handleConnect(provider); }}
-                      disabled={isConnecting}
-                      className="card p-4 text-left hover:border-surface-600 hover:bg-surface-800/50 transition-colors disabled:opacity-50 flex items-start gap-3 group"
-                    >
-                      <div className={`${isImageIcon(config.icon) ? '' : getColorClass(config.color) + ' p-2 text-white'} rounded-lg flex-shrink-0 w-10 h-10 flex items-center justify-center overflow-hidden opacity-90 group-hover:opacity-100 transition-opacity`}>
-                        {renderIcon(config.icon)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-surface-100 group-hover:text-white transition-colors">
-                          {config.name}
-                        </div>
-                        <div className="text-xs text-surface-500 mt-0.5 line-clamp-2">
-                          {config.description}
-                        </div>
-                      </div>
-                      {isConnecting ? (
-                        <svg className="w-5 h-5 animate-spin text-primary-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
-                      ) : (
-                        <svg className="w-5 h-5 text-surface-500 group-hover:text-surface-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                        </svg>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="text-center text-sm text-surface-500 mt-4">
-                Looking for something else?{' '}
+                <ul className="divide-y divide-surface-800 rounded-lg border border-surface-800 bg-surface-950/40">
+                  {orgConnectorsSorted.map((integration) => renderConnectorRow(integration, 'org-connected'))}
+                </ul>
+              </section>
+            )}
+
+            {fromTeamConnectorsSorted.length > 0 && (
+              <section>
+                <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-surface-500">
+                  From your team
+                </h2>
+                <p className="mb-2 text-xs text-surface-500">
+                  Teammates connected these. Add your own account so Basebase can access your data.
+                </p>
+                <ul className="divide-y divide-surface-800 rounded-lg border border-surface-800 bg-surface-950/40">
+                  {fromTeamConnectorsSorted.map((integration) => renderConnectorRow(integration, 'team-only'))}
+                </ul>
+              </section>
+            )}
+          </>
+        )}
+
+        <div className="pt-1">
+          <button
+            type="button"
+            onClick={openCustomMcpForm}
+            className="rounded-lg border border-surface-600 px-4 py-2 text-sm font-medium text-surface-200 transition-colors hover:bg-surface-800"
+          >
+            Add custom connector
+          </button>
+        </div>
+      </div>
+
+      {/* Connector detail drawer */}
+      {detailIntegration !== null && detailTileState !== null && (() => {
+        const d = detailIntegration;
+        const st = detailTileState;
+        const isStartingSyncDrawer =
+          (st === 'connected' || st === 'org-connected') &&
+          getConnectorDisplay(d.provider).hasSync !== false &&
+          !d.lastSyncAt &&
+          !syncingProviders.has(d.provider);
+        const isSyncingDrawer = syncingProviders.has(d.provider) || isStartingSyncDrawer;
+        const hasSyncDrawer = getConnectorDisplay(d.provider).hasSync !== false;
+        const showResyncDrawer =
+          (st === 'connected' || st === 'org-connected') &&
+          d.provider !== 'google_drive' &&
+          hasSyncDrawer;
+        const canDisconnectDrawer = (st === 'connected' && d.isOwner) || st === 'org-connected';
+
+        return (
+          <>
+            <button
+              type="button"
+              className="fixed inset-0 z-[44] bg-black/50"
+              aria-label="Close details"
+              onClick={() => setDetailProvider(null)}
+            />
+            <aside className="fixed inset-y-0 right-0 z-[45] flex w-full max-w-full flex-col border-l border-surface-800 bg-surface-950 shadow-2xl sm:max-w-md">
+              <div className="flex items-start justify-between gap-3 border-b border-surface-800 px-4 py-4">
+                <div className="flex min-w-0 items-start gap-3">
+                  <div
+                    className={`flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl ${
+                      isImageIcon(d.icon) ? '' : `${getColorClass(d.color)} text-white`
+                    }`}
+                  >
+                    {isImageIcon(d.icon) ? (
+                      <img src={d.icon} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      renderIcon(d.icon)
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="text-lg font-semibold text-surface-100">{d.name}</h2>
+                    <p className="mt-1 text-sm text-surface-400">{d.description}</p>
+                  </div>
+                </div>
                 <button
                   type="button"
-                  onClick={openAddConnectorModal}
-                  className="text-primary-400 hover:text-primary-300 underline underline-offset-2"
+                  onClick={() => setDetailProvider(null)}
+                  className="rounded-lg p-2 text-surface-400 hover:bg-surface-800 hover:text-surface-200"
+                  aria-label="Close"
                 >
-                  Browse all connectors
+                  <HiX className="h-5 w-5" />
                 </button>
-              </p>
-            </div>
-          ) : (
-            <div className="grid gap-4">
-              {myConnectors.map((integration) => renderIntegrationTile(integration, 'connected'))}
-            </div>
-          )}
-        </section>
+              </div>
 
-        {/* Team Connectors — org-scoped integrations connected by a teammate */}
-        {orgConnectors.length > 0 && (
-          <section>
-            <h2 className="text-lg font-semibold text-surface-100 mb-4 flex items-center gap-2">
-              <span className="w-2 h-2 bg-emerald-500 rounded-full" />
-              Team Connectors ({orgConnectors.length})
-            </h2>
-            <p className="text-sm text-surface-400 mb-4">
-              Team scoped connectors connected by a teammate. Anyone can sync or disconnect.
-            </p>
-            <div className="grid gap-4">
-              {orgConnectors.map((integration) => renderIntegrationTile(integration, 'org-connected'))}
-            </div>
-          </section>
-        )}
+              <div className="flex-1 overflow-y-auto px-4 py-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  {renderSharingBadgeBlock(d, st)}
+                  {d.provider.startsWith('mcp_') && (
+                    <span className="rounded bg-surface-700 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-surface-400">
+                      Custom
+                    </span>
+                  )}
+                </div>
 
-        {/* From your team — user-scoped integrations connected by teammates; prompt to add own. */}
-        {fromTeamConnectors.length > 0 && (
-          <section>
-            <h2 className="text-lg font-semibold text-surface-100 mb-4 flex items-center gap-2">
-              <span className="w-2 h-2 bg-surface-500 rounded-full" />
-              From your team ({fromTeamConnectors.length})
-            </h2>
-            <p className="text-sm text-surface-400 mb-4">
-              Teammates have connected these personal integrations. Connect your own for Basebase to access your data.
-            </p>
-            <div className="grid gap-4">
-              {fromTeamConnectors.map((integration) => renderIntegrationTile(integration, 'team-only'))}
-            </div>
-          </section>
-        )}
+                {st === 'connected' && d.connectedBy && !d.isOwner && (
+                  <p className="mt-3 text-xs text-surface-500">Connected by {d.connectedBy}</p>
+                )}
 
-        {/* Available to connect — no one in org has connected yet */}
-        {availableIntegrations.length > 0 && (
-          <section>
-            <h2 className="text-lg font-semibold text-surface-100 mb-4 flex items-center gap-2">
-              <span className="w-2 h-2 bg-surface-500 rounded-full opacity-60" />
-              More connectors
-            </h2>
-            <div className="grid gap-4">
-              {availableIntegrations.map((integration) => renderIntegrationTile(integration, 'available'))}
-            </div>
-          </section>
-        )}
+                {(st === 'connected' || st === 'org-connected') && d.lastSyncAt && !isSyncingDrawer && (
+                  <p className="mt-3 text-xs text-surface-500">
+                    Last synced: {new Date(d.lastSyncAt).toLocaleString()}
+                  </p>
+                )}
 
-      </div>
+                {(st === 'connected' || st === 'org-connected') &&
+                  (isStartingSyncDrawer ||
+                    syncProgress[d.provider] !== undefined ||
+                    d.syncStats) && (
+                  <p className="mt-2 text-xs text-surface-400">
+                    {isStartingSyncDrawer ? (
+                      <span className="text-primary-400">Starting sync…</span>
+                    ) : syncProgress[d.provider] !== undefined ? (
+                      <span className="text-primary-400">
+                        Syncing
+                        {syncStep[d.provider] ? ` ${syncStep[d.provider]}` : ''}
+                        …{' '}
+                        {getActivityLabel(
+                          d.provider,
+                          syncProgress[d.provider] ?? 0,
+                          syncStep[d.provider],
+                        )}
+                      </span>
+                    ) : d.syncStats ? (
+                      formatSyncStats(d.syncStats, d.provider)
+                    ) : null}
+                  </p>
+                )}
+
+                {(st === 'connected' || st === 'org-connected') && d.lastError && !isSyncingDrawer && (
+                  <p className="mt-2 text-xs text-red-400">Error: {d.lastError}</p>
+                )}
+
+                {st === 'org-connected' && (
+                  <p className="mt-3 text-xs text-surface-400">
+                    Connected by {d.teamConnections.map((tc) => tc.userName).join(', ')}
+                  </p>
+                )}
+
+                {st === 'team-only' && (
+                  <div className="mt-3 space-y-1 text-xs text-surface-400">
+                    <p>Connected by {d.teamConnections.map((tc) => tc.userName).join(', ')}</p>
+                    {d.shareSyncedData || d.shareQueryAccess || d.shareWriteAccess ? (
+                      <p className="text-surface-300">
+                        Shared with you:{' '}
+                        {[
+                          d.shareSyncedData && 'synced data',
+                          d.shareQueryAccess && 'query access',
+                          d.shareWriteAccess && 'write access',
+                        ]
+                          .filter(Boolean)
+                          .join(', ')}
+                      </p>
+                    ) : (
+                      <p className="text-surface-500">No sharing enabled yet</p>
+                    )}
+                  </div>
+                )}
+
+                {d.provider === 'code_sandbox' && !canConnectCodeSandbox && (
+                  <p className="mt-3 text-xs text-amber-400">
+                    Code Sandbox can only be connected by organization admins or global admins.
+                  </p>
+                )}
+
+                {d.provider === 'ispot_tv' && (
+                  <div className="mt-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIspotClientId('');
+                        setIspotClientSecret('');
+                        setIspotError(null);
+                        setShowIspotForm(true);
+                      }}
+                      className="rounded-lg border border-surface-600 px-3 py-2 text-sm font-medium text-surface-200 hover:bg-surface-800"
+                    >
+                      Manage credentials
+                    </button>
+                  </div>
+                )}
+
+                {renderTeamInfoBlock(d, st)}
+                {renderGitHubDetailBlock(d, st)}
+                {renderSlackDetailBlock(d, st)}
+              </div>
+
+              <div className="flex flex-wrap gap-2 border-t border-surface-800 px-4 py-4">
+                {st === 'connected' && d.isOwner && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenSharingSettings(d)}
+                    className="inline-flex items-center gap-2 rounded-lg border border-surface-600 px-3 py-2 text-xs font-medium text-surface-200 hover:bg-surface-800"
+                  >
+                    <HiCog className="h-4 w-4" />
+                    Configure sharing
+                  </button>
+                )}
+                {hasSyncDrawer && (st === 'connected' || st === 'org-connected') && (
+                  <button
+                    type="button"
+                    disabled={isSyncingDrawer}
+                    onClick={() => void handleSync(d.provider)}
+                    className="rounded-lg border border-surface-600 bg-surface-800 px-3 py-2 text-xs font-medium text-surface-100 hover:bg-surface-700 disabled:opacity-50"
+                  >
+                    {isSyncingDrawer ? 'Syncing…' : 'Sync now'}
+                  </button>
+                )}
+                {showResyncDrawer && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={isSyncingDrawer}
+                      onClick={() => void handleSync(d.provider, isoUtcSubtractMs(RESYNC_OFFSET_MS.hours24))}
+                      className="rounded-lg border border-surface-600 px-3 py-2 text-xs font-medium text-surface-200 hover:bg-surface-800 disabled:opacity-50"
+                    >
+                      Resync 24h
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isSyncingDrawer}
+                      onClick={() => void handleSync(d.provider, isoUtcSubtractMs(RESYNC_OFFSET_MS.days7))}
+                      className="rounded-lg border border-surface-600 px-3 py-2 text-xs font-medium text-surface-200 hover:bg-surface-800 disabled:opacity-50"
+                    >
+                      Resync 7d
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isSyncingDrawer}
+                      onClick={() => void handleSync(d.provider, isoUtcSubtractMs(RESYNC_OFFSET_MS.days30))}
+                      className="rounded-lg border border-surface-600 px-3 py-2 text-xs font-medium text-surface-200 hover:bg-surface-800 disabled:opacity-50"
+                    >
+                      Resync 30d
+                    </button>
+                  </>
+                )}
+                {st === 'team-only' && (
+                  <button
+                    type="button"
+                    onClick={() => void handleConnect(d.provider)}
+                    className="rounded-lg border border-primary-500/30 px-3 py-2 text-xs font-medium text-primary-400 hover:bg-primary-500/10"
+                  >
+                    Connect your account
+                  </button>
+                )}
+                {canDisconnectDrawer && (
+                  <button
+                    type="button"
+                    onClick={() => void handleDisconnect(d.provider)}
+                    className="rounded-lg px-3 py-2 text-xs font-medium text-red-400 hover:bg-red-500/10"
+                  >
+                    Disconnect
+                  </button>
+                )}
+              </div>
+            </aside>
+          </>
+        );
+      })()}
 
       {/* Disconnect / error / success banners */}
       {syncError && (
