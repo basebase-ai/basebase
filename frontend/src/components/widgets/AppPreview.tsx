@@ -1,21 +1,13 @@
 /**
  * AppPreview — universal app preview component.
  *
- * Renders in priority order based on preferred_mode (from widget_config) or auto:
- * 1. Screenshot (data URL from html2canvas capture)
- * 2. Widget (LLM-inferred data summary card)
- * 3. Mini App (CSS-scaled iframe of the full app)
- * 4. Default chart icon placeholder
+ * List views must never render live apps: they show the last stored screenshot
+ * captured when the app was opened/created, falling back to a static icon.
  */
 
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { apiRequest } from '../../lib/api';
 import type { WidgetConfig } from '../../store/types';
-import { WidgetCard } from './WidgetCard';
-
-const LazySandpackAppRenderer = lazy(() =>
-  import('../apps/SandpackAppRenderer').then((m) => ({ default: m.SandpackAppRenderer }))
-);
 
 type PreviewMode = 'auto' | 'screenshot' | 'widget' | 'mini_app' | 'icon';
 
@@ -29,45 +21,6 @@ interface AppPreviewProps {
 function ScreenshotView({ src, title }: { src: string; title: string }): JSX.Element {
   return (
     <img src={src} alt={title} className="w-full h-full object-cover object-top" />
-  );
-}
-
-function WidgetView({ appId, appTitle, widgetConfig, onClick }: {
-  appId: string; appTitle: string; widgetConfig: WidgetConfig; onClick?: (id: string) => void;
-}): JSX.Element {
-  return (
-    <WidgetCard appId={appId} appTitle={appTitle} widgetConfig={widgetConfig} onClick={onClick} />
-  );
-}
-
-function MiniAppView({ appId, onClick }: { appId: string; onClick?: (id: string) => void }): JSX.Element {
-  return (
-    <div
-      className="w-full aspect-video overflow-hidden relative rounded-xl border border-surface-800 cursor-pointer bg-surface-900"
-    >
-      {/* Transparent overlay captures clicks instead of the iframe */}
-      <div
-        className="absolute inset-0 z-10"
-        onClick={() => onClick?.(appId)}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => { if (e.key === 'Enter') onClick?.(appId); }}
-      />
-      <div className="pointer-events-none" style={{ width: 1280, height: 720, transform: 'scale(var(--preview-scale, 0.2))', transformOrigin: 'top left' }} ref={(el) => {
-        if (el) {
-          const parent = el.parentElement;
-          if (parent) {
-            const scale = parent.clientWidth / 1280;
-            el.style.setProperty('--preview-scale', String(scale));
-            el.style.transform = `scale(${scale})`;
-          }
-        }
-      }}>
-        <Suspense fallback={<div className="w-full h-full bg-surface-900" />}>
-          <LazySandpackAppRenderer appId={appId} />
-        </Suspense>
-      </div>
-    </div>
   );
 }
 
@@ -108,35 +61,25 @@ export function AppPreview({ appId, appTitle, widgetConfig, onClick }: AppPrevie
     return () => { cancelled = true; };
   }, [appId, hasScreenshotFlag, screenshotUrl, widgetConfig?.screenshot]);
 
-  // Determine effective mode with fallback chain
-  let effectiveMode: 'screenshot' | 'widget' | 'mini_app' | 'icon';
-  if (defaultMode === 'auto') {
-    effectiveMode = (hasScreenshotFlag && screenshotUrl)
-      ? 'screenshot'
-      : hasWidget
-        ? 'widget'
-        : 'icon';
-  } else if (defaultMode === 'screenshot') {
-    effectiveMode = (hasScreenshotFlag && screenshotUrl) ? 'screenshot' : hasWidget ? 'widget' : 'icon';
-  } else if (defaultMode === 'widget') {
-    effectiveMode = hasWidget ? 'widget' : 'icon';
-  } else if (defaultMode === 'mini_app') {
-    effectiveMode = 'mini_app';
-  } else {
-    effectiveMode = 'icon';
-  }
+  // List previews are static snapshots only. Even if a user previously chose
+  // widget/mini_app as their preview mode, do not execute app code or queries here.
+  const effectiveMode: 'screenshot' | 'icon' =
+    defaultMode !== 'icon' && hasScreenshotFlag && screenshotUrl ? 'screenshot' : 'icon';
 
-  // For widget mode, render WidgetCard directly (it's its own button)
-  if (effectiveMode === 'widget' && widgetConfig?.layout) {
-    return (
-      <WidgetView appId={appId} appTitle={appTitle} widgetConfig={widgetConfig} onClick={onClick} />
-    );
-  }
-
-  // Mini app mode
-  if (effectiveMode === 'mini_app') {
-    return <MiniAppView appId={appId} onClick={onClick} />;
-  }
+  useEffect(() => {
+    if (hasWidget && defaultMode === 'widget') {
+      console.debug('[AppPreview] Widget preview mode requested in list view; using stored screenshot instead', {
+        appId,
+        hasScreenshot: Boolean(screenshotUrl),
+      });
+    }
+    if (defaultMode === 'mini_app') {
+      console.debug('[AppPreview] Mini-app preview mode requested in list view; live render is disabled', {
+        appId,
+        hasScreenshot: Boolean(screenshotUrl),
+      });
+    }
+  }, [appId, defaultMode, hasWidget, screenshotUrl]);
 
   return (
     <button
