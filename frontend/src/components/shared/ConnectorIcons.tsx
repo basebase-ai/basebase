@@ -77,6 +77,26 @@ const AttioIcon: IconType = ({ className, ...props }) => (
   </svg>
 );
 
+/** Granola spiral mark rendered with currentColor so it matches other monochrome connector icons. */
+const GranolaIcon: IconType = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    aria-hidden
+    className={className}
+    {...props}
+  >
+    <path
+      d="M18.5 4.35C15.95 3.06 12.98 2.82 10.24 3.7C6.67 4.84 4.01 7.57 3.26 10.87C2.52 14.17 3.79 17.52 6.6 19.33C10.16 21.63 15.37 21.04 18.38 18.1C21.08 15.46 21.17 11.27 18.57 8.9C16.39 6.91 12.73 6.68 10.21 8.38C8.13 9.78 7.42 12.5 8.78 14.33C9.96 15.91 12.58 16.21 14.03 14.77C15.21 13.61 15.16 11.62 13.77 10.84C12.8 10.29 11.46 10.56 10.91 11.38"
+      stroke="currentColor"
+      strokeWidth="2.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 export const CONNECTOR_ICON_MAP: Record<string, IconType> = {
   hubspot: SiHubspot,
   salesforce: SiSalesforce,
@@ -98,6 +118,7 @@ export const CONNECTOR_ICON_MAP: Record<string, IconType> = {
   asana: SiAsana,
   trello: TrelloIcon,
   attio: AttioIcon,
+  granola: GranolaIcon,
   globe: HiGlobeAlt,
   terminal: HiLightningBolt,
   sms: HiDeviceMobile,
@@ -122,7 +143,7 @@ export const CONNECTOR_DISPLAY: Record<string, ConnectorDisplay> = {
   microsoft_calendar: { icon: "microsoft_calendar", color: "from-sky-500 to-sky-600", label: "Microsoft Calendar" },
   microsoft_mail: { icon: "microsoft_mail", color: "from-sky-500 to-sky-600", label: "Microsoft Mail" },
   fireflies: { icon: "fireflies", color: "from-violet-500 to-violet-600", label: "Fireflies" },
-  granola: { icon: "/connector-icons/granola.png", color: "from-lime-500 to-green-600", label: "Granola" },
+  granola: { icon: "granola", color: "from-lime-500 to-green-600", label: "Granola" },
   google_drive: { icon: "google_drive", color: "from-yellow-500 to-amber-500", label: "Google Drive" },
   apollo: { icon: "apollo", color: "from-yellow-400 to-yellow-500", label: "Apollo" },
   github: { icon: "github", color: "from-gray-600 to-gray-700", label: "GitHub" },

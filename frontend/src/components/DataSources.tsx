@@ -69,7 +69,7 @@ const INTEGRATION_CONFIG_FALLBACK: Record<string, IntegrationConfigEntry> = {
   microsoft_calendar: { name: 'Microsoft Calendar', description: 'Outlook calendar events and meetings', icon: 'microsoft_calendar', color: 'from-sky-500 to-sky-600', scope: 'user' },
   microsoft_mail: { name: 'Microsoft Mail', description: 'Outlook emails and communications', icon: 'microsoft_mail', color: 'from-sky-500 to-sky-600', scope: 'user' },
   fireflies: { name: 'Fireflies', description: 'Meeting transcriptions and notes', icon: 'fireflies', color: 'from-violet-500 to-violet-600', scope: 'user' },
-  granola: { name: 'Granola', description: 'AI meeting notes, transcripts, and action items', icon: '/connector-icons/granola.png', color: 'from-lime-500 to-green-600', scope: 'user' },
+  granola: { name: 'Granola', description: 'AI meeting notes, transcripts, and action items', icon: 'granola', color: 'from-lime-500 to-green-600', scope: 'user' },
   google_drive: { name: 'Google Drive', description: 'Docs, Sheets, Slides, and Gemini meeting notes from Drive', icon: 'google_drive', color: 'from-yellow-500 to-amber-500', scope: 'user' },
   apollo: { name: 'Apollo.io', description: 'Data enrichment - Contact titles, companies, emails', icon: 'apollo', color: 'from-yellow-400 to-yellow-500', scope: 'user' },
   github: { name: 'GitHub', description: 'Track repos, commits, and pull requests by team', icon: 'github', color: 'from-gray-600 to-gray-700', scope: 'user' },
