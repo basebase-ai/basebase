@@ -344,6 +344,75 @@ def test_workflow_tool_progress_subscription_completes_after_max_timeout(
     assert "timed out" in timeout_event["result"]["error"]
 
 
+def test_workflow_tool_progress_subscription_times_out_rehydrated_state(
+    monkeypatch: Any,
+) -> None:
+    socket = _FakeSocket()
+    persisted_event = {
+        "type": "tool_progress",
+        "conversation_id": "conv-rehydrate-timeout",
+        "tool_id": "tool-rehydrate-timeout",
+        "tool_name": "foreach",
+        "result": {"message": "Still working"},
+        "status": "running",
+    }
+
+    class _FakePubSub:
+        async def subscribe(self, _channel: str) -> None:
+            return None
+
+        async def get_message(self, **_kwargs: Any) -> dict[str, Any] | None:
+            await asyncio.sleep(0.002)
+            return None
+
+        async def unsubscribe(self, _channel: str) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeRedis:
+        def pubsub(self) -> _FakePubSub:
+            return _FakePubSub()
+
+    async def _fake_get_tool_progress_redis() -> _FakeRedis:
+        return _FakeRedis()
+
+    async def _fake_collect(_organization_id: str) -> list[dict[str, object]]:
+        return [persisted_event]
+
+    monkeypatch.setattr(websockets, "WORKFLOW_TOOL_PROGRESS_SANITY_TIMEOUT_SECONDS", 60.0)
+    monkeypatch.setattr(websockets, "WORKFLOW_TOOL_PROGRESS_MAX_TIMEOUT_SECONDS", 0.005)
+    monkeypatch.setattr(websockets, "WORKFLOW_TOOL_PROGRESS_PUBSUB_POLL_SECONDS", 0.001)
+    monkeypatch.setattr(websockets, "_collect_running_workflow_tool_updates", _fake_collect)
+    monkeypatch.setattr(
+        __import__("services.tool_progress_pubsub", fromlist=["get_tool_progress_redis"]),
+        "get_tool_progress_redis",
+        _fake_get_tool_progress_redis,
+    )
+
+    async def _run() -> None:
+        task = asyncio.create_task(
+            websockets._subscribe_workflow_tool_progress(socket, "org-1")  # noqa: SLF001
+        )
+        while len(socket.messages) < 2:
+            await asyncio.sleep(0.001)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_run())
+    rehydrated_event = json.loads(socket.messages[0])
+    timeout_event = json.loads(socket.messages[1])
+    assert rehydrated_event == persisted_event
+    assert timeout_event["conversation_id"] == "conv-rehydrate-timeout"
+    assert timeout_event["tool_id"] == "tool-rehydrate-timeout"
+    assert timeout_event["status"] == "complete"
+    assert "timed out" in timeout_event["result"]["error"]
+
+
 def test_workflow_tool_progress_subscribes_before_rehydrate(monkeypatch: Any) -> None:
     socket = _FakeSocket()
     calls: list[str] = []

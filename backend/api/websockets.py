@@ -442,8 +442,15 @@ async def _rehydrate_running_workflow_tool_status(
     websocket: WebSocket,
     organization_id: str,
     last_sent: dict[str, str],
+    active_tools: dict[str, dict[str, object]] | None = None,
+    observed_at: float | None = None,
 ) -> bool:
-    """Send persisted running workflow tool states, de-duped against prior sends."""
+    """Send persisted running workflow tool states, de-duped against prior sends.
+
+    When active_tools is provided, also track rehydrated running tools so the
+    subscription timeout path can resolve stale tool progress for reconnecting
+    clients even if no further Redis event arrives.
+    """
     try:
         updates = await _collect_running_workflow_tool_updates(organization_id)
     except Exception as exc:
@@ -457,6 +464,13 @@ async def _rehydrate_running_workflow_tool_status(
     for update in updates:
         key = f"{update.get('conversation_id')}:{update.get('tool_id')}"
         signature = _tool_progress_signature(update)
+        if active_tools is not None:
+            tracked_update = dict(update)
+            tracked_update["first_seen_at"] = active_tools.get(key, {}).get(
+                "first_seen_at",
+                observed_at if observed_at is not None else asyncio.get_running_loop().time(),
+            )
+            active_tools[key] = tracked_update
         if last_sent.get(key) == signature:
             continue
         if not await _send_tool_progress_event(websocket, organization_id, update):
@@ -535,6 +549,8 @@ async def _subscribe_workflow_tool_progress(
                 websocket,
                 organization_id,
                 last_sent,
+                active_tools,
+                asyncio.get_running_loop().time(),
             ):
                 return
 
