@@ -273,3 +273,94 @@ def test_workflow_tool_progress_subscription_times_out_silent_worker(monkeypatch
     assert timeout_event["tool_id"] == "tool-timeout"
     assert timeout_event["status"] == "complete"
     assert "timed out" in timeout_event["result"]["error"]
+
+
+def test_workflow_tool_progress_rehydrate_sends_persisted_state(monkeypatch: Any) -> None:
+    socket = _FakeSocket()
+    persisted_event = {
+        "type": "tool_progress",
+        "conversation_id": "conv-rehydrate",
+        "tool_id": "tool-rehydrate",
+        "tool_name": "foreach",
+        "result": {"message": "Still working", "completed": 1, "total": 3},
+        "status": "running",
+    }
+
+    async def _fake_collect(_organization_id: str) -> list[dict[str, object]]:
+        return [persisted_event]
+
+    monkeypatch.setattr(
+        websockets,
+        "_collect_running_workflow_tool_updates",
+        _fake_collect,
+    )
+
+    async def _run() -> dict[str, str]:
+        last_sent: dict[str, str] = {}
+        sent = await websockets._rehydrate_running_workflow_tool_status(  # noqa: SLF001
+            socket,
+            "org-1",
+            last_sent,
+        )
+        assert sent is True
+        # Same persisted payload should be de-duped on the next rehydrate pass.
+        sent = await websockets._rehydrate_running_workflow_tool_status(  # noqa: SLF001
+            socket,
+            "org-1",
+            last_sent,
+        )
+        assert sent is True
+        return last_sent
+
+    last_sent = asyncio.run(_run())
+    assert len(socket.messages) == 1
+    assert json.loads(socket.messages[0]) == persisted_event
+    assert last_sent == {
+        "conv-rehydrate:tool-rehydrate": websockets._tool_progress_signature(  # noqa: SLF001
+            persisted_event
+        )
+    }
+
+
+def test_workflow_tool_progress_polls_rehydrate_until_redis_recovers(monkeypatch: Any) -> None:
+    socket = _FakeSocket()
+    persisted_event = {
+        "type": "tool_progress",
+        "conversation_id": "conv-fallback",
+        "tool_id": "tool-fallback",
+        "tool_name": "foreach",
+        "result": {"message": "Still working"},
+        "status": "running",
+    }
+    redis_checks = 0
+
+    async def _fake_collect(_organization_id: str) -> list[dict[str, object]]:
+        return [persisted_event]
+
+    async def _fake_redis_available() -> bool:
+        nonlocal redis_checks
+        redis_checks += 1
+        return redis_checks >= 1
+
+    monkeypatch.setattr(websockets, "WORKFLOW_TOOL_PROGRESS_PUBSUB_POLL_SECONDS", 0.001)
+    monkeypatch.setattr(
+        websockets,
+        "_collect_running_workflow_tool_updates",
+        _fake_collect,
+    )
+    monkeypatch.setattr(
+        websockets,
+        "_redis_tool_progress_available",
+        _fake_redis_available,
+    )
+
+    async def _run() -> bool:
+        return await websockets._poll_workflow_tool_status_until_redis_recovers(  # noqa: SLF001
+            socket,
+            "org-1",
+            {},
+        )
+
+    assert asyncio.run(_run()) is True
+    assert redis_checks == 1
+    assert json.loads(socket.messages[0]) == persisted_event
