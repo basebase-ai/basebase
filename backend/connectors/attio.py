@@ -111,6 +111,60 @@ def _attio_deal_stage_values(stage: str) -> list[dict[str, Any]]:
     return [{"status": s}]
 
 
+_DEAL_CREATE_WRITE_RESERVED_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "name",
+        "stage",
+        "owner_email",
+        "owner_workspace_member_id",
+        "owner_id",
+        "value",
+        "currency",
+        "company_id",
+        "values",
+    }
+)
+_DEAL_UPDATE_WRITE_RESERVED_KEYS: Final[frozenset[str]] = frozenset(
+    _DEAL_CREATE_WRITE_RESERVED_KEYS
+    | {
+        "id",
+        "deal_id",
+    }
+)
+
+
+def _deal_extra_values_from_write_payload(
+    payload: dict[str, Any],
+    *,
+    reserved_keys: frozenset[str],
+) -> dict[str, Any]:
+    """Build Attio ``data.values`` entries for custom attributes (slug → payload).
+
+    Merges optional nested ``values`` first, then any top-level keys not in
+    ``reserved_keys``. Standard deal fields are applied afterward and always win.
+    """
+    extras: dict[str, Any] = {}
+    nested: Any = payload.get("values")
+    if isinstance(nested, dict):
+        for slug_raw, val in nested.items():
+            slug: str = str(slug_raw).strip() if isinstance(slug_raw, str) else ""
+            if not slug or slug.startswith("_"):
+                continue
+            if val is None:
+                continue
+            extras[slug] = val
+    for key_raw, val in payload.items():
+        if key_raw in reserved_keys or key_raw == "values":
+            continue
+        key: str = str(key_raw).strip() if isinstance(key_raw, str) else ""
+        if not key or key.startswith("_"):
+            continue
+        if val is None:
+            continue
+        extras[key] = val
+    return extras
+
+
 def _attio_deal_owner_values(data: dict[str, Any], *, required: bool) -> list[dict[str, Any]] | None:
     """Standard Attio deals require an owner (workspace member)."""
     wid: Any = data.get("owner_workspace_member_id") or data.get("owner_id")
@@ -229,6 +283,12 @@ class AttioConnector(BaseConnector):
                     {"name": "value", "type": "number", "required": False, "description": "Deal value amount"},
                     {"name": "currency", "type": "string", "required": False, "description": "ISO currency e.g. USD"},
                     {"name": "company_id", "type": "string", "required": False, "description": "associated_company target_record_id"},
+                    {
+                        "name": "values",
+                        "type": "object",
+                        "required": False,
+                        "description": "Additional deal attributes by Attio api_slug (merged into data.values; use get_schema for slugs)",
+                    },
                 ],
             ),
             WriteOperation(
@@ -244,6 +304,12 @@ class AttioConnector(BaseConnector):
                     {"name": "value", "type": "number", "required": False},
                     {"name": "currency", "type": "string", "required": False},
                     {"name": "company_id", "type": "string", "required": False},
+                    {
+                        "name": "values",
+                        "type": "object",
+                        "required": False,
+                        "description": "Additional deal attributes by Attio api_slug (merged into data.values)",
+                    },
                 ],
             ),
             WriteOperation(
@@ -342,8 +408,8 @@ After connecting and syncing, query SQL on `contacts`, `accounts`, `deals`, `act
 - **update_person** — Required: `id` (Attio `record_id`).
 - **create_company** — Required: `name`. Optional: `domains` (array) or `domain` (string). Assert uses `domains`.
 - **update_company** — Required: `id`.
-- **create_deal** — Required: `name`, `stage` (must match a configured pipeline status **title** or **status UUID**), and **either** `owner_email` **or** `owner_workspace_member_id`. Call **`list_statuses`** first (default: deals + stage) to see exact titles/IDs for this workspace—do not guess. Optional: `value`, `currency`, `company_id`.
-- **update_deal** — Required: `id`. Optional: `name`, `stage`, `owner_email`, `owner_workspace_member_id`, `value`, `currency`, `company_id`.
+- **create_deal** — Required: `name`, `stage` (must match a configured pipeline status **title** or **status UUID**), and **either** `owner_email` **or** `owner_workspace_member_id`. Call **`list_statuses`** first (default: deals + stage) to see exact titles/IDs for this workspace—do not guess. Optional: `value`, `currency`, `company_id`. **Custom attributes:** pass Attio attribute **api_slug** as extra top-level keys (e.g. `pipeline_type`) or grouped under optional `values` — each value is sent as-is in `data.values` per [Attio deals API](https://docs.attio.com/rest-api/endpoint-reference/deals/create-a-deal-record).
+- **update_deal** — Required: `id`. Optional: `name`, `stage`, `owner_email`, `owner_workspace_member_id`, `value`, `currency`, `company_id`. Same **custom attributes** rules as `create_deal`.
 - **create_note** — Required: `parent_object`, `parent_record_id`, `title`, `content`. Optional: `format` (`plaintext`|`markdown`).
 
 ## Actions (`run_on_connector`)
@@ -914,6 +980,10 @@ After connecting and syncing, query SQL on `contacts`, `accounts`, `deals`, `act
                 json_body={"data": {"values": values_uc}},
             )
         if operation == "create_deal":
+            extras_cd: dict[str, Any] = _deal_extra_values_from_write_payload(
+                d,
+                reserved_keys=_DEAL_CREATE_WRITE_RESERVED_KEYS,
+            )
             dn: str = str(d.get("name", "") or "").strip()
             if not dn:
                 raise ValueError("create_deal requires name")
@@ -921,11 +991,10 @@ After connecting and syncing, query SQL on `contacts`, `accounts`, `deals`, `act
             if stage_raw is None or not str(stage_raw).strip():
                 raise ValueError("create_deal requires stage (pipeline status title or UUID)")
             owner_vals: list[dict[str, Any]] | None = _attio_deal_owner_values(d, required=True)
-            values_d: dict[str, Any] = {
-                "name": [{"value": dn}],
-                "stage": _attio_deal_stage_values(str(stage_raw)),
-                "owner": owner_vals,
-            }
+            values_d: dict[str, Any] = dict(extras_cd)
+            values_d["name"] = [{"value": dn}]
+            values_d["stage"] = _attio_deal_stage_values(str(stage_raw))
+            values_d["owner"] = owner_vals
             if d.get("value") is not None:
                 cur: str = str(d.get("currency") or "USD")
                 values_d["value"] = [{"currency_value": float(d["value"]), "currency_code": cur}]
@@ -939,10 +1008,14 @@ After connecting and syncing, query SQL on `contacts`, `accounts`, `deals`, `act
                 json_body={"data": {"values": values_d}},
             )
         if operation == "update_deal":
+            extras_ud: dict[str, Any] = _deal_extra_values_from_write_payload(
+                d,
+                reserved_keys=_DEAL_UPDATE_WRITE_RESERVED_KEYS,
+            )
             did: str = str(d.pop("deal_id", None) or d.pop("id", "") or "").strip()
             if not did:
                 raise ValueError("update_deal requires id")
-            values_ud: dict[str, Any] = {}
+            values_ud: dict[str, Any] = dict(extras_ud)
             if d.get("name"):
                 values_ud["name"] = [{"value": str(d["name"])}]
             if d.get("stage") is not None and str(d.get("stage")).strip():
