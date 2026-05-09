@@ -104,7 +104,7 @@ async def update_conversation_embedding(
             summary_text = (conv.summary or "").strip() or None
 
             result = await session.execute(
-                select(ChatMessageModel)
+                select(ChatMessageModel.content, ChatMessageModel.content_blocks)
                 .where(
                     ChatMessageModel.conversation_id == conv.id,
                     ChatMessageModel.role == "user",
@@ -112,7 +112,7 @@ async def update_conversation_embedding(
                 .order_by(ChatMessageModel.created_at.desc())
                 .limit(_MAX_MESSAGES_FOR_RECENT)
             )
-            user_messages = list(result.scalars().all())
+            user_messages = list(result.all())
             total_chars = 0
             for msg in reversed(user_messages):
                 text = _extract_text_from_blocks(msg.content_blocks)

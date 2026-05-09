@@ -20,7 +20,7 @@ from models.chat_message import ChatMessage as ChatMessageModel
 from models.conversation import Conversation
 from models.database import get_admin_session, get_session
 from models.user import User
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from services.anthropic_health import report_anthropic_call_failure, report_anthropic_call_success
 from services.llm_provider import resolve_llm_config, get_adapter
@@ -63,37 +63,22 @@ _TITLE_SYSTEM_PROMPT = (
 )
 
 
-def _semantic_word_count_from_blocks(blocks: list[dict[str, Any]] | None) -> int:
-    """Count words in text-type content blocks only (exclude tool_use, attachments, etc.)."""
-    if not blocks:
-        return 0
-    total: int = 0
-    for block in blocks:
-        if not isinstance(block, dict):
-            continue
-        if block.get("type") != "text":
-            continue
-        text_val: str = str(block.get("text") or "").strip()
-        if text_val:
-            total += len(text_val.split())
-    return total
-
-
 async def count_semantic_words_for_conversation(
     session: Any,
     conversation_id: uuid.UUID,
 ) -> int:
-    """Sum semantic word counts across all messages in the conversation."""
+    """Sum semantic word counts across all messages in the conversation.
+
+    Reads the denormalized ``chat_messages.semantic_word_count`` column rather
+    than streaming every row's ``content_blocks`` JSONB back to Python. The
+    column is kept in sync by an event listener on the ChatMessage model.
+    """
     result = await session.execute(
-        select(ChatMessageModel.content_blocks).where(
+        select(func.coalesce(func.sum(ChatMessageModel.semantic_word_count), 0)).where(
             ChatMessageModel.conversation_id == conversation_id
         )
     )
-    total: int = 0
-    for row in result:
-        blocks: list[dict[str, Any]] | None = row[0]
-        total += _semantic_word_count_from_blocks(blocks)
-    return total
+    return int(result.scalar_one() or 0)
 
 
 def _should_regenerate_summary(
@@ -110,8 +95,12 @@ def _should_regenerate_summary(
     return (semantic_words - summary_word_count_at_generation) >= _SEMANTIC_REGEN_WORD_DELTA
 
 
-def _format_messages(messages: list[ChatMessageModel]) -> str:
-    """Format messages into a compact text representation for the prompt."""
+def _format_messages(messages: list[Any]) -> str:
+    """Format messages into a compact text representation for the prompt.
+
+    Accepts anything with ``.role`` and ``.content_blocks`` attributes —
+    typically SQLAlchemy ``Row`` tuples from a projected select.
+    """
     lines: list[str] = []
     for msg in messages:
         role: str = str(msg.role).upper()
@@ -216,12 +205,12 @@ async def generate_conversation_summary(
                 return None
 
             result = await session.execute(
-                select(ChatMessageModel)
+                select(ChatMessageModel.role, ChatMessageModel.content_blocks)
                 .where(ChatMessageModel.conversation_id == conv.id)
                 .order_by(ChatMessageModel.created_at.desc())
                 .limit(_MAX_MESSAGES_FOR_PROMPT)
             )
-            messages: list[ChatMessageModel] = list(reversed(result.scalars().all()))
+            messages = list(reversed(result.all()))
             if len(messages) < 1:
                 return None
 
@@ -326,12 +315,12 @@ async def generate_conversation_title(
                 return None
 
             result = await session.execute(
-                select(ChatMessageModel)
+                select(ChatMessageModel.role, ChatMessageModel.content_blocks)
                 .where(ChatMessageModel.conversation_id == conv.id)
                 .order_by(ChatMessageModel.created_at.desc())
                 .limit(_MAX_MESSAGES_FOR_PROMPT)
             )
-            messages: list[ChatMessageModel] = list(reversed(result.scalars().all()))
+            messages = list(reversed(result.all()))
             if not messages:
                 return None
             formatted = _format_messages(messages)
