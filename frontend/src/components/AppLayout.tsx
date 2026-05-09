@@ -106,6 +106,9 @@ interface WsConversationCreated {
   conversation_id: string;
   title?: string;
   scope?: 'private' | 'shared';
+  source?: string | null;
+  group_bucket_type?: 'direct' | 'channel' | 'uncategorized';
+  group_bucket_key?: string | null;
 }
 
 interface WsCatchup {
@@ -1261,7 +1264,11 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
           const title = created.title || 'New Chat';
           const scope: 'private' | 'shared' =
             created.scope === 'private' ? 'private' : 'shared';
-          addConversation(created.conversation_id, title, scope);
+          addConversation(created.conversation_id, title, scope, {
+            source: created.source ?? 'web',
+            groupBucketType: created.group_bucket_type ?? 'direct',
+            groupBucketKey: created.group_bucket_key ?? 'direct',
+          });
           if (source === 'ws') {
             // Only update currentChatId when on new chat (null) - we're waiting for the backend
             // to assign an ID. Don't overwrite when user has selected an existing conversation.

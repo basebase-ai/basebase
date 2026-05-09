@@ -901,6 +901,7 @@ async def create_conversation(
             participating_user_ids=[auth.user_id],
             title=request.title,
             scope=scope,
+            source=_WEB_PLATFORM_SLUG,
         )
         session.add(conversation)
         # Capture values before commit (model defaults are set on instantiation)
@@ -942,6 +943,9 @@ async def create_conversation(
             scope=conv_scope,
             agent_responding=True,
             participants=participants,
+            source=_WEB_PLATFORM_SLUG,
+            group_bucket_type="direct",
+            group_bucket_key="direct",
         )
 
 
