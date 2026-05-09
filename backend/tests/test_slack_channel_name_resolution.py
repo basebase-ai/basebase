@@ -92,11 +92,6 @@ async def test_persist_channel_activity_uses_channel_name():
         
         await messenger.persist_channel_activity(message, org_id)
         
-        # Verify pg_insert was called with Activity model
-        from models.activity import Activity
-        # args, kwargs = mock_insert_obj.call_args
-        # Note: pg_insert is called as pg_insert(Activity)
-        
         # Verify values() was called with correct subject and custom_fields
         assert mock_insert_obj.values.called
         values_args, values_kwargs = mock_insert_obj.values.call_args
@@ -817,3 +812,115 @@ async def test_get_cached_channel_context_payload_from_activity_preserves_file_m
     rendered = messenger._format_single_slack_context_line(channel_messages[0])
     assert rendered is not None
     assert "<slack_file_ref id=F123" in rendered
+
+
+@pytest.mark.asyncio
+async def test_inject_recent_channel_context_hot_caches_activity_payload_per_channel():
+    messenger = SlackMessenger()
+    org_id = str(uuid4())
+    workspace_id = "T_HOT"
+    channel_id = "C_HOT"
+    activity_reads = 0
+
+    async def _fake_activity_payload(*, organization_id: str, channel_id: str):
+        nonlocal activity_reads
+        activity_reads += 1
+        await asyncio.sleep(0.01)
+        return (
+            [
+                {
+                    "ts": "1710711600.000",
+                    "thread_ts": "1710711600.000",
+                    "user": "U_A",
+                    "text": "hot cached channel message",
+                }
+            ],
+            {},
+        )
+
+    def _make_message() -> InboundMessage:
+        return InboundMessage(
+            text="hello",
+            message_type=MessageType.MENTION,
+            external_user_id="U123",
+            message_id="123.456",
+            messenger_context={
+                "workspace_id": workspace_id,
+                "channel_id": channel_id,
+                "organization_id": org_id,
+                "channel_type": "channel",
+            },
+        )
+
+    messages = [_make_message(), _make_message()]
+    mock_connector = AsyncMock()
+    mock_connector.get_channel_messages.side_effect = AssertionError("should use activity payload")
+
+    with (
+        patch.object(messenger, "_get_cached_channel_context_payload_from_activity", _fake_activity_payload),
+        patch.object(messenger, "_get_connector", return_value=mock_connector),
+    ):
+        await asyncio.gather(
+            *[
+                messenger._inject_recent_channel_context(
+                    message=message,
+                    workspace_id=workspace_id,
+                    channel_id=channel_id,
+                )
+                for message in messages
+            ]
+        )
+
+    assert activity_reads == 1
+    for message in messages:
+        context_payload = message.messenger_context["workflow_context"]["slack_recent_channel_context"]
+        assert "hot cached channel message" in context_payload
+
+
+@pytest.mark.asyncio
+async def test_inject_recent_channel_context_hot_caches_empty_payload_briefly():
+    messenger = SlackMessenger()
+    org_id = str(uuid4())
+    workspace_id = "T_EMPTY_HOT"
+    channel_id = "C_EMPTY_HOT"
+    activity_reads = 0
+
+    async def _fake_activity_payload(*, organization_id: str, channel_id: str):
+        nonlocal activity_reads
+        activity_reads += 1
+        return None
+
+    def _make_message() -> InboundMessage:
+        return InboundMessage(
+            text="hello",
+            message_type=MessageType.MENTION,
+            external_user_id="U123",
+            message_id="123.456",
+            messenger_context={
+                "workspace_id": workspace_id,
+                "channel_id": channel_id,
+                "organization_id": org_id,
+                "channel_type": "channel",
+            },
+        )
+
+    mock_connector = AsyncMock()
+    mock_connector.get_channel_messages.return_value = []
+
+    with (
+        patch.object(messenger, "_get_cached_channel_context_payload_from_activity", _fake_activity_payload),
+        patch.object(messenger, "_get_connector", return_value=mock_connector),
+    ):
+        await messenger._inject_recent_channel_context(
+            message=_make_message(),
+            workspace_id=workspace_id,
+            channel_id=channel_id,
+        )
+        await messenger._inject_recent_channel_context(
+            message=_make_message(),
+            workspace_id=workspace_id,
+            channel_id=channel_id,
+        )
+
+    assert activity_reads == 1
+    mock_connector.get_channel_messages.assert_awaited_once()

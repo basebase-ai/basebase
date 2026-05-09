@@ -8,8 +8,11 @@ and formatting.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 from typing import Any
@@ -34,11 +37,30 @@ _SLACK_CONTEXT_SUMMARY_MESSAGE_CHAR_LIMIT: int = 220
 _SLACK_CONTEXT_SUMMARY_RECENT_ITEMS: int = 80
 _SLACK_CONTEXT_SUMMARY_TOP_THREADS: int = 10
 _SLACK_CONTEXT_SNAPSHOT_SEPARATOR: str = "\n\n---\n\n"
+_SLACK_CHANNEL_CONTEXT_HOT_CACHE_TTL_SECONDS: int = 30
+_SLACK_CHANNEL_CONTEXT_HOT_CACHE_EMPTY_TTL_SECONDS: int = 5
+_SLACK_CHANNEL_CONTEXT_HOT_CACHE_MAX_ENTRIES: int = 2000
 _SLACK_FENCE_RE: re.Pattern[str] = re.compile(r"```[\w-]*\n.*?```", re.DOTALL)
 _SLACK_TABLE_RE: re.Pattern[str] = re.compile(
     r"((?:^(?:\|.+\||[^\n|]+(?:\|[^\n|]+){2,})$\n?)+)",
     re.MULTILINE,
 )
+
+
+@dataclass(frozen=True)
+class _SlackChannelContextHotCacheEntry:
+    channel_messages: list[dict[str, Any]]
+    thread_expansions: dict[str, list[dict[str, Any]]]
+    expires_at: float
+    source: str
+
+
+_slack_channel_context_hot_cache: dict[
+    tuple[str, str, str],
+    _SlackChannelContextHotCacheEntry,
+] = {}
+_slack_channel_context_hot_cache_lock: asyncio.Lock = asyncio.Lock()
+_slack_channel_context_hot_cache_key_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
 
 
 def _normalize_slack_dedupe_text(text: str) -> str:
@@ -168,47 +190,23 @@ class SlackMessenger(WorkspaceMessenger):
             return
 
         try:
-            channel_messages: list[dict[str, Any]] = []
-            thread_expansions: dict[str, list[dict[str, Any]]] = {}
-            cached_payload: tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]] | None = (
-                await self._get_cached_channel_context_payload_from_activity(
-                    organization_id=str(ctx.get("organization_id") or ""),
-                    channel_id=channel_id,
-                )
+            (
+                channel_messages,
+                thread_expansions,
+                context_source,
+            ) = await self._get_hot_cached_channel_context_payload(
+                organization_id=str(ctx.get("organization_id") or ""),
+                workspace_id=workspace_id,
+                channel_id=channel_id,
             )
-            if cached_payload is not None:
-                cached_messages, cached_thread_expansions = cached_payload
-                if cached_messages:
-                    channel_messages = cached_messages
-                    thread_expansions = cached_thread_expansions
-                    logger.info(
-                        "[slack] Using cached channel context payload workspace=%s channel=%s messages=%d threads=%d",
-                        workspace_id,
-                        channel_id,
-                        len(channel_messages),
-                        len(thread_expansions),
-                    )
-                else:
-                    logger.info(
-                        "[slack] Cached channel context payload empty; falling back to Slack API workspace=%s channel=%s",
-                        workspace_id,
-                        channel_id,
-                    )
-            if not channel_messages:
-                try:
-                    connector: SlackConnector = await self._get_connector(workspace_id)
-                    channel_messages = await connector.get_channel_messages(
-                        channel_id=channel_id,
-                        limit=_SLACK_CONTEXT_CHANNEL_MESSAGE_LIMIT,
-                    )
-                except Exception as connector_exc:
-                    logger.warning(
-                        "[slack] Failed to fetch Slack API channel context on cache miss channel=%s workspace=%s: %s",
-                        channel_id,
-                        workspace_id,
-                        connector_exc,
-                    )
-                    return
+            logger.info(
+                "[slack] Channel context payload ready source=%s workspace=%s channel=%s messages=%d threads=%d",
+                context_source,
+                workspace_id,
+                channel_id,
+                len(channel_messages),
+                len(thread_expansions),
+            )
             if not channel_messages:
                 logger.info(
                     "[slack] No channel history to attach for context channel=%s workspace=%s",
@@ -301,6 +299,233 @@ class SlackMessenger(WorkspaceMessenger):
                 workspace_id,
                 exc,
             )
+
+    async def _get_hot_cached_channel_context_payload(
+        self,
+        *,
+        organization_id: str,
+        workspace_id: str,
+        channel_id: str,
+    ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], str]:
+        """Return recent channel context with a short per-channel hot cache.
+
+        Slack mentions in busy channels can fan out many agent requests in a short
+        period. This cache ensures each process reads persisted channel activity
+        (or falls back to Slack history) at most once per org/workspace/channel
+        during the TTL, while a per-key lock prevents cache-miss stampedes.
+        """
+        cache_key: tuple[str, str, str] = (organization_id or "", workspace_id, channel_id)
+        now: float = time.monotonic()
+        cached_entry: _SlackChannelContextHotCacheEntry | None = await self._get_channel_context_hot_cache_entry(
+            cache_key=cache_key,
+            now=now,
+        )
+        if cached_entry is not None:
+            return (
+                self._copy_channel_messages(cached_entry.channel_messages),
+                self._copy_thread_expansions(cached_entry.thread_expansions),
+                f"hot_cache:{cached_entry.source}",
+            )
+
+        key_lock: asyncio.Lock = await self._get_channel_context_hot_cache_key_lock(cache_key)
+        async with key_lock:
+            now = time.monotonic()
+            cached_entry = await self._get_channel_context_hot_cache_entry(cache_key=cache_key, now=now)
+            if cached_entry is not None:
+                return (
+                    self._copy_channel_messages(cached_entry.channel_messages),
+                    self._copy_thread_expansions(cached_entry.thread_expansions),
+                    f"hot_cache:{cached_entry.source}",
+                )
+
+            channel_messages, thread_expansions, source = await self._load_channel_context_payload_uncached(
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+                channel_id=channel_id,
+            )
+            if source != "unavailable":
+                await self._set_channel_context_hot_cache_entry(
+                    cache_key=cache_key,
+                    channel_messages=channel_messages,
+                    thread_expansions=thread_expansions,
+                    source=source,
+                )
+            else:
+                logger.info(
+                    "[slack] Skipping hot channel context cache store for unavailable payload organization=%s workspace=%s channel=%s",
+                    cache_key[0],
+                    cache_key[1],
+                    cache_key[2],
+                )
+            return (
+                self._copy_channel_messages(channel_messages),
+                self._copy_thread_expansions(thread_expansions),
+                source,
+            )
+
+    async def _load_channel_context_payload_uncached(
+        self,
+        *,
+        organization_id: str,
+        workspace_id: str,
+        channel_id: str,
+    ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], str]:
+        """Load channel context from persisted activity, falling back to Slack API."""
+        channel_messages: list[dict[str, Any]] = []
+        thread_expansions: dict[str, list[dict[str, Any]]] = {}
+        cached_payload: tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]] | None = (
+            await self._get_cached_channel_context_payload_from_activity(
+                organization_id=organization_id,
+                channel_id=channel_id,
+            )
+        )
+        if cached_payload is not None:
+            cached_messages, cached_thread_expansions = cached_payload
+            if cached_messages:
+                logger.info(
+                    "[slack] Using persisted activity channel context workspace=%s channel=%s messages=%d threads=%d",
+                    workspace_id,
+                    channel_id,
+                    len(cached_messages),
+                    len(cached_thread_expansions),
+                )
+                return cached_messages, cached_thread_expansions, "activity_cache"
+            logger.info(
+                "[slack] Persisted activity channel context empty; falling back to Slack API workspace=%s channel=%s",
+                workspace_id,
+                channel_id,
+            )
+
+        try:
+            connector: SlackConnector = await self._get_connector(workspace_id)
+            channel_messages = await connector.get_channel_messages(
+                channel_id=channel_id,
+                limit=_SLACK_CONTEXT_CHANNEL_MESSAGE_LIMIT,
+            )
+        except Exception as connector_exc:
+            logger.warning(
+                "[slack] Failed to fetch Slack API channel context on cache miss channel=%s workspace=%s: %s",
+                channel_id,
+                workspace_id,
+                connector_exc,
+            )
+            return [], {}, "unavailable"
+
+        if channel_messages:
+            logger.info(
+                "[slack] Loaded channel context from Slack API workspace=%s channel=%s messages=%d",
+                workspace_id,
+                channel_id,
+                len(channel_messages),
+            )
+            return channel_messages, thread_expansions, "slack_api"
+        return [], {}, "empty"
+
+    async def _get_channel_context_hot_cache_entry(
+        self,
+        *,
+        cache_key: tuple[str, str, str],
+        now: float,
+    ) -> _SlackChannelContextHotCacheEntry | None:
+        async with _slack_channel_context_hot_cache_lock:
+            cached_entry = _slack_channel_context_hot_cache.get(cache_key)
+            if cached_entry and cached_entry.expires_at > now:
+                logger.info(
+                    "[slack] Hot channel context cache hit organization=%s workspace=%s channel=%s source=%s messages=%d",
+                    cache_key[0],
+                    cache_key[1],
+                    cache_key[2],
+                    cached_entry.source,
+                    len(cached_entry.channel_messages),
+                )
+                return cached_entry
+            if cached_entry:
+                logger.info(
+                    "[slack] Hot channel context cache expired organization=%s workspace=%s channel=%s source=%s",
+                    cache_key[0],
+                    cache_key[1],
+                    cache_key[2],
+                    cached_entry.source,
+                )
+                _slack_channel_context_hot_cache.pop(cache_key, None)
+        return None
+
+    async def _get_channel_context_hot_cache_key_lock(
+        self,
+        cache_key: tuple[str, str, str],
+    ) -> asyncio.Lock:
+        async with _slack_channel_context_hot_cache_lock:
+            key_lock = _slack_channel_context_hot_cache_key_locks.get(cache_key)
+            if key_lock is None:
+                key_lock = asyncio.Lock()
+                _slack_channel_context_hot_cache_key_locks[cache_key] = key_lock
+        return key_lock
+
+    async def _set_channel_context_hot_cache_entry(
+        self,
+        *,
+        cache_key: tuple[str, str, str],
+        channel_messages: list[dict[str, Any]],
+        thread_expansions: dict[str, list[dict[str, Any]]],
+        source: str,
+    ) -> None:
+        now: float = time.monotonic()
+        ttl_seconds: int = (
+            _SLACK_CHANNEL_CONTEXT_HOT_CACHE_TTL_SECONDS
+            if channel_messages
+            else _SLACK_CHANNEL_CONTEXT_HOT_CACHE_EMPTY_TTL_SECONDS
+        )
+        entry = _SlackChannelContextHotCacheEntry(
+            channel_messages=self._copy_channel_messages(channel_messages),
+            thread_expansions=self._copy_thread_expansions(thread_expansions),
+            expires_at=now + ttl_seconds,
+            source=source,
+        )
+        async with _slack_channel_context_hot_cache_lock:
+            if len(_slack_channel_context_hot_cache) >= _SLACK_CHANNEL_CONTEXT_HOT_CACHE_MAX_ENTRIES:
+                expired_keys = [
+                    key
+                    for key, value in _slack_channel_context_hot_cache.items()
+                    if value.expires_at <= now
+                ]
+                for key in expired_keys:
+                    _slack_channel_context_hot_cache.pop(key, None)
+                if len(_slack_channel_context_hot_cache) >= _SLACK_CHANNEL_CONTEXT_HOT_CACHE_MAX_ENTRIES:
+                    oldest_key = min(
+                        _slack_channel_context_hot_cache,
+                        key=lambda key: _slack_channel_context_hot_cache[key].expires_at,
+                    )
+                    _slack_channel_context_hot_cache.pop(oldest_key, None)
+            _slack_channel_context_hot_cache[cache_key] = entry
+            stale_lock_keys = [
+                key
+                for key in _slack_channel_context_hot_cache_key_locks
+                if key not in _slack_channel_context_hot_cache
+            ]
+            for key in stale_lock_keys[:100]:
+                _slack_channel_context_hot_cache_key_locks.pop(key, None)
+        logger.info(
+            "[slack] Stored hot channel context cache organization=%s workspace=%s channel=%s source=%s messages=%d threads=%d ttl_seconds=%d",
+            cache_key[0],
+            cache_key[1],
+            cache_key[2],
+            source,
+            len(channel_messages),
+            len(thread_expansions),
+            ttl_seconds,
+        )
+
+    def _copy_channel_messages(self, channel_messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [dict(message) for message in channel_messages]
+
+    def _copy_thread_expansions(
+        self,
+        thread_expansions: dict[str, list[dict[str, Any]]],
+    ) -> dict[str, list[dict[str, Any]]]:
+        return {
+            str(thread_ts): [dict(message) for message in messages]
+            for thread_ts, messages in thread_expansions.items()
+        }
 
     async def _get_cached_channel_context_payload_from_activity(
         self,
@@ -1149,9 +1374,7 @@ class SlackMessenger(WorkspaceMessenger):
             org_id: str | None = await self._resolve_org_from_workspace(workspace_id)
             if org_id:
                 return SlackConnector(organization_id=org_id, team_id=workspace_id)
-        raise RuntimeError(
-            f"Cannot create SlackConnector: no workspace_id or organization_id"
-        )
+        raise RuntimeError("Cannot create SlackConnector: no workspace_id or organization_id")
 
     # ------------------------------------------------------------------
     # Tool call status (format only; base class posts using status_text from stream)
