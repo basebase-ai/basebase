@@ -45,6 +45,7 @@ from models.conversation import Conversation
 from models.database import get_session
 from models.memory import Memory
 from services.anthropic_health import report_anthropic_call_failure, report_anthropic_call_success
+from services.context_cache import conversation_context as conversation_context_cache
 
 logger = logging.getLogger(__name__)
 
@@ -1247,7 +1248,11 @@ class ChatOrchestrator:
             history: list[dict[str, Any]] = []
             logger.info("[Orchestrator] Skipped history load (new conversation)")
         else:
-            history = await self._load_history(limit=20)
+            history = await conversation_context_cache.get_or_rebuild_history(
+                organization_id=self.organization_id,
+                conversation_id=self.conversation_id,
+                rebuild=lambda: self._load_history(limit=20),
+            )
             logger.info("[Orchestrator] Loaded %d history messages", len(history))
 
         # Build user content — may include attachment blocks (images, PDFs, text)
@@ -2498,6 +2503,32 @@ class ChatOrchestrator:
             await session.commit()
             logger.info("[Orchestrator] Saved user message to conversation %s", self.conversation_id)
 
+            cache_content: str = user_msg
+            if attachment_meta:
+                attachment_lines: list[str] = []
+                attachment_ids: list[str] = []
+                for attachment in attachment_meta:
+                    attachment_id = str(attachment.get("attachment_id") or "")
+                    if attachment_id:
+                        attachment_ids.append(attachment_id)
+                    filename = str(attachment.get("filename") or "attached file")
+                    mime_type = str(attachment.get("mimeType") or attachment.get("mime_type") or "")
+                    attachment_lines.append(
+                        f"[Attachment: {filename} attachment_id={attachment_id} mime_type={mime_type}]"
+                    )
+                cache_content = "\n".join(attachment_lines + [user_msg])
+                if attachment_ids:
+                    cache_content += _linear_attachment_tool_hint(attachment_ids)
+            await conversation_context_cache.append_message(
+                organization_id=self.organization_id,
+                conversation_id=self.conversation_id,
+                message={
+                    "message_id": str(message_id),
+                    "role": "user",
+                    "content": cache_content,
+                },
+            )
+
             # Broadcast to other participants in shared conversations
             if conv_scope == "shared" and conv_participants:
                 from api.websockets import broadcast_conversation_message
@@ -2557,6 +2588,8 @@ class ChatOrchestrator:
             conv_uuid,
         )
 
+        cache_message_id: UUID | None = self._current_message_id
+
         async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
             if self._assistant_message_saved and self._current_message_id is not None:
                 # UPDATE the specific message we inserted during the early save.
@@ -2583,12 +2616,15 @@ class ChatOrchestrator:
                             content_blocks=assistant_blocks,
                         )
                     )
+                    cache_message_id = self._current_message_id
             else:
                 # No early save happened (e.g. pure-text response with no tools).
                 # INSERT a brand-new message.
                 logger.info("[Orchestrator] INSERT new assistant message")
+                cache_message_id = uuid4()
                 session.add(
                     ChatMessage(
+                        id=cache_message_id,
                         conversation_id=conv_uuid,
                         user_id=user_uuid,
                         organization_id=org_uuid,
@@ -2628,6 +2664,17 @@ class ChatOrchestrator:
                     )
 
             await session.commit()
+
+        if cache_message_id is not None:
+            await conversation_context_cache.append_message(
+                organization_id=self.organization_id,
+                conversation_id=self.conversation_id,
+                message={
+                    "message_id": str(cache_message_id),
+                    "role": "assistant",
+                    "content": assistant_blocks,
+                },
+            )
 
     async def _update_conversation_title(self, title: str) -> None:
         """Update the conversation title."""

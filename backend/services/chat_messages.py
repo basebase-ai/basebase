@@ -16,6 +16,7 @@ from models.conversation import Conversation
 from models.database import get_session
 from models.org_member import OrgMember
 from models.user import User
+from services.context_cache import conversation_context as conversation_context_cache
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +208,20 @@ async def save_user_message(
 
     scope: str = row[0] if row else "private"
     participant_ids: list[str] = [str(uid) for uid in (row[1] or [])] if row else []
+
+    cache_content = message_text
+    if attachment_ids:
+        attachment_lines = [f"[Attachment: attachment_id={attachment_id}]" for attachment_id in attachment_ids]
+        cache_content = "\n".join(attachment_lines + [message_text])
+    await conversation_context_cache.append_message(
+        organization_id=organization_id,
+        conversation_id=conversation_id,
+        message={
+            "message_id": str(message_id),
+            "role": "user",
+            "content": cache_content,
+        },
+    )
 
     if scope == "shared" and participant_ids:
         from api.websockets import broadcast_conversation_message

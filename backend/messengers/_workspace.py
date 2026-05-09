@@ -44,6 +44,7 @@ from models.org_member import OrgMember
 from models.organization import Organization
 from models.user import User
 from services.anthropic_health import user_message_for_agent_stream_failure
+from services.context_cache import slack_channel_context as slack_context_cache
 
 logger = logging.getLogger(__name__)
 
@@ -1331,6 +1332,24 @@ class WorkspaceMessenger(BaseMessenger):
                 )
                 await session.execute(stmt)
                 await session.commit()
+
+            if self.meta.slug == "slack":
+                await slack_context_cache.append_slack_message(
+                    organization_id=organization_id,
+                    workspace_id=workspace_id,
+                    channel_id=channel_id,
+                    channel_type=ctx.get("channel_type"),
+                    conversation_type=ctx.get("conversation_type"),
+                    message_type=message.message_type,
+                    message={
+                        "ts": ts,
+                        "thread_ts": thread_id or ts,
+                        "is_thread_message": bool(thread_id and thread_id != ts),
+                        "user": message.external_user_id,
+                        "text": message.text or "",
+                        "files": custom_fields.get("files") or [],
+                    },
+                )
         except Exception as exc:
             logger.error(
                 "[%s] Failed to persist activity for %s: %s",

@@ -21,12 +21,13 @@ from models.activity import Activity
 from models.database import get_admin_session
 from models.messenger_user_mapping import MessengerUserMapping
 from models.user import User
+from services.context_cache import slack_channel_context as slack_context_cache
 from sqlalchemy import case, or_, select
 
 logger = logging.getLogger(__name__)
 
 _SLACK_USER_MENTION_RE = re.compile(r"<@([A-Z0-9]+)(?:\|[^>]+)?>")
-_SLACK_CONTEXT_CHANNEL_MESSAGE_LIMIT: int = 100
+_SLACK_CONTEXT_CHANNEL_MESSAGE_LIMIT: int = 250
 _SLACK_CONTEXT_MESSAGE_CHAR_LIMIT: int = 500
 _SLACK_CONTEXT_MAX_CHARS: int = 24000
 _SLACK_CONTEXT_SUMMARY_MAX_CHARS: int = 12000
@@ -159,15 +160,86 @@ class SlackMessenger(WorkspaceMessenger):
         channel_type: str = (ctx.get("channel_type") or "").strip().lower()
         conversation_type: str = (ctx.get("conversation_type") or "").strip().lower()
         is_direct_message: bool = message.message_type == MessageType.DIRECT
-        if (
-            is_direct_message
-            or channel_type in {"im", "mpim", "direct_message", "dm"}
-            or conversation_type in {"im", "mpim", "direct_message", "dm"}
-            or str(channel_id).strip().upper().startswith("D")
+        if not slack_context_cache.is_public_slack_channel_context_eligible(
+            channel_id=channel_id,
+            channel_type=channel_type,
+            conversation_type=conversation_type,
+            message_type=message.message_type,
         ):
+            logger.info(
+                "[slack] Skipping recent channel context for non-public channel channel=%s channel_type=%s conversation_type=%s is_direct=%s",
+                channel_id,
+                channel_type,
+                conversation_type,
+                is_direct_message,
+            )
             return
 
         try:
+            cached_context = await slack_context_cache.get_cached_channel_context(
+                organization_id=str(ctx.get("organization_id") or ""),
+                workspace_id=workspace_id,
+                channel_id=channel_id,
+            )
+            if cached_context is not None:
+                cached_formatted_context = str(cached_context.get("formatted_context") or "").strip()
+                now_second = int(datetime.now(UTC).timestamp())
+                rendered_second = int(cached_context.get("rendered_second") or 0)
+                cache_dirty = bool(cached_context.get("dirty"))
+                cached_messages = [
+                    cached_message
+                    for cached_message in cached_context.get("messages", [])
+                    if isinstance(cached_message, dict)
+                ]
+                if cached_formatted_context and (not cache_dirty or now_second <= rendered_second):
+                    workflow_context: dict[str, Any] = dict(ctx.get("workflow_context") or {})
+                    workflow_context["slack_recent_channel_context"] = cached_formatted_context
+                    if cached_context.get("latest_ts"):
+                        workflow_context["slack_recent_channel_latest_ts"] = str(cached_context.get("latest_ts"))
+                    ctx["workflow_context"] = workflow_context
+                    logger.info(
+                        "[slack] Attached Redis cached channel context workspace=%s channel=%s messages=%d dirty=%s",
+                        workspace_id,
+                        channel_id,
+                        len(cached_messages),
+                        cache_dirty,
+                    )
+                    return
+                if cached_messages:
+                    channel_messages_from_cache, thread_expansions_from_cache = (
+                        self._build_channel_context_payload_from_cached_messages(cached_messages)
+                    )
+                    rendered_context = self._format_channel_history_context(
+                        channel_messages=channel_messages_from_cache,
+                        thread_expansions=thread_expansions_from_cache,
+                    )
+                    if rendered_context:
+                        rendered_context = self._summarize_channel_history_if_needed(
+                            history_context=rendered_context,
+                            channel_messages=channel_messages_from_cache,
+                            thread_expansions=thread_expansions_from_cache,
+                        )
+                        snapshot_context = self._build_channel_snapshot_context(history_context=rendered_context)
+                        await slack_context_cache.update_rendered_context(
+                            organization_id=str(ctx.get("organization_id") or ""),
+                            workspace_id=workspace_id,
+                            channel_id=channel_id,
+                            formatted_context=snapshot_context,
+                            rendered_second=now_second,
+                        )
+                        workflow_context = dict(ctx.get("workflow_context") or {})
+                        workflow_context["slack_recent_channel_context"] = snapshot_context
+                        if cached_context.get("latest_ts"):
+                            workflow_context["slack_recent_channel_latest_ts"] = str(cached_context.get("latest_ts"))
+                        ctx["workflow_context"] = workflow_context
+                        logger.info(
+                            "[slack] Rendered dirty Redis channel context workspace=%s channel=%s messages=%d",
+                            workspace_id,
+                            channel_id,
+                            len(cached_messages),
+                        )
+                        return
+
             channel_messages: list[dict[str, Any]] = []
             thread_expansions: dict[str, list[dict[str, Any]]] = {}
             cached_payload: tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]] | None = (
@@ -287,6 +359,18 @@ class SlackMessenger(WorkspaceMessenger):
             if latest_ts_in_payload:
                 workflow_context["slack_recent_channel_latest_ts"] = latest_ts_in_payload
             ctx["workflow_context"] = workflow_context
+            flattened_messages = slack_context_cache.flatten_channel_payload(
+                channel_messages=channel_messages,
+                thread_expansions=thread_expansions,
+            )
+            await slack_context_cache.set_channel_context(
+                organization_id=str(ctx.get("organization_id") or ""),
+                workspace_id=workspace_id,
+                channel_id=channel_id,
+                messages=flattened_messages,
+                formatted_context=workflow_context["slack_recent_channel_context"],
+                rendered_second=int(datetime.now(UTC).timestamp()),
+            )
             logger.info(
                 "[slack] Attached recent channel context for channel=%s workspace=%s channel_messages=%d expanded_threads=%d",
                 channel_id,
