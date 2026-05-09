@@ -246,6 +246,24 @@ function getActivityLabel(provider: string, count: number, step?: string): strin
   }
 }
 
+
+const SYNC_STARTED_STALE_MS = 2 * 60 * 60 * 1000;
+const SYNC_PROGRESS_COMPLETE_HOLD_MS = 1200;
+
+function isFreshSyncStartedAt(startedAt?: string): boolean {
+  if (!startedAt) return false;
+  const normalized = startedAt.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(startedAt) ? startedAt : `${startedAt}Z`;
+  const startedMs = new Date(normalized).getTime();
+  return Number.isFinite(startedMs) && Date.now() - startedMs < SYNC_STARTED_STALE_MS;
+}
+
+function nextSyncProgressPercent(current: number | undefined, elapsedMs: number): number {
+  const baseline = current ?? 8;
+  const elapsedSeconds = Math.max(0, elapsedMs / 1000);
+  const target = Math.min(92, 8 + Math.log1p(elapsedSeconds) * 18);
+  return Math.max(baseline, Math.round(target));
+}
+
 async function getResponseErrorMessage(response: Response, fallback: string): Promise<string> {
   const responseText = await response.text();
   if (!responseText) return fallback;
@@ -301,6 +319,10 @@ export function DataSources(): JSX.Element {
   }, [user?.id, fetchUserOrganizations]);
 
   const [syncingProviders, setSyncingProviders] = useState<Set<string>>(new Set());
+  const [syncStartedAt, setSyncStartedAt] = useState<Record<string, number>>({});
+  const [syncProgress, setSyncProgress] = useState<Record<string, number>>({});
+  const [syncProgressPercent, setSyncProgressPercent] = useState<Record<string, number>>({});
+  const [syncStep, setSyncStep] = useState<Record<string, string>>({});
   /** True while org-wide "Sync all" is running (until all provider polls finish). */
   const [syncingAll, setSyncingAll] = useState<boolean>(false);
 
@@ -334,9 +356,20 @@ export function DataSources(): JSX.Element {
         }),
       );
       if (!cancelled && inFlight.size > 0) {
+        const now = Date.now();
         setSyncingProviders((prev) => {
           const next = new Set(prev);
           for (const p of inFlight) next.add(p);
+          return next;
+        });
+        setSyncStartedAt((prev) => {
+          const next = { ...prev };
+          for (const p of inFlight) next[p] = next[p] ?? now;
+          return next;
+        });
+        setSyncProgressPercent((prev) => {
+          const next = { ...prev };
+          for (const p of inFlight) next[p] = Math.max(next[p] ?? 0, 8);
           return next;
         });
       }
@@ -473,9 +506,7 @@ export function DataSources(): JSX.Element {
   const [githubAutoScrollPending, setGithubAutoScrollPending] = useState(false);
   const connectorCardRefs = useRef<Record<string, HTMLLIElement | null>>({});
   
-  // Live sync progress from WebSocket
-  const [syncProgress, setSyncProgress] = useState<Record<string, number>>({});
-  const [syncStep, setSyncStep] = useState<Record<string, string>>({});
+  // Live sync progress is tracked near syncingProviders so reload recovery can seed the same state.
 
   // Sharing modal state
   interface SharingModalState {
@@ -583,53 +614,106 @@ export function DataSources(): JSX.Element {
   const githubCurrentUserConnected = rawIntegrations.some(
     (integration) => integration.provider === 'github' && integration.isActive && integration.currentUserConnected,
   );
+
+  const markProviderSyncing = useCallback((provider: string): void => {
+    const now = Date.now();
+    setSyncingProviders((prev) => new Set(prev).add(provider));
+    setSyncStartedAt((prev) => ({ ...prev, [provider]: prev[provider] ?? now }));
+    setSyncProgressPercent((prev) => ({ ...prev, [provider]: Math.max(prev[provider] ?? 0, 8) }));
+  }, []);
+
+  const finishProviderSync = useCallback((provider: string): void => {
+    setSyncProgressPercent((prev) => ({ ...prev, [provider]: 100 }));
+    setTimeout(() => {
+      setSyncProgress((prev) => {
+        const next = { ...prev };
+        delete next[provider];
+        return next;
+      });
+      setSyncProgressPercent((prev) => {
+        const next = { ...prev };
+        delete next[provider];
+        return next;
+      });
+      setSyncStep((prev) => {
+        const next = { ...prev };
+        delete next[provider];
+        return next;
+      });
+      setSyncStartedAt((prev) => {
+        const next = { ...prev };
+        delete next[provider];
+        return next;
+      });
+      setSyncingProviders((prev) => {
+        const next = new Set(prev);
+        next.delete(provider);
+        return next;
+      });
+    }, SYNC_PROGRESS_COMPLETE_HOLD_MS);
+  }, []);
+
+  useEffect(() => {
+    if (syncingProviders.size === 0) return;
+
+    const interval = window.setInterval(() => {
+      const now = Date.now();
+      setSyncProgressPercent((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const provider of syncingProviders) {
+          const startedAt = syncStartedAt[provider] ?? now;
+          const progress = nextSyncProgressPercent(next[provider], now - startedAt);
+          if (next[provider] !== progress) {
+            next[provider] = progress;
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [syncingProviders, syncStartedAt]);
   
   // Handle WebSocket messages for sync progress
   const handleWsMessage = useCallback((message: string) => {
     try {
-      const data = JSON.parse(message) as { type: string; provider?: string; count?: number; status?: string; step?: string };
-      if (data.type === 'sync_progress' && data.provider !== undefined && data.count !== undefined) {
+      const data = JSON.parse(message) as {
+        type: string;
+        provider?: string;
+        count?: number;
+        status?: string;
+        step?: string;
+      };
+      if (data.type !== 'sync_progress' || data.provider === undefined) return;
+
+      const provider = data.provider;
+      if (typeof data.count === 'number' && Number.isFinite(data.count)) {
         setSyncProgress((prev) => ({
           ...prev,
-          [data.provider as string]: data.count as number,
+          [provider]: Math.max(prev[provider] ?? 0, data.count ?? 0),
         }));
-        if (data.step) {
-          setSyncStep((prev) => ({
-            ...prev,
-            [data.provider as string]: data.step as string,
-          }));
-        }
-        
-        // If sync is in progress, add to syncingProviders to show spinner
-        if (data.status === 'syncing') {
-          setSyncingProviders((prev) => new Set(prev).add(data.provider as string));
-        }
-        
-        if (data.status === 'completed' || data.status === 'failed') {
-          void fetchIntegrations();
-          setTimeout(() => {
-            setSyncProgress((prev) => {
-              const next = { ...prev };
-              delete next[data.provider as string];
-              return next;
-            });
-            setSyncStep((prev) => {
-              const next = { ...prev };
-              delete next[data.provider as string];
-              return next;
-            });
-            setSyncingProviders((prev) => {
-              const next = new Set(prev);
-              next.delete(data.provider as string);
-              return next;
-            });
-          }, 1000);
-        }
+      }
+      if (data.step) {
+        setSyncStep((prev) => ({
+          ...prev,
+          [provider]: data.step as string,
+        }));
+      }
+
+      if (data.status === 'syncing') {
+        markProviderSyncing(provider);
+      }
+
+      if (data.status === 'completed' || data.status === 'failed') {
+        void fetchIntegrations();
+        finishProviderSync(provider);
       }
     } catch {
       // Ignore non-JSON messages or parsing errors
     }
-  }, [fetchIntegrations]);
+  }, [fetchIntegrations, finishProviderSync, markProviderSyncing]);
   
   // Connect to WebSocket for sync progress updates - authenticated via JWT token
   useWebSocket(
@@ -1228,7 +1312,7 @@ export function DataSources(): JSX.Element {
     }
 
     setSyncError(null);
-    setSyncingProviders((prev) => new Set(prev).add(provider));
+    markProviderSyncing(provider);
 
     try {
       // Google Drive uses its own sync endpoint (user-scoped)
@@ -1238,11 +1322,7 @@ export function DataSources(): JSX.Element {
         if (error) throw new Error(error);
         // Drive sync runs in background — wait a bit then refresh integrations
         setTimeout(() => {
-          setSyncingProviders((prev) => {
-            const next = new Set(prev);
-            next.delete(provider);
-            return next;
-          });
+          finishProviderSync(provider);
           void fetchIntegrations();
         }, 15000);
         return;
@@ -1271,11 +1351,7 @@ export function DataSources(): JSX.Element {
         const status = await statusRes.json();
 
         if (status.status === 'completed' || status.status === 'failed' || attempts >= maxAttempts) {
-          setSyncingProviders((prev) => {
-            const next = new Set(prev);
-            next.delete(provider);
-            return next;
-          });
+          finishProviderSync(provider);
 
           if (status.status === 'failed') {
             const providerName = getConnectorDisplay(provider).name;
@@ -1301,11 +1377,7 @@ export function DataSources(): JSX.Element {
       console.error('Sync error:', error);
       setSyncError(error instanceof Error ? error.message : `Failed to sync ${getConnectorDisplay(provider).name}`);
       setTimeout(() => setSyncError(null), 8000);
-      setSyncingProviders((prev) => {
-        const next = new Set(prev);
-        next.delete(provider);
-        return next;
-      });
+      finishProviderSync(provider);
     }
   };
 
@@ -1342,13 +1414,9 @@ export function DataSources(): JSX.Element {
       return;
     }
 
-    setSyncingProviders((prev) => {
-      const next: Set<string> = new Set(prev);
-      for (const p of providers) {
-        next.add(p);
-      }
-      return next;
-    });
+    for (const provider of providers) {
+      markProviderSyncing(provider);
+    }
 
     const maxAttempts: number = 150;
     const pollOne = async (provider: string): Promise<void> => {
@@ -1362,11 +1430,7 @@ export function DataSources(): JSX.Element {
           error?: string;
         };
         if (status.status === 'completed' || status.status === 'failed' || attempts >= maxAttempts) {
-          setSyncingProviders((prev) => {
-            const next: Set<string> = new Set(prev);
-            next.delete(provider);
-            return next;
-          });
+          finishProviderSync(provider);
           if (status.status === 'failed') {
             const providerName: string = getConnectorDisplay(provider).name;
             const detail: string =
@@ -1395,6 +1459,8 @@ export function DataSources(): JSX.Element {
     githubRequiresRepoReview,
     fetchIntegrations,
     getConnectorDisplay,
+    finishProviderSync,
+    markProviderSyncing,
   ]);
 
   const handleSlackRequestCode = async (): Promise<void> => {
@@ -1776,13 +1842,13 @@ export function DataSources(): JSX.Element {
   ): JSX.Element => {
     const isConnecting = connectingProvider === integration.provider;
     const codeSandboxConnectBlocked = integration.provider === 'code_sandbox' && !canConnectCodeSandbox;
-    const isStartingSync =
+    const isSyncingFromServer =
       (state === 'connected' || state === 'org-connected') &&
       getConnectorDisplay(integration.provider).hasSync !== false &&
-      !integration.lastSyncAt &&
-      !syncingProviders.has(integration.provider);
-    const isSyncing = syncingProviders.has(integration.provider) || isStartingSync;
+      isFreshSyncStartedAt(integration.syncStats?.sync_started_at);
+    const isSyncing = syncingProviders.has(integration.provider) || isSyncingFromServer;
     const isDisconnecting = disconnectingProviders.has(integration.provider);
+    const syncPercent = isSyncing ? (syncProgressPercent[integration.provider] ?? 8) : 0;
 
     const hasSyncCapability: boolean = getConnectorDisplay(integration.provider).hasSync !== false;
     const showResyncInMenu: boolean =
@@ -2019,8 +2085,18 @@ export function DataSources(): JSX.Element {
           )}
         </div>
         {isSyncing && (
-          <div className="mx-2 mb-1 h-0.5 overflow-hidden rounded-full bg-primary-500/20">
-            <div className="h-full w-1/3 animate-pulse rounded-full bg-primary-400/80" />
+          <div
+            className="mx-2 mb-1 h-0.5 overflow-hidden rounded-full bg-primary-500/20"
+            role="progressbar"
+            aria-label={`${integration.name} sync progress`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={syncPercent}
+          >
+            <div
+              className="h-full rounded-full bg-primary-400/80 transition-[width] duration-700 ease-out"
+              style={{ width: `${syncPercent}%` }}
+            />
           </div>
         )}
       </li>
@@ -2600,12 +2676,12 @@ export function DataSources(): JSX.Element {
       {detailIntegration !== null && detailTileState !== null && (() => {
         const d = detailIntegration;
         const st = detailTileState;
-        const isStartingSyncDrawer =
+        const isSyncingDrawerFromServer =
           (st === 'connected' || st === 'org-connected') &&
           getConnectorDisplay(d.provider).hasSync !== false &&
-          !d.lastSyncAt &&
-          !syncingProviders.has(d.provider);
-        const isSyncingDrawer = syncingProviders.has(d.provider) || isStartingSyncDrawer;
+          isFreshSyncStartedAt(d.syncStats?.sync_started_at);
+        const isSyncingDrawer = syncingProviders.has(d.provider) || isSyncingDrawerFromServer;
+        const syncPercentDrawer = isSyncingDrawer ? (syncProgressPercent[d.provider] ?? 8) : 0;
         const hasSyncDrawer = getConnectorDisplay(d.provider).hasSync !== false;
         const showResyncDrawer =
           (st === 'connected' || st === 'org-connected') &&
@@ -2671,12 +2747,33 @@ export function DataSources(): JSX.Element {
                 )}
 
                 {(st === 'connected' || st === 'org-connected') &&
-                  (isStartingSyncDrawer ||
+                  (isSyncingDrawer ||
                     syncProgress[d.provider] !== undefined ||
                     d.syncStats) && (
-                  <p className="mt-2 text-xs text-surface-400">
-                    {isStartingSyncDrawer ? (
-                      <span className="text-primary-400">Starting sync…</span>
+                  <div className="mt-2 space-y-2 text-xs text-surface-400">
+                    {isSyncingDrawer ? (
+                      <>
+                        <span className="text-primary-400">
+                          Syncing
+                          {syncStep[d.provider] ? ` ${syncStep[d.provider]}` : ''}
+                          {syncProgress[d.provider] !== undefined
+                            ? `… ${getActivityLabel(d.provider, syncProgress[d.provider] ?? 0, syncStep[d.provider])}`
+                            : '…'}
+                        </span>
+                        <div
+                          className="h-1.5 overflow-hidden rounded-full bg-primary-500/20"
+                          role="progressbar"
+                          aria-label={`${d.name} sync progress`}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={syncPercentDrawer}
+                        >
+                          <div
+                            className="h-full rounded-full bg-primary-400/80 transition-[width] duration-700 ease-out"
+                            style={{ width: `${syncPercentDrawer}%` }}
+                          />
+                        </div>
+                      </>
                     ) : syncProgress[d.provider] !== undefined ? (
                       <span className="text-primary-400">
                         Syncing
@@ -2691,7 +2788,7 @@ export function DataSources(): JSX.Element {
                     ) : d.syncStats ? (
                       formatSyncStats(d.syncStats, d.provider)
                     ) : null}
-                  </p>
+                  </div>
                 )}
 
                 {(st === 'connected' || st === 'org-connected') && d.lastError && !isSyncingDrawer && (
