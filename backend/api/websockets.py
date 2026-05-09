@@ -1007,6 +1007,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             participating_user_ids=[UUID(user_id_str)],
                             title=title,
                             scope=conv_scope,
+                            source="web",
                         )
                         session.add(conversation)
                         await session.commit()
@@ -1018,6 +1019,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         "conversation_id": conversation_id,
                         "title": title,
                         "scope": conv_scope,
+                        "source": "web",
+                        "group_bucket_type": "direct",
+                        "group_bucket_key": "direct",
                     }))
 
                 mentions: list[dict] | None = data.get("mentions")

@@ -120,6 +120,10 @@ export interface ChatState {
     id: string,
     title: string,
     scope?: "private" | "shared",
+    metadata?: Pick<
+      ChatSummary,
+      "source" | "groupBucketType" | "groupBucketKey" | "participants"
+    >,
   ) => void;
   fetchConversations: () => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
@@ -259,7 +263,7 @@ export const useChatStore = create<ChatState>()(
     setPendingChatAutoSend: (pendingChatAutoSend) =>
       set({ pendingChatAutoSend }),
 
-    addConversation: (id, title, scope?: "private" | "shared") => {
+    addConversation: (id, title, scope?: "private" | "shared", metadata = {}) => {
       const { recentChats } = get();
       if (recentChats.some((chat) => chat.id === id)) {
         return;
@@ -274,8 +278,12 @@ export const useChatStore = create<ChatState>()(
             previewText: "",
             scope: scope ?? "shared",
             userId: creatorId,
+            source: metadata.source ?? "web",
+            groupBucketType: metadata.groupBucketType ?? "direct",
+            groupBucketKey: metadata.groupBucketKey ?? "direct",
+            participants: metadata.participants,
           },
-          ...recentChats.slice(0, 9),
+          ...recentChats,
         ],
       });
     },
