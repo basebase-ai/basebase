@@ -21,7 +21,7 @@ from uuid import UUID, uuid4
 
 from anthropic import APIStatusError as AnthropicAPIStatusError
 from openai import APIStatusError as OpenAIAPIStatusError
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 
 from agents.registry import format_tool_status
 from agents.tools import execute_tool, get_tools, get_tool_defs_for_context
@@ -230,93 +230,108 @@ def _should_include_cross_conversation_history(user_message: str) -> bool:
 async def update_tool_result(
     conversation_id: str,
     tool_id: str,
-    result: dict[str, Any],
+    result: Any,
     status: str = "running",
     organization_id: str | None = None,
     user_id: str | None = None,
 ) -> bool:
-    """
-    Update a tool call's result in an existing conversation message.
-    
-    This enables long-running tools (like foreach) to report progress
-    that the frontend can poll for and display.
-    
-    Args:
-        conversation_id: The conversation containing the tool call
-        tool_id: The tool_use block ID to update
-        result: The new result dict (can be partial progress or final)
-        status: "running" for progress updates, "complete" when done
-        organization_id: Organization ID for RLS context
-        user_id: User ID for RLS visibility context
-        
-    Returns:
-        True if update succeeded, False otherwise
+    """Update a tool result block without fetching the fat chat_messages row.
+
+    Tool progress ticks can happen many times per assistant reply. Keep this as a
+    single JSONB UPDATE/RETURNING statement so the database rewrites the changed
+    JSONB value, but the app server does not repeatedly pull content_blocks (and
+    other chat_messages columns) over the wire just to patch one tool block.
     """
     logger.info(
-        "[update_tool_result] Called: conv=%s, tool=%s, status=%s",
-        conversation_id[:8] if conversation_id else None,
+        "[update_tool_result] Updating tool %s in conversation %s with status=%s",
         tool_id[:8] if tool_id else None,
+        conversation_id,
         status,
     )
     try:
+        result_json = json.dumps(result)
         async with get_session(organization_id=organization_id, user_id=user_id) as session:
-            # Find the latest assistant message in this conversation
-            query = (
-                select(ChatMessage)
-                .where(ChatMessage.conversation_id == UUID(conversation_id))
-                .where(ChatMessage.role == "assistant")
-                .order_by(ChatMessage.created_at.desc())
-                .limit(1)
+            update_stmt = text(
+                """
+                WITH latest_assistant AS (
+                    SELECT id
+                    FROM chat_messages
+                    WHERE conversation_id = CAST(:conversation_id AS uuid)
+                      AND role = 'assistant'
+                      AND content_blocks IS NOT NULL
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                ), matched_tool AS (
+                    SELECT
+                        cm.id,
+                        block.elem ->> 'name' AS tool_name,
+                        block.elem ->> 'status' AS previous_status,
+                        block.elem -> 'result' AS previous_result
+                    FROM chat_messages cm
+                    JOIN latest_assistant la ON la.id = cm.id
+                    CROSS JOIN LATERAL jsonb_array_elements(cm.content_blocks) AS block(elem)
+                    WHERE block.elem ->> 'type' = 'tool_use'
+                      AND block.elem ->> 'id' = :tool_id
+                    LIMIT 1
+                )
+                UPDATE chat_messages cm
+                SET content_blocks = (
+                    SELECT jsonb_agg(
+                        CASE
+                            WHEN block.elem ->> 'type' = 'tool_use'
+                             AND block.elem ->> 'id' = :tool_id
+                            THEN jsonb_set(
+                                jsonb_set(block.elem, '{result}', CAST(:result_json AS jsonb), true),
+                                '{status}',
+                                to_jsonb(CAST(:status AS text)),
+                                true
+                            )
+                            ELSE block.elem
+                        END
+                        ORDER BY block.ordinality
+                    )
+                    FROM jsonb_array_elements(cm.content_blocks) WITH ORDINALITY AS block(elem, ordinality)
+                )
+                FROM matched_tool mt
+                WHERE cm.id = mt.id
+                  AND NOT (
+                      mt.previous_status IS NOT DISTINCT FROM :status
+                      AND mt.previous_result IS NOT DISTINCT FROM CAST(:result_json AS jsonb)
+                  )
+                RETURNING COALESCE(mt.tool_name, 'unknown') AS tool_name
+                """
             )
-            db_result = await session.execute(query)
-            message = db_result.scalar_one_or_none()
-            
-            if not message or not message.content_blocks:
-                logger.warning(f"[update_tool_result] No message found for conversation {conversation_id}")
+            db_result = await session.execute(
+                update_stmt,
+                {
+                    "conversation_id": conversation_id,
+                    "tool_id": tool_id,
+                    "result_json": result_json,
+                    "status": status,
+                },
+            )
+            row = db_result.first()
+            if row is None:
+                logger.info(
+                    "[update_tool_result] No non-duplicate tool update applied for tool=%s status=%s",
+                    tool_id[:8] if tool_id else None,
+                    status,
+                )
                 return False
-            
-            # Find and update the tool_use block
-            # IMPORTANT: Deep-copy blocks to avoid in-place mutation of the original
-            # dicts. SQLAlchemy JSONB columns compare old vs new by value; if we mutate
-            # in-place the old value changes too, so SQLAlchemy sees no diff and skips
-            # the UPDATE statement entirely.
-            import copy
-            updated = False
-            new_blocks: list[dict[str, Any]] = copy.deepcopy(message.content_blocks)
-            
-            for block in new_blocks:
-                if block.get("type") == "tool_use" and block.get("id") == tool_id:
-                    if block.get("status") == status and block.get("result") == result:
-                        logger.info(
-                            "[update_tool_result] Skipping duplicate tool update for tool=%s status=%s",
-                            tool_id[:8] if tool_id else None,
-                            status,
-                        )
-                        return False
-                    block["result"] = result
-                    block["status"] = status
-                    updated = True
-                    logger.info("[update_tool_result] Found and updating tool block")
-            
-            if not updated:
-                logger.warning(f"[update_tool_result] Tool {tool_id} not found in message")
-                return False
-            
-            # Save updated blocks — new list with new dicts ensures SQLAlchemy detects the change
-            message.content_blocks = new_blocks
+
             await session.commit()
-            
-            logger.info(f"[update_tool_result] SUCCESS: Updated tool {tool_id[:8]} with status={status}")
-            
+            tool_name: str = str(row.tool_name or "unknown")
+
+            logger.info(
+                "[update_tool_result] SUCCESS: Updated tool %s with status=%s",
+                tool_id[:8] if tool_id else None,
+                status,
+            )
+
             # Broadcast progress to connected websockets
             if organization_id:
                 from api.websockets import broadcast_tool_progress
-                # Get tool name from the block
-                tool_name: str = "unknown"
-                for block in new_blocks:
-                    if block.get("id") == tool_id:
-                        tool_name = block.get("name", "unknown")
-                        break
+
                 await broadcast_tool_progress(
                     organization_id=organization_id,
                     conversation_id=conversation_id,
@@ -325,9 +340,9 @@ async def update_tool_result(
                     result=result,
                     status=status,
                 )
-            
+
             return True
-            
+
     except Exception as e:
         logger.error(f"[update_tool_result] Error: {e}")
         return False
@@ -2254,17 +2269,38 @@ class ChatOrchestrator:
 
         async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
             result = await session.execute(
-                select(ChatMessage)
+                select(
+                    ChatMessage.id,
+                    ChatMessage.conversation_id,
+                    ChatMessage.role,
+                    ChatMessage.content,
+                    ChatMessage.content_blocks,
+                    ChatMessage.tool_calls,
+                )
                 .where(ChatMessage.conversation_id == UUID(self.conversation_id))
                 .order_by(ChatMessage.created_at.desc())
                 .limit(limit)
             )
-            messages = result.scalars().all()
+            messages = result.all()
 
             history: list[dict[str, Any]] = []
             for msg in reversed(messages):
-                # Get content blocks (new format or convert from legacy)
-                blocks = msg.content_blocks if msg.content_blocks else msg._legacy_to_blocks()
+                # Get content blocks (new format or convert from legacy fields)
+                blocks = msg.content_blocks
+                if not blocks:
+                    blocks = []
+                    if msg.content and str(msg.content).strip():
+                        blocks.append({"type": "text", "text": msg.content})
+                    if msg.tool_calls:
+                        for tool_call in msg.tool_calls:
+                            blocks.append({
+                                "type": "tool_use",
+                                "id": tool_call.get("id", ""),
+                                "name": tool_call.get("name", ""),
+                                "input": tool_call.get("input", {}),
+                                "result": tool_call.get("result"),
+                                "status": "complete",
+                            })
                 
                 if msg.role == "user":
                     # User messages: preserve attachment metadata + reload bytes for multimodal context
@@ -2563,13 +2599,13 @@ class ChatOrchestrator:
                 # Using the exact ID avoids the old bug where "find latest assistant
                 # message" would match a *previous* turn's row and overwrite it.
                 result = await session.execute(
-                    select(ChatMessage).where(ChatMessage.id == self._current_message_id)
+                    update(ChatMessage)
+                    .where(ChatMessage.id == self._current_message_id)
+                    .values(content_blocks=assistant_blocks)
                 )
-                message: ChatMessage | None = result.scalar_one_or_none()
 
-                if message:
-                    logger.info("[Orchestrator] UPDATE assistant message %s", message.id)
-                    message.content_blocks = assistant_blocks
+                if result.rowcount:
+                    logger.info("[Orchestrator] UPDATE assistant message %s", self._current_message_id)
                 else:
                     # Early INSERT may not have committed yet — insert with the same ID
                     logger.info("[Orchestrator] Early INSERT not found, INSERT msg_id=%s", self._current_message_id)

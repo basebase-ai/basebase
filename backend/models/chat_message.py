@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional, TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, event
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -19,6 +19,27 @@ from models.database import Base
 
 if TYPE_CHECKING:
     from models.conversation import Conversation
+
+
+def semantic_word_count_from_blocks(blocks: list[dict[str, Any]] | None) -> int:
+    """Count words in text-type content blocks only.
+
+    Tool-use, tool-result, and attachment blocks are excluded — they hold
+    structured payloads, not user-facing prose, and we don't want a foreach
+    over 10k records to count as 10k "words" for summary-staleness gating.
+    """
+    if not blocks:
+        return 0
+    total: int = 0
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") != "text":
+            continue
+        text_val: str = str(block.get("text") or "").strip()
+        if text_val:
+            total += len(text_val.split())
+    return total
 
 
 class ChatMessage(Base):
@@ -53,7 +74,15 @@ class ChatMessage(Base):
     content_blocks: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(
         JSONB, nullable=True
     )
-    
+
+    # Denormalized count of words across text-type content blocks only.
+    # Kept in sync by the before_insert / before_update event listener below
+    # so that conversation-summary staleness checks can SUM this column instead
+    # of streaming every row's content_blocks JSONB back to Python.
+    semantic_word_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+
     # Legacy fields - kept for backwards compatibility during migration
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
     tool_calls: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(
@@ -118,5 +147,18 @@ class ChatMessage(Base):
                     "result": tc.get("result"),
                     "status": "complete",
                 })
-        
+
         return blocks
+
+
+def _sync_semantic_word_count(_mapper, _connection, target: ChatMessage) -> None:
+    """Recompute ``semantic_word_count`` from ``content_blocks`` on every write.
+
+    Centralized here so all 6+ ChatMessage writer sites stay in sync without
+    each having to remember to update the column.
+    """
+    target.semantic_word_count = semantic_word_count_from_blocks(target.content_blocks)
+
+
+event.listen(ChatMessage, "before_insert", _sync_semantic_word_count)
+event.listen(ChatMessage, "before_update", _sync_semantic_word_count)

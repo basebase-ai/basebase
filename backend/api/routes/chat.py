@@ -1578,20 +1578,20 @@ async def send_message(
 
         # Get the message IDs from the database
         result = await session.execute(
-            select(ChatMessage)
+            select(ChatMessage.id, ChatMessage.role)
             .where(ChatMessage.conversation_id == conv_uuid)
             .order_by(ChatMessage.created_at.desc())
             .limit(2)
         )
-        recent_messages = result.scalars().all()
+        recent_messages = result.all()
 
         user_msg_id = ""
         assistant_msg_id = ""
-        for msg in recent_messages:
-            if msg.role == "user":
-                user_msg_id = str(msg.id)
-            elif msg.role == "assistant":
-                assistant_msg_id = str(msg.id)
+        for msg_id, role in recent_messages:
+            if role == "user":
+                user_msg_id = str(msg_id)
+            elif role == "assistant":
+                assistant_msg_id = str(msg_id)
 
         return SendMessageResponse(
             conversation_id=str(conv_uuid),
