@@ -141,7 +141,7 @@ class AttioConnector(BaseConnector):
         name="Attio",
         slug="attio",
         auth_type=AuthType.OAUTH2,
-        scope=ConnectorScope.USER,
+        scope=ConnectorScope.ORGANIZATION,
         entity_types=["deals", "accounts", "contacts", "activities"],
         capabilities=[Capability.SYNC, Capability.QUERY, Capability.WRITE, Capability.ACTION],
         oauth_scopes=[

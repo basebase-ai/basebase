@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import json
 import logging
-from typing import Any, Optional
+from typing import Any, Final, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
@@ -304,6 +304,73 @@ def _log_slack_nango_connection(connection: dict[str, Any], connection_id: str) 
             connection_id,
             sorted(_NANGO_HIGHLIGHT_KEYS),
         )
+
+
+_ATTIO_API_SELF_URL: Final[str] = "https://api.attio.com/v2/self"
+
+
+def _parse_attio_workspace_id_from_self_payload(payload: Any) -> str | None:
+    """Extract workspace UUID from Attio GET /v2/self JSON (shape may vary)."""
+    if not isinstance(payload, dict):
+        return None
+    inner: dict[str, Any] = payload
+    data_obj: Any = payload.get("data")
+    if isinstance(data_obj, dict):
+        inner = data_obj
+    for key in ("workspace_id", "workspaceId"):
+        val: Any = inner.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    workspace_obj: Any = inner.get("workspace") or inner.get("active_workspace") or inner.get("activeWorkspace")
+    if isinstance(workspace_obj, dict):
+        for k in ("workspace_id", "workspaceId", "id"):
+            v: Any = workspace_obj.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    return None
+
+
+def _extract_attio_workspace_id_from_credentials(connection: dict[str, Any]) -> str | None:
+    """Best-effort workspace id from Nango credentials.raw (OAuth token payload)."""
+    creds: dict[str, Any] = connection.get("credentials") or {}
+    raw: Any = creds.get("raw")
+    if not isinstance(raw, dict):
+        return None
+    for key in ("workspace_id", "workspaceId"):
+        v: Any = raw.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    ws: Any = raw.get("workspace")
+    if isinstance(ws, dict):
+        for k in ("workspace_id", "workspaceId", "id"):
+            v2: Any = ws.get(k)
+            if isinstance(v2, str) and v2.strip():
+                return v2.strip()
+    return None
+
+
+async def _fetch_attio_workspace_id_via_self_api(access_token: str) -> str | None:
+    """Resolve workspace id by calling Attio /v2/self with the OAuth access token."""
+    headers: dict[str, str] = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response: httpx.Response = await client.get(_ATTIO_API_SELF_URL, headers=headers)
+        if response.status_code != 200:
+            logger.warning(
+                "[Confirm] Attio GET /v2/self failed status=%s body=%s",
+                response.status_code,
+                (response.text or "")[:500],
+            )
+            return None
+        payload: Any = response.json()
+    except Exception as exc:
+        logger.warning("[Confirm] Attio GET /v2/self error: %s", exc)
+        return None
+    return _parse_attio_workspace_id_from_self_payload(payload)
+
 
 # =============================================================================
 # Response Models
@@ -3156,6 +3223,32 @@ async def confirm_integration(
                         _authed_raw["id"],
                         nango_connection_id,
                     )
+        # For Attio, resolve workspace_id into metadata (one workspace per org; mirrors Slack team_id).
+        if request.provider == "attio":
+            if connection_metadata is None:
+                connection_metadata = {}
+            _incoming_attio_wid: str | None = None
+            _meta_wid: Any = connection_metadata.get("workspace_id")
+            if isinstance(_meta_wid, str) and _meta_wid.strip():
+                _incoming_attio_wid = _meta_wid.strip()
+            if not _incoming_attio_wid:
+                _incoming_attio_wid = _extract_attio_workspace_id_from_credentials(connection)
+            if not _incoming_attio_wid:
+                _attio_tok: Any = (connection.get("credentials") or {}).get("access_token")
+                if isinstance(_attio_tok, str) and _attio_tok.strip():
+                    _incoming_attio_wid = await _fetch_attio_workspace_id_via_self_api(_attio_tok.strip())
+            if _incoming_attio_wid:
+                connection_metadata["workspace_id"] = _incoming_attio_wid
+                logger.info(
+                    "[Confirm] Attio workspace_id=%s for connection_id=%s",
+                    _incoming_attio_wid,
+                    nango_connection_id,
+                )
+            else:
+                logger.warning(
+                    "[Confirm] Could not resolve Attio workspace_id for connection_id=%s",
+                    nango_connection_id,
+                )
         # Prevent an org from connecting two different Slack workspaces.
         if request.provider == "slack":
             _incoming_team_id: str | None = (connection_metadata or {}).get("team_id")
@@ -3175,6 +3268,31 @@ async def confirm_integration(
                                 status_code=409,
                                 detail=(
                                     "This organization is already connected to a different Slack workspace. "
+                                    "All team members must connect to the same workspace."
+                                ),
+                            )
+
+        # Prevent an org from connecting two different Attio workspaces.
+        if request.provider == "attio":
+            _incoming_attio_workspace: str | None = (connection_metadata or {}).get("workspace_id")
+            if isinstance(_incoming_attio_workspace, str):
+                _incoming_attio_workspace = _incoming_attio_workspace.strip() or None
+            if _incoming_attio_workspace:
+                async with get_session(organization_id=str(org_uuid)) as _attio_check_session:
+                    _existing_attio_rows = await _attio_check_session.execute(
+                        select(Integration.extra_data).where(
+                            Integration.organization_id == org_uuid,
+                            Integration.connector == "attio",
+                            Integration.is_active.is_(True),
+                        )
+                    )
+                    for (_attio_extra,) in _existing_attio_rows:
+                        _existing_attio_wid: str | None = (_attio_extra or {}).get("workspace_id")
+                        if _existing_attio_wid and _existing_attio_wid != _incoming_attio_workspace:
+                            raise HTTPException(
+                                status_code=409,
+                                detail=(
+                                    "This organization is already connected to a different Attio workspace. "
                                     "All team members must connect to the same workspace."
                                 ),
                             )

@@ -27,7 +27,7 @@ def test_meta_capabilities_and_slug() -> None:
     c = _connector()
     assert c.meta.slug == "attio"
     assert c.source_system == "attio"
-    assert c.meta.scope == ConnectorScope.USER
+    assert c.meta.scope == ConnectorScope.ORGANIZATION
     assert Capability.SYNC in c.meta.capabilities
     assert Capability.QUERY in c.meta.capabilities
     assert Capability.WRITE in c.meta.capabilities
