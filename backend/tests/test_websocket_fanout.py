@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from typing import Any
 
@@ -139,3 +140,512 @@ def test_task_manager_broadcast_snapshots_message_before_session_close(monkeypat
 
     asyncio.run(_run())
     assert captured_payloads == [{"id": "assistant-msg-1", "role": "assistant", "content_blocks": []}]
+
+
+def test_workflow_tool_progress_subscription_forwards_redis_events(monkeypatch: Any) -> None:
+    socket = _FakeSocket()
+    event = {
+        "type": "tool_progress",
+        "conversation_id": "conv-1",
+        "tool_id": "tool-1",
+        "tool_name": "query_on_connector",
+        "result": {"message": "Still working"},
+        "status": "running",
+    }
+
+    class _FakePubSub:
+        def __init__(self) -> None:
+            self.sent = False
+            self.subscribed: list[str] = []
+
+        async def subscribe(self, channel: str) -> None:
+            self.subscribed.append(channel)
+
+        async def get_message(self, **_kwargs: Any) -> dict[str, Any] | None:
+            if not self.sent:
+                self.sent = True
+                return {"data": json.dumps(event)}
+            await asyncio.sleep(10)
+            return None
+
+        async def unsubscribe(self, _channel: str) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeRedis:
+        def __init__(self) -> None:
+            self.pubsub_instance = _FakePubSub()
+
+        def pubsub(self) -> _FakePubSub:
+            return self.pubsub_instance
+
+    fake_redis = _FakeRedis()
+
+    async def _fake_get_tool_progress_redis() -> _FakeRedis:
+        return fake_redis
+
+    monkeypatch.setattr(
+        __import__("services.tool_progress_pubsub", fromlist=["get_tool_progress_redis"]),
+        "get_tool_progress_redis",
+        _fake_get_tool_progress_redis,
+    )
+
+    async def _run() -> None:
+        task = asyncio.create_task(
+            websockets._subscribe_workflow_tool_progress(socket, "org-1")  # noqa: SLF001
+        )
+        while not socket.messages:
+            await asyncio.sleep(0.001)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_run())
+    assert fake_redis.pubsub_instance.subscribed == ["tool_progress:org-1"]
+    assert json.loads(socket.messages[0]) == event
+
+
+def test_workflow_tool_progress_subscription_does_not_complete_on_worker_silence(
+    monkeypatch: Any,
+) -> None:
+    socket = _FakeSocket()
+    running_event = {
+        "type": "tool_progress",
+        "conversation_id": "conv-timeout",
+        "tool_id": "tool-timeout",
+        "tool_name": "foreach",
+        "result": {"message": "Still working"},
+        "status": "running",
+    }
+
+    class _FakePubSub:
+        def __init__(self) -> None:
+            self.sent_running = False
+
+        async def subscribe(self, _channel: str) -> None:
+            return None
+
+        async def get_message(self, **_kwargs: Any) -> dict[str, Any] | None:
+            if not self.sent_running:
+                self.sent_running = True
+                return {"data": json.dumps(running_event)}
+            await asyncio.sleep(0.002)
+            return None
+
+        async def unsubscribe(self, _channel: str) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeRedis:
+        def pubsub(self) -> _FakePubSub:
+            return _FakePubSub()
+
+    async def _fake_get_tool_progress_redis() -> _FakeRedis:
+        return _FakeRedis()
+
+    monkeypatch.setattr(websockets, "WORKFLOW_TOOL_PROGRESS_SANITY_TIMEOUT_SECONDS", 0.005)
+    monkeypatch.setattr(websockets, "WORKFLOW_TOOL_PROGRESS_MAX_TIMEOUT_SECONDS", 60.0)
+    monkeypatch.setattr(websockets, "WORKFLOW_TOOL_PROGRESS_PUBSUB_POLL_SECONDS", 0.001)
+    monkeypatch.setattr(
+        __import__("services.tool_progress_pubsub", fromlist=["get_tool_progress_redis"]),
+        "get_tool_progress_redis",
+        _fake_get_tool_progress_redis,
+    )
+
+    async def _run() -> None:
+        task = asyncio.create_task(
+            websockets._subscribe_workflow_tool_progress(socket, "org-1")  # noqa: SLF001
+        )
+        while not socket.messages:
+            await asyncio.sleep(0.001)
+        await asyncio.sleep(0.02)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_run())
+    assert [json.loads(message) for message in socket.messages] == [running_event]
+
+
+def test_workflow_tool_progress_subscription_completes_after_max_timeout(
+    monkeypatch: Any,
+) -> None:
+    socket = _FakeSocket()
+    running_event = {
+        "type": "tool_progress",
+        "conversation_id": "conv-timeout",
+        "tool_id": "tool-timeout",
+        "tool_name": "foreach",
+        "result": {"message": "Still working"},
+        "status": "running",
+    }
+
+    class _FakePubSub:
+        def __init__(self) -> None:
+            self.sent_running = False
+
+        async def subscribe(self, _channel: str) -> None:
+            return None
+
+        async def get_message(self, **_kwargs: Any) -> dict[str, Any] | None:
+            if not self.sent_running:
+                self.sent_running = True
+                return {"data": json.dumps(running_event)}
+            await asyncio.sleep(0.002)
+            return None
+
+        async def unsubscribe(self, _channel: str) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeRedis:
+        def pubsub(self) -> _FakePubSub:
+            return _FakePubSub()
+
+    async def _fake_get_tool_progress_redis() -> _FakeRedis:
+        return _FakeRedis()
+
+    monkeypatch.setattr(websockets, "WORKFLOW_TOOL_PROGRESS_SANITY_TIMEOUT_SECONDS", 60.0)
+    monkeypatch.setattr(websockets, "WORKFLOW_TOOL_PROGRESS_MAX_TIMEOUT_SECONDS", 0.005)
+    monkeypatch.setattr(websockets, "WORKFLOW_TOOL_PROGRESS_PUBSUB_POLL_SECONDS", 0.001)
+    monkeypatch.setattr(
+        __import__("services.tool_progress_pubsub", fromlist=["get_tool_progress_redis"]),
+        "get_tool_progress_redis",
+        _fake_get_tool_progress_redis,
+    )
+
+    async def _run() -> None:
+        task = asyncio.create_task(
+            websockets._subscribe_workflow_tool_progress(socket, "org-1")  # noqa: SLF001
+        )
+        while len(socket.messages) < 2:
+            await asyncio.sleep(0.001)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_run())
+    timeout_event = json.loads(socket.messages[1])
+    assert timeout_event["conversation_id"] == "conv-timeout"
+    assert timeout_event["tool_id"] == "tool-timeout"
+    assert timeout_event["status"] == "complete"
+    assert "timed out" in timeout_event["result"]["error"]
+
+
+def test_workflow_tool_progress_subscription_times_out_rehydrated_state(
+    monkeypatch: Any,
+) -> None:
+    socket = _FakeSocket()
+    persisted_event = {
+        "type": "tool_progress",
+        "conversation_id": "conv-rehydrate-timeout",
+        "tool_id": "tool-rehydrate-timeout",
+        "tool_name": "foreach",
+        "result": {"message": "Still working"},
+        "status": "running",
+    }
+
+    class _FakePubSub:
+        async def subscribe(self, _channel: str) -> None:
+            return None
+
+        async def get_message(self, **_kwargs: Any) -> dict[str, Any] | None:
+            await asyncio.sleep(0.002)
+            return None
+
+        async def unsubscribe(self, _channel: str) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeRedis:
+        def pubsub(self) -> _FakePubSub:
+            return _FakePubSub()
+
+    async def _fake_get_tool_progress_redis() -> _FakeRedis:
+        return _FakeRedis()
+
+    async def _fake_collect(_organization_id: str) -> list[dict[str, object]]:
+        return [persisted_event]
+
+    monkeypatch.setattr(websockets, "WORKFLOW_TOOL_PROGRESS_SANITY_TIMEOUT_SECONDS", 60.0)
+    monkeypatch.setattr(websockets, "WORKFLOW_TOOL_PROGRESS_MAX_TIMEOUT_SECONDS", 0.005)
+    monkeypatch.setattr(websockets, "WORKFLOW_TOOL_PROGRESS_PUBSUB_POLL_SECONDS", 0.001)
+    monkeypatch.setattr(websockets, "_collect_running_workflow_tool_updates", _fake_collect)
+    monkeypatch.setattr(
+        __import__("services.tool_progress_pubsub", fromlist=["get_tool_progress_redis"]),
+        "get_tool_progress_redis",
+        _fake_get_tool_progress_redis,
+    )
+
+    async def _run() -> None:
+        task = asyncio.create_task(
+            websockets._subscribe_workflow_tool_progress(socket, "org-1")  # noqa: SLF001
+        )
+        while len(socket.messages) < 2:
+            await asyncio.sleep(0.001)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_run())
+    rehydrated_event = json.loads(socket.messages[0])
+    timeout_event = json.loads(socket.messages[1])
+    assert rehydrated_event == persisted_event
+    assert timeout_event["conversation_id"] == "conv-rehydrate-timeout"
+    assert timeout_event["tool_id"] == "tool-rehydrate-timeout"
+    assert timeout_event["status"] == "complete"
+    assert "timed out" in timeout_event["result"]["error"]
+
+
+def test_workflow_tool_progress_preserves_active_tools_across_reconnect(
+    monkeypatch: Any,
+) -> None:
+    socket = _FakeSocket()
+    running_event = {
+        "type": "tool_progress",
+        "conversation_id": "conv-reconnect",
+        "tool_id": "tool-reconnect",
+        "tool_name": "foreach",
+        "result": {"message": "Still working"},
+        "status": "running",
+    }
+
+    class _FailingPubSub:
+        def __init__(self) -> None:
+            self.sent_running = False
+
+        async def subscribe(self, _channel: str) -> None:
+            return None
+
+        async def get_message(self, **_kwargs: Any) -> dict[str, Any] | None:
+            if not self.sent_running:
+                self.sent_running = True
+                return {"data": json.dumps(running_event)}
+            raise ConnectionError("redis dropped")
+
+        async def unsubscribe(self, _channel: str) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    class _SilentPubSub:
+        async def subscribe(self, _channel: str) -> None:
+            return None
+
+        async def get_message(self, **_kwargs: Any) -> dict[str, Any] | None:
+            await asyncio.sleep(0.002)
+            return None
+
+        async def unsubscribe(self, _channel: str) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeRedis:
+        def __init__(self, pubsub: Any) -> None:
+            self._pubsub = pubsub
+
+        def pubsub(self) -> Any:
+            return self._pubsub
+
+    redis_instances = [_FakeRedis(_FailingPubSub()), _FakeRedis(_SilentPubSub())]
+
+    async def _fake_get_tool_progress_redis() -> _FakeRedis:
+        return redis_instances.pop(0)
+
+    async def _fake_wait_for_redis_tool_progress_recovery(_organization_id: str) -> None:
+        return None
+
+    async def _fake_collect(_organization_id: str) -> list[dict[str, object]]:
+        return []
+
+    monkeypatch.setattr(websockets, "WORKFLOW_TOOL_PROGRESS_SANITY_TIMEOUT_SECONDS", 60.0)
+    monkeypatch.setattr(websockets, "WORKFLOW_TOOL_PROGRESS_MAX_TIMEOUT_SECONDS", 0.005)
+    monkeypatch.setattr(websockets, "WORKFLOW_TOOL_PROGRESS_PUBSUB_POLL_SECONDS", 0.001)
+    monkeypatch.setattr(websockets, "_collect_running_workflow_tool_updates", _fake_collect)
+    monkeypatch.setattr(
+        websockets,
+        "_wait_for_redis_tool_progress_recovery",
+        _fake_wait_for_redis_tool_progress_recovery,
+    )
+    monkeypatch.setattr(
+        __import__("services.tool_progress_pubsub", fromlist=["get_tool_progress_redis"]),
+        "get_tool_progress_redis",
+        _fake_get_tool_progress_redis,
+    )
+
+    async def _run() -> None:
+        task = asyncio.create_task(
+            websockets._subscribe_workflow_tool_progress(socket, "org-1")  # noqa: SLF001
+        )
+        while len(socket.messages) < 2:
+            await asyncio.sleep(0.001)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_run())
+    assert json.loads(socket.messages[0]) == running_event
+    timeout_event = json.loads(socket.messages[1])
+    assert timeout_event["conversation_id"] == "conv-reconnect"
+    assert timeout_event["tool_id"] == "tool-reconnect"
+    assert timeout_event["status"] == "complete"
+    assert "timed out" in timeout_event["result"]["error"]
+
+
+def test_workflow_tool_progress_subscribes_before_rehydrate(monkeypatch: Any) -> None:
+    socket = _FakeSocket()
+    calls: list[str] = []
+
+    class _FakePubSub:
+        async def subscribe(self, _channel: str) -> None:
+            calls.append("subscribe")
+
+        async def get_message(self, **_kwargs: Any) -> dict[str, Any] | None:
+            await asyncio.sleep(10)
+            return None
+
+        async def unsubscribe(self, _channel: str) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeRedis:
+        def pubsub(self) -> _FakePubSub:
+            return _FakePubSub()
+
+    async def _fake_get_tool_progress_redis() -> _FakeRedis:
+        return _FakeRedis()
+
+    async def _fake_rehydrate(*_args: Any, **_kwargs: Any) -> bool:
+        calls.append("rehydrate")
+        return True
+
+    monkeypatch.setattr(
+        __import__("services.tool_progress_pubsub", fromlist=["get_tool_progress_redis"]),
+        "get_tool_progress_redis",
+        _fake_get_tool_progress_redis,
+    )
+    monkeypatch.setattr(websockets, "_rehydrate_running_workflow_tool_status", _fake_rehydrate)
+
+    async def _run() -> None:
+        task = asyncio.create_task(
+            websockets._subscribe_workflow_tool_progress(socket, "org-1")  # noqa: SLF001
+        )
+        while calls != ["subscribe", "rehydrate"]:
+            await asyncio.sleep(0.001)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_run())
+    assert calls == ["subscribe", "rehydrate"]
+
+
+def test_workflow_tool_progress_rehydrate_sends_persisted_state(monkeypatch: Any) -> None:
+    socket = _FakeSocket()
+    persisted_event = {
+        "type": "tool_progress",
+        "conversation_id": "conv-rehydrate",
+        "tool_id": "tool-rehydrate",
+        "tool_name": "foreach",
+        "result": {"message": "Still working", "completed": 1, "total": 3},
+        "status": "running",
+    }
+
+    async def _fake_collect(_organization_id: str) -> list[dict[str, object]]:
+        return [persisted_event]
+
+    monkeypatch.setattr(
+        websockets,
+        "_collect_running_workflow_tool_updates",
+        _fake_collect,
+    )
+
+    async def _run() -> dict[str, str]:
+        last_sent: dict[str, str] = {}
+        sent = await websockets._rehydrate_running_workflow_tool_status(  # noqa: SLF001
+            socket,
+            "org-1",
+            last_sent,
+        )
+        assert sent is True
+        # Same persisted payload should be de-duped on the next rehydrate pass.
+        sent = await websockets._rehydrate_running_workflow_tool_status(  # noqa: SLF001
+            socket,
+            "org-1",
+            last_sent,
+        )
+        assert sent is True
+        return last_sent
+
+    last_sent = asyncio.run(_run())
+    assert len(socket.messages) == 1
+    assert json.loads(socket.messages[0]) == persisted_event
+    assert last_sent == {
+        "conv-rehydrate:tool-rehydrate": websockets._tool_progress_signature(  # noqa: SLF001
+            persisted_event
+        )
+    }
+
+
+def test_workflow_tool_progress_waits_for_redis_recovery_without_db_polling(monkeypatch: Any) -> None:
+    redis_checks = 0
+    collect_calls = 0
+    sleep_delays: list[float] = []
+
+    async def _fake_redis_available() -> bool:
+        nonlocal redis_checks
+        redis_checks += 1
+        return redis_checks >= 2
+
+    async def _fake_collect(_organization_id: str) -> list[dict[str, object]]:
+        nonlocal collect_calls
+        collect_calls += 1
+        return []
+
+    async def _fake_sleep(delay: float) -> None:
+        sleep_delays.append(delay)
+
+    monkeypatch.setattr(websockets, "REDIS_TOOL_PROGRESS_RECONNECT_BASE_SECONDS", 0.5)
+    monkeypatch.setattr(websockets, "REDIS_TOOL_PROGRESS_RECONNECT_MAX_SECONDS", 2.0)
+    monkeypatch.setattr(
+        websockets,
+        "_redis_tool_progress_available",
+        _fake_redis_available,
+    )
+    monkeypatch.setattr(
+        websockets,
+        "_collect_running_workflow_tool_updates",
+        _fake_collect,
+    )
+    monkeypatch.setattr(websockets.asyncio, "sleep", _fake_sleep)
+
+    asyncio.run(websockets._wait_for_redis_tool_progress_recovery("org-1"))  # noqa: SLF001
+
+    assert redis_checks == 2
+    assert collect_calls == 0
+    assert sleep_delays == [0.5, 1.0]
