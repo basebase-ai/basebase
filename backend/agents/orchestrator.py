@@ -22,6 +22,7 @@ from uuid import UUID, uuid4
 from anthropic import APIStatusError as AnthropicAPIStatusError
 from openai import APIStatusError as OpenAIAPIStatusError
 from sqlalchemy import select, update
+from sqlalchemy.orm import load_only
 
 from agents.registry import format_tool_status
 from agents.tools import execute_tool, get_tools, get_tool_defs_for_context
@@ -263,6 +264,7 @@ async def update_tool_result(
             # Find the latest assistant message in this conversation
             query = (
                 select(ChatMessage)
+                .options(load_only(ChatMessage.id, ChatMessage.content_blocks))
                 .where(ChatMessage.conversation_id == UUID(conversation_id))
                 .where(ChatMessage.role == "assistant")
                 .order_by(ChatMessage.created_at.desc())
@@ -2255,6 +2257,16 @@ class ChatOrchestrator:
         async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
             result = await session.execute(
                 select(ChatMessage)
+                .options(
+                    load_only(
+                        ChatMessage.id,
+                        ChatMessage.conversation_id,
+                        ChatMessage.role,
+                        ChatMessage.content_blocks,
+                        ChatMessage.content,
+                        ChatMessage.tool_calls,
+                    )
+                )
                 .where(ChatMessage.conversation_id == UUID(self.conversation_id))
                 .order_by(ChatMessage.created_at.desc())
                 .limit(limit)
@@ -2563,13 +2575,13 @@ class ChatOrchestrator:
                 # Using the exact ID avoids the old bug where "find latest assistant
                 # message" would match a *previous* turn's row and overwrite it.
                 result = await session.execute(
-                    select(ChatMessage).where(ChatMessage.id == self._current_message_id)
+                    update(ChatMessage)
+                    .where(ChatMessage.id == self._current_message_id)
+                    .values(content_blocks=assistant_blocks)
                 )
-                message: ChatMessage | None = result.scalar_one_or_none()
 
-                if message:
-                    logger.info("[Orchestrator] UPDATE assistant message %s", message.id)
-                    message.content_blocks = assistant_blocks
+                if result.rowcount:
+                    logger.info("[Orchestrator] UPDATE assistant message %s", self._current_message_id)
                 else:
                     # Early INSERT may not have committed yet — insert with the same ID
                     logger.info("[Orchestrator] Early INSERT not found, INSERT msg_id=%s", self._current_message_id)

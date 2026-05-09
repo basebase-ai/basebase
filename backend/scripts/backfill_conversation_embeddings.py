@@ -20,35 +20,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sqlalchemy import select
-
 from models.conversation import Conversation
-from models.chat_message import ChatMessage as ChatMessageModel
 from models.database import get_admin_session, get_session
 from services.conversation_embeddings import (
     _MAX_RECENT_CHARS,
     _MAX_MESSAGES_FOR_RECENT,
     build_embedding_text,
 )
+from services.chat_message_projections import fetch_recent_user_text_projections
 from services.embeddings import get_embedding_service
 
-
-def _extract_text_from_blocks(blocks: list | None) -> str:
-    if not blocks:
-        return ""
-    parts: list[str] = []
-    for block in blocks:
-        if not isinstance(block, dict):
-            continue
-        if block.get("type") == "text":
-            text = block.get("text")
-            if text:
-                parts.append(str(text))
-        elif block.get("type") == "tool_use":
-            name = block.get("name")
-            if name:
-                parts.append(f"[{name}]")
-    return " ".join(parts)
 
 
 async def backfill(
@@ -107,23 +88,18 @@ async def backfill(
             summary_overall: str | None = (conv.summary or "").strip() or None
 
             async with get_session(organization_id=oid) as session:
-                result = await session.execute(
-                    select(ChatMessageModel)
-                    .where(
-                        ChatMessageModel.conversation_id == conv.id,
-                        ChatMessageModel.role == "user",
-                    )
-                    .order_by(ChatMessageModel.created_at.desc())
-                    .limit(_MAX_MESSAGES_FOR_RECENT)
+                user_messages = await fetch_recent_user_text_projections(
+                    session,
+                    conv.id,
+                    limit=_MAX_MESSAGES_FOR_RECENT,
                 )
-                user_messages = list(result.scalars().all())
 
             recent_texts: list[str] = []
             total_chars = 0
             for msg in reversed(user_messages):
-                text = _extract_text_from_blocks(msg.content_blocks)
-                if not text and getattr(msg, "content", None):
-                    text = msg.content or ""
+                text = msg.block_text
+                if not text and msg.legacy_content:
+                    text = msg.legacy_content
                 if text:
                     recent_texts.append(text)
                     total_chars += len(text)
