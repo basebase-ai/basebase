@@ -27,8 +27,9 @@ from fastapi.responses import RedirectResponse
 
 from api.auth_middleware import AuthContext, get_current_auth, require_global_admin
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy import and_, bindparam, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
 from config import (
     BUILTIN_CONNECTORS,
@@ -3488,8 +3489,8 @@ async def _propagate_integration_synced_data_visibility(
                 "UPDATE meetings "
                 "SET visibility = :vis, "
                 "owner_user_id = CASE "
-                "WHEN :vis = 'owner_only' AND :owner_user_id IS NOT NULL "
-                "THEN :owner_user_id "
+                "WHEN :vis = 'owner_only' AND CAST(:owner_user_id AS uuid) IS NOT NULL "
+                "THEN CAST(:owner_user_id AS uuid) "
                 "ELSE owner_user_id "
                 "END "
                 "WHERE integration_id = :iid "
@@ -3497,10 +3498,13 @@ async def _propagate_integration_synced_data_visibility(
                 "visibility IS DISTINCT FROM :vis "
                 "OR ("
                 ":vis = 'owner_only' "
-                "AND :owner_user_id IS NOT NULL "
-                "AND owner_user_id IS DISTINCT FROM :owner_user_id"
+                "AND CAST(:owner_user_id AS uuid) IS NOT NULL "
+                "AND owner_user_id IS DISTINCT FROM CAST(:owner_user_id AS uuid)"
                 ")"
                 ")"
+            ).bindparams(
+                bindparam("owner_user_id", type_=PG_UUID(as_uuid=True)),
+                bindparam("iid", type_=PG_UUID(as_uuid=True)),
             ),
             {
                 "vis": new_visibility,
