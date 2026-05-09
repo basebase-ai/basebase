@@ -13,7 +13,7 @@ import logging
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Protocol
 
 from config import settings
 from models.chat_message import ChatMessage as ChatMessageModel
@@ -21,11 +21,30 @@ from models.conversation import Conversation
 from models.database import get_admin_session, get_session
 from models.user import User
 from sqlalchemy import select, update
+from sqlalchemy.sql import Select
 
 from services.anthropic_health import report_anthropic_call_failure, report_anthropic_call_success
 from services.llm_provider import resolve_llm_config, get_adapter
 
 logger = logging.getLogger(__name__)
+
+
+class _MessageForPrompt(Protocol):
+    role: str
+    content_blocks: list[dict[str, Any]] | None
+
+
+def _recent_message_blocks_query(
+    conversation_id: uuid.UUID,
+    limit: int,
+) -> Select[tuple[str, list[dict[str, Any]] | None]]:
+    """Return only columns needed for prompt formatting, never full chat_messages rows."""
+    return (
+        select(ChatMessageModel.role, ChatMessageModel.content_blocks)
+        .where(ChatMessageModel.conversation_id == conversation_id)
+        .order_by(ChatMessageModel.created_at.desc())
+        .limit(limit)
+    )
 
 _SEMANTIC_MIN_WORDS = 100
 _SEMANTIC_REGEN_WORD_DELTA = 50
@@ -110,7 +129,7 @@ def _should_regenerate_summary(
     return (semantic_words - summary_word_count_at_generation) >= _SEMANTIC_REGEN_WORD_DELTA
 
 
-def _format_messages(messages: list[ChatMessageModel]) -> str:
+def _format_messages(messages: list[_MessageForPrompt]) -> str:
     """Format messages into a compact text representation for the prompt."""
     lines: list[str] = []
     for msg in messages:
@@ -216,12 +235,9 @@ async def generate_conversation_summary(
                 return None
 
             result = await session.execute(
-                select(ChatMessageModel)
-                .where(ChatMessageModel.conversation_id == conv.id)
-                .order_by(ChatMessageModel.created_at.desc())
-                .limit(_MAX_MESSAGES_FOR_PROMPT)
+                _recent_message_blocks_query(conv.id, _MAX_MESSAGES_FOR_PROMPT)
             )
-            messages: list[ChatMessageModel] = list(reversed(result.scalars().all()))
+            messages: list[_MessageForPrompt] = list(reversed(result.all()))
             if len(messages) < 1:
                 return None
 
@@ -326,12 +342,9 @@ async def generate_conversation_title(
                 return None
 
             result = await session.execute(
-                select(ChatMessageModel)
-                .where(ChatMessageModel.conversation_id == conv.id)
-                .order_by(ChatMessageModel.created_at.desc())
-                .limit(_MAX_MESSAGES_FOR_PROMPT)
+                _recent_message_blocks_query(conv.id, _MAX_MESSAGES_FOR_PROMPT)
             )
-            messages: list[ChatMessageModel] = list(reversed(result.scalars().all()))
+            messages: list[_MessageForPrompt] = list(reversed(result.all()))
             if not messages:
                 return None
             formatted = _format_messages(messages)

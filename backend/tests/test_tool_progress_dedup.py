@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 import types
 from types import SimpleNamespace
@@ -20,10 +21,10 @@ from agents import orchestrator
 
 
 class _FakeExecuteResult:
-    def __init__(self, row: object) -> None:
+    def __init__(self, row: object | None) -> None:
         self._row = row
 
-    def scalar_one_or_none(self) -> object:
+    def first(self) -> object | None:
         return self._row
 
 
@@ -31,9 +32,21 @@ class _FakeSession:
     def __init__(self, message: object) -> None:
         self._message = message
         self.commit_calls = 0
+        self.executed_queries: list[str] = []
 
-    async def execute(self, _query: object) -> _FakeExecuteResult:
-        return _FakeExecuteResult(self._message)
+    async def execute(self, query: object, params: dict[str, object] | None = None) -> _FakeExecuteResult:
+        query_text = str(query)
+        self.executed_queries.append(query_text)
+        params = params or {}
+        result_payload = json.loads(str(params.get("result_json", "null")))
+        for block in self._message.content_blocks:
+            if block.get("type") == "tool_use" and block.get("id") == params.get("tool_id"):
+                if block.get("status") == params.get("status") and block.get("result") == result_payload:
+                    return _FakeExecuteResult(None)
+                block["status"] = params.get("status")
+                block["result"] = result_payload
+                return _FakeExecuteResult(SimpleNamespace(tool_name=block.get("name", "unknown")))
+        return _FakeExecuteResult(None)
 
     async def commit(self) -> None:
         self.commit_calls += 1
@@ -95,6 +108,9 @@ def test_update_tool_result_skips_duplicate_progress_updates(monkeypatch) -> Non
     assert fake_session.commit_calls == 0
     assert broadcasts == []
     assert message.content_blocks[0]["result"] == {"message": "Writing to Linear"}
+    assert len(fake_session.executed_queries) == 1
+    assert "UPDATE chat_messages" in fake_session.executed_queries[0]
+    assert "SELECT *" not in fake_session.executed_queries[0]
 
 
 def test_update_tool_result_allows_status_change_with_same_result(monkeypatch) -> None:
@@ -142,6 +158,9 @@ def test_update_tool_result_allows_status_change_with_same_result(monkeypatch) -
     assert updated is True
     assert fake_session.commit_calls == 1
     assert message.content_blocks[0]["status"] == "complete"
+    assert len(fake_session.executed_queries) == 1
+    assert "UPDATE chat_messages" in fake_session.executed_queries[0]
+    assert "SELECT *" not in fake_session.executed_queries[0]
     assert broadcasts == [
         {
             "organization_id": organization_id,

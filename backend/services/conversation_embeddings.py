@@ -15,10 +15,27 @@ from models.conversation import Conversation
 from models.chat_message import ChatMessage as ChatMessageModel
 from models.database import get_session
 from sqlalchemy import select, update
+from sqlalchemy.sql import Select
 
 from services.embeddings import get_embedding_service
 
 logger = logging.getLogger(__name__)
+
+
+def _recent_user_message_text_query(
+    conversation_id: Any,
+    limit: int,
+) -> Select[tuple[str, list[dict[str, Any]] | None]]:
+    """Return only legacy text + blocks needed for embedding text extraction."""
+    return (
+        select(ChatMessageModel.content, ChatMessageModel.content_blocks)
+        .where(
+            ChatMessageModel.conversation_id == conversation_id,
+            ChatMessageModel.role == "user",
+        )
+        .order_by(ChatMessageModel.created_at.desc())
+        .limit(limit)
+    )
 
 _STALENESS_THRESHOLD = 2
 _MAX_RECENT_CHARS = 12_000
@@ -104,15 +121,9 @@ async def update_conversation_embedding(
             summary_text = (conv.summary or "").strip() or None
 
             result = await session.execute(
-                select(ChatMessageModel)
-                .where(
-                    ChatMessageModel.conversation_id == conv.id,
-                    ChatMessageModel.role == "user",
-                )
-                .order_by(ChatMessageModel.created_at.desc())
-                .limit(_MAX_MESSAGES_FOR_RECENT)
+                _recent_user_message_text_query(conv.id, _MAX_MESSAGES_FOR_RECENT)
             )
-            user_messages = list(result.scalars().all())
+            user_messages = list(result.all())
             total_chars = 0
             for msg in reversed(user_messages):
                 text = _extract_text_from_blocks(msg.content_blocks)
