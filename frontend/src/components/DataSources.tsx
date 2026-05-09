@@ -1560,16 +1560,20 @@ export function DataSources(): JSX.Element {
           ? 'org-connected'
           : 'team-only';
 
+  const renderSharedWithTeamPill = (integration: DisplayIntegration): JSX.Element | null => {
+    if (!isSharedWithTeam(integration)) return null;
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded px-2 py-0.5 text-xs bg-primary-500/20 text-primary-400">
+        <HiShare className="h-3 w-3" />
+        Shared with team
+      </span>
+    );
+  };
+
   const renderSharingBadgeBlock = (integration: DisplayIntegration, state: TileState): JSX.Element | null => {
+    const sharedPill = renderSharedWithTeamPill(integration);
+    if (sharedPill) return sharedPill;
     if (state !== 'connected') return null;
-    if (isSharedWithTeam(integration)) {
-      return (
-        <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs bg-primary-500/20 text-primary-400">
-          <HiShare className="h-3 w-3" />
-          Shared with team
-        </span>
-      );
-    }
     return (
       <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs bg-surface-700 text-surface-400">
         <HiLockClosed className="h-3 w-3" />
@@ -1862,6 +1866,7 @@ export function DataSources(): JSX.Element {
                   Team
                 </span>
               )}
+              {renderSharedWithTeamPill(integration)}
               {(state === 'connected' || state === 'org-connected') &&
                 integration.lastError &&
                 !isSyncing && (
