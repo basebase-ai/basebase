@@ -34,6 +34,7 @@ import {
   DEFAULT_CONNECTOR_ICON as DEFAULT_ICON,
   DEFAULT_CONNECTOR_COLOR as DEFAULT_COLOR,
   isImageIcon,
+  getImageIconFilterClass,
   getConnectorColorClass as getColorClass,
 } from './shared/ConnectorIcons';
 
@@ -1524,7 +1525,7 @@ export function DataSources(): JSX.Element {
 
   const renderIcon = (iconId: string): JSX.Element => {
     if (isImageIcon(iconId)) {
-      return <img src={iconId} alt="" className="w-full h-full rounded-xl object-cover" />;
+      return <img src={iconId} alt="" className={`w-full h-full rounded-xl object-cover ${getImageIconFilterClass(iconId)}`} />;
     }
     const IconComponent = ICON_MAP[iconId] ?? HiGlobeAlt;
     return <IconComponent className="w-8 h-8" />;
@@ -1532,7 +1533,7 @@ export function DataSources(): JSX.Element {
 
   const renderIconCompact = (iconId: string): JSX.Element => {
     if (isImageIcon(iconId)) {
-      return <img src={iconId} alt="" className="h-6 w-6 rounded-md object-cover" />;
+      return <img src={iconId} alt="" className={`h-6 w-6 rounded-md object-cover ${getImageIconFilterClass(iconId)}`} />;
     }
     const IconComponent = ICON_MAP[iconId] ?? HiGlobeAlt;
     return <IconComponent className="h-5 w-5 text-surface-400" />;
@@ -2625,7 +2626,7 @@ export function DataSources(): JSX.Element {
                     }`}
                   >
                     {isImageIcon(d.icon) ? (
-                      <img src={d.icon} alt="" className="h-full w-full object-cover" />
+                      <img src={d.icon} alt="" className={`h-full w-full object-cover ${getImageIconFilterClass(d.icon)}`} />
                     ) : (
                       renderIcon(d.icon)
                     )}

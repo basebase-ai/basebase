@@ -148,6 +148,10 @@ export function isImageIcon(iconId: string): boolean {
   return iconId.startsWith("/") || iconId.startsWith("http");
 }
 
+export function getImageIconFilterClass(iconId: string): string {
+  return iconId.includes("/connector-icons/granola.png") ? "grayscale saturate-0" : "";
+}
+
 export function getConnectorColorClass(color: string): string {
   const colorMap: Record<string, string> = {
     "from-orange-500 to-orange-600": "bg-orange-500",
@@ -178,7 +182,7 @@ export function getConnectorColorClass(color: string): string {
 
 export function renderConnectorIcon(iconId: string, sizeClass: string): JSX.Element {
   if (isImageIcon(iconId)) {
-    return <img src={iconId} alt="" className={`${sizeClass} rounded object-cover`} />;
+    return <img src={iconId} alt="" className={`${sizeClass} rounded object-cover ${getImageIconFilterClass(iconId)}`} />;
   }
   const IconComponent = CONNECTOR_ICON_MAP[iconId] ?? HiGlobeAlt;
   return <IconComponent className={sizeClass} />;
