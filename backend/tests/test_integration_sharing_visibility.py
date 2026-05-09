@@ -56,7 +56,8 @@ def test_sharing_visibility_propagates_to_activities_and_meetings(monkeypatch):
     assert "UPDATE meetings" in session.executed[1][0]
     assert "visibility IS DISTINCT FROM" in session.executed[1][0]
     assert "owner_user_id = CASE" in session.executed[1][0]
-    assert "owner_user_id IS DISTINCT FROM" in session.executed[1][0]
+    assert "CAST(:owner_user_id AS uuid) IS NOT NULL" in session.executed[1][0]
+    assert "owner_user_id IS DISTINCT FROM CAST(:owner_user_id AS uuid)" in session.executed[1][0]
     assert session.executed[1][1] == {
         "vis": "owner_only",
         "iid": integration_id,
@@ -81,3 +82,26 @@ def test_sharing_visibility_propagates_team_visibility(monkeypatch):
 
     assert [params["vis"] for _query, params in session.executed] == ["team", "team"]
     assert session.executed[1][1]["owner_user_id"] == owner_user_id
+
+
+def test_meeting_visibility_update_casts_owner_user_id_for_asyncpg(monkeypatch):
+    integration_id = UUID("33333333-3333-3333-3333-333333333333")
+    owner_user_id = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+    session = _FakeSession()
+
+    monkeypatch.setattr(auth, "get_admin_session", lambda: _FakeSessionContext(session))
+
+    asyncio.run(
+        auth._propagate_integration_synced_data_visibility(
+            integration_id,
+            share_synced_data=True,
+            owner_user_id=owner_user_id,
+        )
+    )
+
+    meeting_query, meeting_params = session.executed[1]
+
+    assert "CAST(:owner_user_id AS uuid) IS NOT NULL" in meeting_query
+    assert "THEN CAST(:owner_user_id AS uuid)" in meeting_query
+    assert "owner_user_id IS DISTINCT FROM CAST(:owner_user_id AS uuid)" in meeting_query
+    assert meeting_params["owner_user_id"] == owner_user_id
