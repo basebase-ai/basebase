@@ -11,6 +11,8 @@ import asyncio
 import uuid
 from typing import Any
 
+import scripts.backfill_chat_message_semantic_word_count as backfill_script
+
 from models.chat_message import (
     ChatMessage,
     _sync_semantic_word_count,
@@ -67,6 +69,7 @@ def test_event_listener_sets_count_on_insert() -> None:
     # doesn't need a DB.
     _sync_semantic_word_count(None, None, msg)
     assert msg.semantic_word_count == 3
+    assert msg.semantic_word_count_backfilled is True
 
 
 def test_event_listener_recomputes_on_update() -> None:
@@ -81,9 +84,11 @@ def test_event_listener_recomputes_on_update() -> None:
         {"type": "tool_use", "id": "t1", "name": "noop", "input": {}, "result": {}},
         {"type": "text", "text": "and one more"},
     ]
+    msg.semantic_word_count_backfilled = False
     _sync_semantic_word_count(None, None, msg)
     # Tool use ignored; 5 + 3 = 8.
     assert msg.semantic_word_count == 8
+    assert msg.semantic_word_count_backfilled is True
 
 
 def test_event_listener_drops_to_zero_when_blocks_cleared() -> None:
@@ -159,3 +164,97 @@ def test_count_semantic_words_returns_zero_when_sum_is_null() -> None:
     session = _CapturingSession(return_value=0)
     result = asyncio.run(count_semantic_words_for_conversation(session, uuid.uuid4()))
     assert result == 0
+
+
+# ---------- backfill script -------------------------------------------------
+
+
+class _FakeRowsResult:
+    def __init__(self, rows: list[tuple[Any, Any]]) -> None:
+        self._rows = rows
+
+    def all(self) -> list[tuple[Any, Any]]:
+        return self._rows
+
+
+class _FakeUpdateResult:
+    def __init__(self, rowcount: int) -> None:
+        self.rowcount = rowcount
+
+
+class _FakeBackfillSession:
+    def __init__(self, rows: list[tuple[Any, Any]]) -> None:
+        self.rows = rows
+        self.executed: list[tuple[str, dict[str, Any] | None]] = []
+        self.committed = False
+
+    async def execute(self, stmt: Any, params: dict[str, Any] | None = None) -> Any:
+        rendered = str(stmt).lower()
+        self.executed.append((rendered, params))
+        if rendered.lstrip().startswith("select"):
+            return _FakeRowsResult(self.rows)
+        return _FakeUpdateResult(len(params["ids"]) if params else 0)
+
+    async def commit(self) -> None:
+        self.committed = True
+
+
+class _FakeBackfillSessionContext:
+    def __init__(self, session: _FakeBackfillSession) -> None:
+        self.session = session
+
+    async def __aenter__(self) -> _FakeBackfillSession:
+        return self.session
+
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
+
+
+def test_backfill_batch_marks_zero_count_rows_processed(monkeypatch) -> None:
+    """Zero-word rows must not make the backfill stop before later rows.
+
+    The script used to skip the zero-count bucket entirely, so an oldest batch
+    containing only tool/blank messages returned ``updated == 0`` while those
+    rows still matched the next SELECT. The explicit backfilled marker lets the
+    batch make progress even when the semantic count remains 0.
+    """
+    zero_id = uuid.uuid4()
+    nonzero_id = uuid.uuid4()
+    session = _FakeBackfillSession(
+        rows=[
+            (zero_id, [{"type": "tool_use", "id": "t1"}]),
+            (nonzero_id, [{"type": "text", "text": "hello world"}]),
+        ]
+    )
+    monkeypatch.setattr(
+        backfill_script,
+        "get_admin_session",
+        lambda: _FakeBackfillSessionContext(session),
+    )
+
+    result = asyncio.run(backfill_script._backfill_batch(batch=2))
+
+    assert result.selected == 2
+    assert result.updated == 2
+    assert session.committed is True
+    select_sql = session.executed[0][0]
+    assert "semantic_word_count_backfilled = false" in select_sql
+    update_calls = session.executed[1:]
+    assert len(update_calls) == 2
+    assert {params["count"] for _, params in update_calls if params} == {0, 2}
+    assert all("semantic_word_count_backfilled = true" in sql for sql, _ in update_calls)
+
+
+def test_backfill_batch_reports_done_only_when_no_rows_selected(monkeypatch) -> None:
+    session = _FakeBackfillSession(rows=[])
+    monkeypatch.setattr(
+        backfill_script,
+        "get_admin_session",
+        lambda: _FakeBackfillSessionContext(session),
+    )
+
+    result = asyncio.run(backfill_script._backfill_batch(batch=2))
+
+    assert result.selected == 0
+    assert result.updated == 0
+    assert session.committed is False

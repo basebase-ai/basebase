@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional, TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, event
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, event
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -81,6 +81,9 @@ class ChatMessage(Base):
     # of streaming every row's content_blocks JSONB back to Python.
     semantic_word_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
+    )
+    semantic_word_count_backfilled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
     )
 
     # Legacy fields - kept for backwards compatibility during migration
@@ -158,6 +161,7 @@ def _sync_semantic_word_count(_mapper, _connection, target: ChatMessage) -> None
     each having to remember to update the column.
     """
     target.semantic_word_count = semantic_word_count_from_blocks(target.content_blocks)
+    target.semantic_word_count_backfilled = True
 
 
 event.listen(ChatMessage, "before_insert", _sync_semantic_word_count)
