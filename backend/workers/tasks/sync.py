@@ -126,6 +126,42 @@ def _compute_sync_retry_delay_seconds(retries_so_far: int) -> int:
     return capped_delay + jitter
 
 
+def _sum_sync_counts(counts: dict[str, int] | None) -> int:
+    """Best-effort aggregate for terminal WebSocket progress events."""
+    if not counts:
+        return 0
+    return sum(value for value in counts.values() if isinstance(value, int) and value > 0)
+
+
+async def _broadcast_worker_sync_progress(
+    organization_id: str,
+    provider: str,
+    *,
+    count: int = 0,
+    status: str = "syncing",
+    step: str | None = None,
+) -> None:
+    """Broadcast worker-level sync lifecycle events without failing the sync."""
+    try:
+        from api.websockets import broadcast_sync_progress
+
+        await broadcast_sync_progress(
+            organization_id=organization_id,
+            provider=provider,
+            count=count,
+            status=status,
+            step=step,
+        )
+    except Exception as exc:
+        logger.debug(
+            "Failed to broadcast sync progress provider=%s org=%s status=%s: %s",
+            provider,
+            organization_id,
+            status,
+            exc,
+        )
+
+
 async def _clear_last_errors_for_integration(
     organization_id: str,
     provider: str,
@@ -233,8 +269,22 @@ async def _sync_integration(
         await _clear_last_errors_for_integration(organization_id, provider, user_id)
 
         await connector.mark_sync_started()
+        await _broadcast_worker_sync_progress(
+            organization_id,
+            provider,
+            count=0,
+            status="syncing",
+            step="starting",
+        )
         counts = await connector.sync_all()
         await connector.update_last_sync(counts)
+        await _broadcast_worker_sync_progress(
+            organization_id,
+            provider,
+            count=_sum_sync_counts(counts),
+            status="completed",
+            step="completed",
+        )
 
         # Generate embeddings for newly synced activities
         try:
@@ -272,6 +322,13 @@ async def _sync_integration(
                 await connector.clear_sync_started()
         except Exception:
             pass
+        await _broadcast_worker_sync_progress(
+            organization_id,
+            provider,
+            count=0,
+            status="failed",
+            step="cancelled",
+        )
         try:
             await emit_event(
                 event_type="sync.cancelled",
@@ -349,6 +406,14 @@ async def _sync_integration(
             await err_connector.record_error(error_msg)
         except Exception:
             pass
+
+        await _broadcast_worker_sync_progress(
+            organization_id,
+            provider,
+            count=0,
+            status="failed",
+            step="failed",
+        )
 
         # Emit sync failed event
         await emit_event(
