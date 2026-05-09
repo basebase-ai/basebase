@@ -1530,9 +1530,20 @@ export function DataSources(): JSX.Element {
     return <IconComponent className="w-8 h-8" />;
   };
 
+  const isGranolaImageIcon = (iconId: string): boolean =>
+    iconId.includes('/connector-icons/granola.png');
+
   const renderIconCompact = (iconId: string): JSX.Element => {
     if (isImageIcon(iconId)) {
-      return <img src={iconId} alt="" className="h-6 w-6 rounded-md object-cover" />;
+      return (
+        <img
+          src={iconId}
+          alt=""
+          className={`h-6 w-6 rounded-md object-cover ${
+            isGranolaImageIcon(iconId) ? 'grayscale' : ''
+          }`}
+        />
+      );
     }
     const IconComponent = ICON_MAP[iconId] ?? HiGlobeAlt;
     return <IconComponent className="h-5 w-5 text-surface-400" />;
