@@ -530,11 +530,11 @@ async def _subscribe_workflow_tool_progress(
 
     channel: str = tool_progress_channel(organization_id)
     last_sent: dict[str, str] = {}
+    active_tools: dict[str, dict[str, object]] = {}
+    last_silence_log_at: float | None = None
 
     while True:
         pubsub = None
-        active_tools: dict[str, dict[str, object]] = {}
-        last_silence_log_at: float | None = None
         try:
             redis = await get_tool_progress_redis()
             pubsub = redis.pubsub()
