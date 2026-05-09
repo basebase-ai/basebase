@@ -336,6 +336,7 @@ def _warn_org_required_rejection(
 
 WORKFLOW_TOOL_PROGRESS_PUBSUB_POLL_SECONDS: float = 1.5
 WORKFLOW_TOOL_PROGRESS_SANITY_TIMEOUT_SECONDS: float = 60.0
+WORKFLOW_TOOL_PROGRESS_MAX_TIMEOUT_SECONDS: float = 60.0 * 60.0
 REDIS_TOOL_PROGRESS_RECONNECT_BASE_SECONDS: float = 1.5
 REDIS_TOOL_PROGRESS_RECONNECT_MAX_SECONDS: float = 30.0
 
@@ -517,16 +518,9 @@ async def _subscribe_workflow_tool_progress(
     last_sent: dict[str, str] = {}
 
     while True:
-        if not await _rehydrate_running_workflow_tool_status(
-            websocket,
-            organization_id,
-            last_sent,
-        ):
-            return
-
         pubsub = None
         active_tools: dict[str, dict[str, object]] = {}
-        last_worker_message_at: float | None = None
+        last_silence_log_at: float | None = None
         try:
             redis = await get_tool_progress_redis()
             pubsub = redis.pubsub()
@@ -536,6 +530,14 @@ async def _subscribe_workflow_tool_progress(
                 organization_id,
             )
             await pubsub.subscribe(channel)
+
+            if not await _rehydrate_running_workflow_tool_status(
+                websocket,
+                organization_id,
+                last_sent,
+            ):
+                return
+
             while True:
                 message = await pubsub.get_message(
                     ignore_subscribe_messages=True,
@@ -544,21 +546,26 @@ async def _subscribe_workflow_tool_progress(
                 now = asyncio.get_running_loop().time()
 
                 if message is None:
-                    if (
-                        active_tools
-                        and last_worker_message_at is not None
-                        and now - last_worker_message_at
-                        >= WORKFLOW_TOOL_PROGRESS_SANITY_TIMEOUT_SECONDS
-                    ):
-                        logger.error(
-                            "[WebSocket] Tool progress worker silence timeout after %.0fs org=%s active_tools=%s",
-                            WORKFLOW_TOOL_PROGRESS_SANITY_TIMEOUT_SECONDS,
-                            organization_id,
-                            list(active_tools),
-                        )
-                        timed_out_tools = list(active_tools.values())
-                        active_tools.clear()
+                    if active_tools:
+                        timed_out_tools = [
+                            tool
+                            for tool in active_tools.values()
+                            if now - float(tool.get("first_seen_at", now))
+                            >= WORKFLOW_TOOL_PROGRESS_MAX_TIMEOUT_SECONDS
+                        ]
+                        if timed_out_tools:
+                            logger.error(
+                                "[WebSocket] Tool progress max timeout after %.0fs org=%s active_tools=%s",
+                                WORKFLOW_TOOL_PROGRESS_MAX_TIMEOUT_SECONDS,
+                                organization_id,
+                                [
+                                    f"{tool.get('conversation_id')}:{tool.get('tool_id')}"
+                                    for tool in timed_out_tools
+                                ],
+                            )
                         for timed_out in timed_out_tools:
+                            key = f"{timed_out.get('conversation_id')}:{timed_out.get('tool_id')}"
+                            active_tools.pop(key, None)
                             timeout_event = build_tool_progress_event(
                                 conversation_id=str(timed_out.get("conversation_id", "")),
                                 tool_id=str(timed_out.get("tool_id", "")),
@@ -573,13 +580,29 @@ async def _subscribe_workflow_tool_progress(
                                 },
                                 status="complete",
                             )
+                            last_sent[key] = _tool_progress_signature(timeout_event)
                             if not await _send_tool_progress_event(
                                 websocket,
                                 organization_id,
                                 timeout_event,
                             ):
                                 return
-                        last_worker_message_at = None
+
+                        if (
+                            active_tools
+                            and (
+                                last_silence_log_at is None
+                                or now - last_silence_log_at
+                                >= WORKFLOW_TOOL_PROGRESS_SANITY_TIMEOUT_SECONDS
+                            )
+                        ):
+                            logger.warning(
+                                "[WebSocket] Tool progress worker silent for %.0fs org=%s active_tools=%s",
+                                WORKFLOW_TOOL_PROGRESS_SANITY_TIMEOUT_SECONDS,
+                                organization_id,
+                                list(active_tools),
+                            )
+                            last_silence_log_at = now
                     continue
 
                 raw_data = message.get("data")
@@ -608,8 +631,13 @@ async def _subscribe_workflow_tool_progress(
                 if status in TOOL_PROGRESS_TERMINAL_STATUSES:
                     active_tools.pop(key, None)
                 else:
-                    active_tools[key] = event
-                last_worker_message_at = now
+                    tracked_event = dict(event)
+                    tracked_event["first_seen_at"] = active_tools.get(key, {}).get(
+                        "first_seen_at",
+                        now,
+                    )
+                    active_tools[key] = tracked_event
+                    last_silence_log_at = None
                 last_sent[key] = _tool_progress_signature(event)
 
                 if not await _send_tool_progress_event(websocket, organization_id, event):
