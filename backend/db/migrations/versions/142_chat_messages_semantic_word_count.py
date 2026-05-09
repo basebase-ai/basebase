@@ -35,6 +35,27 @@ def upgrade() -> None:
             server_default="0",
         ),
     )
+    # Existing rows need a marker so the online backfill can make progress
+    # through rows whose true semantic word count is also 0. Add the column with
+    # a false default for existing rows, then change the default so future
+    # database-level inserts are treated as already maintained by app writers.
+    op.add_column(
+        "chat_messages",
+        sa.Column(
+            "semantic_word_count_backfilled",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.text("false"),
+        ),
+    )
+    op.alter_column(
+        "chat_messages",
+        "semantic_word_count_backfilled",
+        server_default=sa.text("true"),
+        existing_type=sa.Boolean(),
+        existing_nullable=False,
+    )
+
     # Backfill is intentionally NOT run here — see
     # ``backend/scripts/backfill_chat_message_semantic_word_count.py`` for an
     # operator-controlled batched backfill. New writes are kept correct by the
@@ -43,4 +64,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_column("chat_messages", "semantic_word_count_backfilled")
     op.drop_column("chat_messages", "semantic_word_count")

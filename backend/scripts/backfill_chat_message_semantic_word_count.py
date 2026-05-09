@@ -7,12 +7,13 @@ The column was added with ``DEFAULT 0`` so existing rows have a wrong (always
 zero) value until this script runs. New writes are kept correct by the
 ``before_insert`` / ``before_update`` event listener on the ChatMessage model.
 
-Strategy: batched, online, idempotent. Picks rows with
-``semantic_word_count = 0 AND content_blocks IS NOT NULL`` and recomputes from
-``content_blocks``. Idle rows that genuinely have zero text words (tool-only
-messages, attachment-only messages) get re-checked each pass and stay at 0,
-which is correct — they just incur a bit of extra work on each run. Use
-``--once`` to do a single pass and exit; default loops until no rows match.
+Strategy: batched, online, idempotent. Picks rows where
+``semantic_word_count_backfilled = false`` and recomputes from
+``content_blocks``. Rows that genuinely have zero text words (tool-only, blank,
+attachment-only, or legacy-null messages) are marked as backfilled too, so an
+old all-zero batch cannot make the outer loop think the whole backfill is done
+before later non-zero rows are reached. Use ``--once`` to do a single pass and
+exit; default loops until no rows match.
 
 Usage:
     cd backend && python scripts/backfill_chat_message_semantic_word_count.py
@@ -24,6 +25,7 @@ import argparse
 import asyncio
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -40,17 +42,25 @@ def _log(msg: str) -> None:
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-async def _backfill_batch(batch: int) -> int:
-    """Update one batch. Returns the number of rows updated."""
-    # Pick the oldest un-backfilled rows that actually have content_blocks. We
-    # filter on ``semantic_word_count = 0`` and ``content_blocks IS NOT NULL``
-    # so we never reread a row whose backfill produced a non-zero value.
+@dataclass(frozen=True)
+class BackfillBatchResult:
+    """Outcome for a single selected batch."""
+
+    selected: int
+    updated: int
+
+
+async def _backfill_batch(batch: int) -> BackfillBatchResult:
+    """Update one batch and return both selected and updated row counts."""
+    # Pick the oldest rows that this backfill has not processed yet. The
+    # explicit marker is important: rows whose true semantic count is 0 must be
+    # marked processed, otherwise an all-zero batch would be selected again and
+    # again (or be mistaken for completion if callers only track changed counts).
     select_sql = text(
         """
         SELECT id, content_blocks
         FROM chat_messages
-        WHERE semantic_word_count = 0
-          AND content_blocks IS NOT NULL
+        WHERE semantic_word_count_backfilled = false
         ORDER BY created_at ASC NULLS LAST
         LIMIT :batch
         FOR UPDATE SKIP LOCKED
@@ -60,12 +70,12 @@ async def _backfill_batch(batch: int) -> int:
     async with get_admin_session() as session:
         rows = (await session.execute(select_sql, {"batch": batch})).all()
         if not rows:
-            return 0
+            return BackfillBatchResult(selected=0, updated=0)
 
         # Compute new values in Python (cheap; saves a server-side jsonb walk).
         # Group rows by computed count so the UPDATE fires once per distinct
-        # value rather than once per row — most messages share the count of 0
-        # (tool-only / attachment-only) so this collapses dramatically.
+        # value rather than once per row — many messages share the count of 0
+        # (tool-only / attachment-only / blank) so this collapses dramatically.
         by_count: dict[int, list[Any]] = {}
         for row_id, blocks in rows:
             count = semantic_word_count_from_blocks(blocks)
@@ -73,15 +83,12 @@ async def _backfill_batch(batch: int) -> int:
 
         updated = 0
         for count, ids in by_count.items():
-            # Skip the all-zero bucket — column already 0, no-op write would
-            # just churn the row and trigger our own event listener.
-            if count == 0:
-                continue
             res = await session.execute(
                 text(
                     """
                     UPDATE chat_messages
-                    SET semantic_word_count = :count
+                    SET semantic_word_count = :count,
+                        semantic_word_count_backfilled = true
                     WHERE id = ANY(:ids)
                     """
                 ),
@@ -90,7 +97,7 @@ async def _backfill_batch(batch: int) -> int:
             updated += int(res.rowcount or 0)
 
         await session.commit()
-        return updated
+        return BackfillBatchResult(selected=len(rows), updated=updated)
 
 
 async def backfill(batch: int, delay: float, once: bool) -> None:
@@ -101,21 +108,21 @@ async def backfill(batch: int, delay: float, once: bool) -> None:
     while True:
         pass_index += 1
         try:
-            updated = await _backfill_batch(batch)
+            result = await _backfill_batch(batch)
         except Exception as exc:
             _log(f"ERROR in batch {pass_index}: {exc}")
             await asyncio.sleep(max(delay * 5, 2.0))
             continue
 
-        total_updated += updated
+        total_updated += result.updated
         elapsed = time.monotonic() - started
         rate = total_updated / elapsed if elapsed > 0 else 0.0
         _log(
-            f"batch {pass_index}: updated={updated} total={total_updated} "
+            f"batch {pass_index}: selected={result.selected} updated={result.updated} total={total_updated} "
             f"elapsed={elapsed:.1f}s rate={rate:.0f}/s"
         )
 
-        if updated == 0:
+        if result.selected == 0:
             _log("no more rows to backfill — done")
             return
         if once:
