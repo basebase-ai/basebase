@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     # Qwen / DashScope (OpenAI-compatible LLM provider)
     QWEN_API_KEY: Optional[str] = None
 
+    # DeepSeek (OpenAI-compatible LLM provider)
+    DEEPSEEK_API_KEY: Optional[str] = None
+
     # Google Gemini (OpenAI-compatible LLM provider)
     GEMINI_API_KEY: Optional[str] = None
 
