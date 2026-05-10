@@ -5,7 +5,7 @@ import httpx
 import pytest
 from openai import APIStatusError
 
-from services.llm_adapter import OpenAIAdapter
+from services.llm_adapter import LLMConfig, OpenAIAdapter, PROVIDER_BASE_URLS, get_adapter
 
 
 class _EmptyAsyncIterator:
@@ -227,3 +227,26 @@ async def test_openai_complete_falls_back_when_gpt5_not_found():
     assert create_mock.await_count == 2
     assert create_mock.await_args_list[0].kwargs["model"] == "gpt-5.5"
     assert create_mock.await_args_list[1].kwargs["model"] == "gpt-5"
+
+
+def test_deepseek_adapter_uses_openai_compatible_base_url():
+    adapter = get_adapter(
+        LLMConfig(
+            provider="deepseek",
+            primary_model="deepseek-4.7",
+            cheap_model="deepseek-4.7",
+            workflow_model="deepseek-4.7",
+            api_key="test-key",
+        )
+    )
+
+    assert isinstance(adapter, OpenAIAdapter)
+    assert PROVIDER_BASE_URLS["deepseek"] == "https://api.deepseek.com"
+
+
+def test_deepseek_uses_max_tokens_parameter():
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    assert adapter._build_token_limit_kwargs(model="deepseek-4.7", max_tokens=1_000_000) == {
+        "max_tokens": 1_000_000
+    }

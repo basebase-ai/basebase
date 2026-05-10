@@ -25,12 +25,13 @@ logger = logging.getLogger(__name__)
 # Common types
 # ---------------------------------------------------------------------------
 
-LLMProvider = Literal["anthropic", "minimax", "openai", "gemini", "qwen"]
+LLMProvider = Literal["anthropic", "minimax", "openai", "gemini", "qwen", "deepseek"]
 
 PROVIDER_BASE_URLS: dict[str, str] = {
     "minimax": "https://api.minimax.io/anthropic",
     "gemini": "https://generativelanguage.googleapis.com/v1beta/openai/",
     "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    "deepseek": "https://api.deepseek.com",
 }
 
 PROVIDER_DEFAULT_MODELS: dict[str, dict[str, str]] = {
@@ -39,6 +40,7 @@ PROVIDER_DEFAULT_MODELS: dict[str, dict[str, str]] = {
     "openai": {"primary": "gpt-5.5", "cheap": "gpt-5.5-mini"},
     "gemini": {"primary": "gemini-2.5-pro", "cheap": "gemini-2.5-flash"},
     "qwen": {"primary": "qwen3.6-plus", "cheap": "qwen3-30b-a3b-instruct-2507"},
+    "deepseek": {"primary": "deepseek-4.7", "cheap": "deepseek-4.7"},
 }
 
 
@@ -810,6 +812,7 @@ _PROVIDERS_WITHOUT_DOCUMENT_BLOCKS: frozenset[str] = frozenset({
     "openai",
     "gemini",
     "qwen",
+    "deepseek",
 })
 _PROVIDER_ALIASES: dict[str, str] = {
     "alibaba": "qwen",
@@ -829,7 +832,7 @@ def get_adapter(config: LLMConfig) -> AnthropicAdapter | OpenAIAdapter:
             supports_document_blocks=supports_docs,
         )
 
-    if provider in ("openai", "gemini", "qwen"):
+    if provider in ("openai", "gemini", "qwen", "deepseek"):
         base_url = config.base_url or PROVIDER_BASE_URLS.get(provider)
         supports_docs: bool = provider not in _PROVIDERS_WITHOUT_DOCUMENT_BLOCKS
         return OpenAIAdapter(

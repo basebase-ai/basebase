@@ -35,6 +35,7 @@ from services.llm_adapter import (
 )
 from services.llm_provider import resolve_llm_config
 from services.llm_provider import (
+    get_model_output_token_limit,
     get_model_provider_map,
     provider_for_model,
     resolve_api_key_for_provider,
@@ -1689,13 +1690,21 @@ class ChatOrchestrator:
                         attempt + 1,
                     )
 
+                    output_token_limit = get_model_output_token_limit(model_name)
+                    if output_token_limit != 32_768:
+                        logger.info(
+                            "[Orchestrator] Using model-specific outbound token limit model=%s output_token_limit=%d",
+                            model_name,
+                            output_token_limit,
+                        )
+
                     async for event in adapter.stream(
                         model=model_name,
                         system=system_prompt,
                         messages=api_messages,
                         tools=tool_defs,
                         thinking=True,
-                        max_tokens=32768,
+                        max_tokens=output_token_limit,
                     ):
                         if event.type == "thinking_start":
                             is_thinking_block = True
