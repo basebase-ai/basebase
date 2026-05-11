@@ -1659,6 +1659,7 @@ class ChatOrchestrator:
         while True:
             # Track state for this streaming response
             current_text = ""
+            current_thinking_text = ""
             tool_uses: list[dict[str, Any]] = []
             current_tool: dict[str, Any] | None = None
             current_tool_input_json = ""
@@ -1676,6 +1677,7 @@ class ChatOrchestrator:
                 try:
                     # Reset state on retry
                     current_text = ""
+                    current_thinking_text = ""
                     tool_uses = []
                     current_tool = None
                     current_tool_input_json = ""
@@ -1711,6 +1713,8 @@ class ChatOrchestrator:
                             yield _json_dumps({"type": "thinking_start"})
 
                         elif event.type == "thinking_delta":
+                            thinking_chunk = event.text or ""
+                            current_thinking_text += thinking_chunk
                             yield _json_dumps({
                                 "type": "thinking_delta",
                                 "text": event.text,
@@ -2091,9 +2095,11 @@ class ChatOrchestrator:
                 break
 
             # Build assistant history from tracked state (provider-agnostic).
-            # For Anthropic-family: thinking blocks are preserved for reasoning continuity.
-            # For OpenAI-family: only text + tool_use blocks.
+            # Preserve thinking so DeepSeek thinking-mode tool turns can be replayed
+            # with reasoning_content in subsequent API calls.
             assistant_content: list[dict[str, Any]] = []
+            if current_thinking_text.strip():
+                assistant_content.append({"type": "thinking", "thinking": current_thinking_text})
             if current_text.strip():
                 assistant_content.append({"type": "text", "text": current_text})
             for tu in tool_uses:
