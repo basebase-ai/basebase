@@ -317,7 +317,7 @@ def get_model_max_tokens_map(default_max_tokens: int = 200_000) -> dict[str, int
         "gpt-5.5": 1_000_000,
         "gpt5.5": 1_000_000,
         "qwen3.6-plus": 1_000_000,
-        "deepseek-4.7": 1_000_000,
+        "deepseek-v4-pro": 1_000_000,
     }
     return {
         model_name: explicit_windows.get(model_name, default_max_tokens)
@@ -329,7 +329,7 @@ def get_model_output_token_limit(model: str, default_max_tokens: int = 32_768) -
     """Return outbound generation-token limit for models with explicit output windows."""
     normalized: str = model.strip().lower()
     explicit_output_limits: dict[str, int] = {
-        "deepseek-4.7": 1_000_000,
+        "deepseek-v4-pro": 1_000_000,
     }
     return explicit_output_limits.get(normalized, default_max_tokens)
 
