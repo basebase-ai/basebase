@@ -18,6 +18,8 @@ from uuid import UUID
 
 from config import settings
 from services.llm_adapter import (
+    DEEPSEEK_CONTEXT_WINDOW_TOKENS,
+    DEEPSEEK_MAX_OUTPUT_TOKENS,
     LLMConfig,
     LLMProvider,
     PROVIDER_DEFAULT_MODELS,
@@ -317,7 +319,10 @@ def get_model_max_tokens_map(default_max_tokens: int = 200_000) -> dict[str, int
         "gpt-5.5": 1_000_000,
         "gpt5.5": 1_000_000,
         "qwen3.6-plus": 1_000_000,
-        "deepseek-v4-pro": 1_000_000,
+        "deepseek-v4-flash": DEEPSEEK_CONTEXT_WINDOW_TOKENS,
+        "deepseek-v4-pro": DEEPSEEK_CONTEXT_WINDOW_TOKENS,
+        "deepseek-chat": DEEPSEEK_CONTEXT_WINDOW_TOKENS,
+        "deepseek-reasoner": DEEPSEEK_CONTEXT_WINDOW_TOKENS,
     }
     return {
         model_name: explicit_windows.get(model_name, default_max_tokens)
@@ -329,7 +334,10 @@ def get_model_output_token_limit(model: str, default_max_tokens: int = 32_768) -
     """Return outbound generation-token limit for models with explicit output windows."""
     normalized: str = model.strip().lower()
     explicit_output_limits: dict[str, int] = {
-        "deepseek-v4-pro": 1_000_000,
+        "deepseek-v4-flash": DEEPSEEK_MAX_OUTPUT_TOKENS,
+        "deepseek-v4-pro": DEEPSEEK_MAX_OUTPUT_TOKENS,
+        "deepseek-chat": DEEPSEEK_MAX_OUTPUT_TOKENS,
+        "deepseek-reasoner": DEEPSEEK_MAX_OUTPUT_TOKENS,
     }
     return explicit_output_limits.get(normalized, default_max_tokens)
 
