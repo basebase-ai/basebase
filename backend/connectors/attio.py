@@ -488,17 +488,35 @@ After connecting and syncing, query SQL on `contacts`, `accounts`, `deals`, `act
         assert last_exc is not None
         raise last_exc
 
-    def _incremental_record_filter(self) -> dict[str, Any] | None:
-        """Incremental filter for record queries (sync_since).
+    # Object types where Attio's `last_interaction` system attribute is
+    # available. `last_interaction` aggregates email + calendar interactions
+    # and is updated whenever the record is touched, so filtering on it lets
+    # us catch records that were *updated* (not just created) since last sync.
+    # Per Attio v2 docs, this is supported on people and companies. Deals do
+    # not expose a queryable "last modified" timestamp; we fall back to
+    # `created_at` only for those (see ``_incremental_record_filter_for``).
+    _OBJECTS_WITH_LAST_INTERACTION: frozenset[str] = frozenset({"people", "companies"})
 
-        Use only ``created_at`` — attributes like ``last_email_interaction`` are
-        not on every object (e.g. companies/deals) and may be absent in some
-        workspaces, which makes Attio return 400 ``Unknown attribute slug``.
+    def _incremental_record_filter_for(
+        self, object_slug: str
+    ) -> dict[str, Any] | None:
+        """Incremental filter for a specific object type.
+
+        Catches records *created* AND *updated/interacted with* since the last
+        successful sync, where Attio supports it. Object types differ in which
+        timestamps are filterable; emitting an unknown slug returns
+        ``400 Unknown attribute slug``, so we whitelist per object type.
         """
         if self.sync_since is None:
             return None
         iso: str = _iso_utc_z(self.sync_since)
-        return {"created_at": {"$gte": iso}}
+        created_clause: dict[str, Any] = {"created_at": {"$gte": iso}}
+        if object_slug not in self._OBJECTS_WITH_LAST_INTERACTION:
+            return created_clause
+        last_interaction_clause: dict[str, Any] = {
+            "last_interaction": {"interacted_at": {"$gte": iso}}
+        }
+        return {"$or": [created_clause, last_interaction_clause]}
 
     async def _paginate_object_records(
         self,
@@ -506,7 +524,9 @@ After connecting and syncing, query SQL on `contacts`, `accounts`, `deals`, `act
         *,
         extra_filter: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        base_filter: dict[str, Any] | None = self._incremental_record_filter()
+        base_filter: dict[str, Any] | None = self._incremental_record_filter_for(
+            object_slug
+        )
         merged_filter: dict[str, Any] | None
         if base_filter and extra_filter:
             merged_filter = {"$and": [base_filter, extra_filter]}
@@ -517,6 +537,7 @@ After connecting and syncing, query SQL on `contacts`, `accounts`, `deals`, `act
 
         out: list[dict[str, Any]] = []
         offset: int = 0
+        attempted_fallback: bool = False
         while True:
             body: dict[str, Any] = {
                 "limit": DEFAULT_PAGE_LIMIT_RECORDS,
@@ -525,11 +546,42 @@ After connecting and syncing, query SQL on `contacts`, `accounts`, `deals`, `act
             if merged_filter:
                 body["filter"] = merged_filter
 
-            data: dict[str, Any] = await self._make_request(
-                "POST",
-                f"/v2/objects/{object_slug}/records/query",
-                json_body=body,
-            )
+            try:
+                data: dict[str, Any] = await self._make_request(
+                    "POST",
+                    f"/v2/objects/{object_slug}/records/query",
+                    json_body=body,
+                )
+            except httpx.HTTPStatusError as exc:
+                # Defensive fallback: if Attio rejects an attribute slug we
+                # assumed was supported (e.g. workspace customization disabled
+                # `last_interaction`), retry once with `created_at` only so the
+                # sync still picks up newly-created records instead of failing.
+                response: httpx.Response | None = exc.response
+                status_code: int | None = (
+                    response.status_code if response is not None else None
+                )
+                if (
+                    status_code == 400
+                    and not attempted_fallback
+                    and base_filter is not None
+                    and "Unknown attribute slug" in str(exc)
+                ):
+                    logger.warning(
+                        "Attio %s incremental filter rejected (%s); "
+                        "falling back to created_at-only filter",
+                        object_slug,
+                        exc,
+                    )
+                    iso_fallback: str = _iso_utc_z(self.sync_since) if self.sync_since else ""
+                    created_only: dict[str, Any] = {"created_at": {"$gte": iso_fallback}}
+                    if extra_filter is not None:
+                        merged_filter = {"$and": [created_only, extra_filter]}
+                    else:
+                        merged_filter = created_only
+                    attempted_fallback = True
+                    continue
+                raise
             rows: Any = data.get("data", [])
             if not isinstance(rows, list):
                 break
