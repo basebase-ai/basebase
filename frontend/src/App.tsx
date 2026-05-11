@@ -19,6 +19,7 @@ import { OnboardingWizard } from './components/OnboardingWizard';
 import { SubscriptionSetup } from './components/SubscriptionSetup';
 import { AppLayout } from './components/AppLayout';
 import { OAuthCallback } from './components/OAuthCallback';
+import { ConnectMagicLink } from './components/ConnectMagicLink';
 import { AppEmbed } from './components/apps/AppEmbed';
 import { PublicAppView } from './components/public/PublicAppView';
 import { PublicArtifactView } from './components/public/PublicArtifactView';
@@ -436,6 +437,12 @@ function App(): JSX.Element {
 
   if (path === '/auth/callback') {
     return <OAuthCallback />;
+  }
+
+  // Magic-link connector authorization flow (used when the agent posts a
+  // "click to connect <provider>" link from Slack/Teams/SMS/etc.).
+  if (path.startsWith('/connect/')) {
+    return <ConnectMagicLink />;
   }
 
   // Handle password reset callback - show Auth component with reset mode

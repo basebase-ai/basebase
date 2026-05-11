@@ -1129,22 +1129,29 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
                 addConversationAppBlock(conversation_id, app);
               }
             } else if (data.type === 'connector_connect') {
-              // Connector connection initiated - open OAuth popup or connect builtin
+              // Connector connection initiated - open OAuth popup or connect builtin.
+              // ``connect_link`` is the messenger-mode shape (a clickable link
+              // surfaced to the user as text) and never emitted from a web
+              // conversation today, but we tolerate it gracefully if it does.
               const connectData = data as {
                 type: string;
-                action: 'connect_oauth' | 'connect_builtin';
+                action: 'connect_oauth' | 'connect_builtin' | 'connect_link';
                 provider: string;
                 scope: 'organization' | 'user';
                 session_token?: string;
                 connection_id?: string;
+                connect_url?: string;
               };
-              
-              // Get current org/user from store (not closure) to ensure fresh values
+
               const currentState = useAppStore.getState();
               const orgId = currentState.organization?.id;
               const currentUserId = currentState.user?.id;
-              
-              if (connectData.action === 'connect_oauth' && connectData.session_token) {
+
+              if (connectData.action === 'connect_link') {
+                if (connectData.connect_url) {
+                  window.open(connectData.connect_url, '_blank', 'noopener,noreferrer');
+                }
+              } else if (connectData.action === 'connect_oauth' && connectData.session_token) {
                 // Open Nango OAuth popup
                 const nango = new Nango();
                 nango.openConnectUI({

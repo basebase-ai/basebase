@@ -834,7 +834,7 @@ class ChatOrchestrator:
                     + "\n".join(not_enabled_lines)
                     + "\n\nDo **not** call query_on_connector, write_on_connector, or run_on_connector for any of these — they are not connected. "
                     "If the user asks for something that would need one of them, offer to help them connect it using "
-                    "`initiate_connector` which will open the OAuth authorization flow in their browser."
+                    "`initiate_connector`. In the web app this opens the authorization popup directly; in Slack/Teams/SMS/WhatsApp it returns a clickable link the user must open in a browser to finish authorization."
                 )
 
             return (connected_block + not_enabled_block) if (connected_block or not_enabled_block) else None
@@ -2055,7 +2055,11 @@ class ChatOrchestrator:
                         yield _json_dumps({"type": "app", "app": app_data})
                         content_blocks.append({"type": "app", "app": app_data})
 
-                if tool_name == "initiate_connector" and tool_result.get("action") in ("connect_oauth", "connect_builtin"):
+                if tool_name == "initiate_connector" and tool_result.get("action") in (
+                    "connect_oauth",
+                    "connect_builtin",
+                    "connect_link",
+                ):
                     yield _json_dumps({
                         "type": "connector_connect",
                         "action": tool_result.get("action"),
@@ -2063,6 +2067,7 @@ class ChatOrchestrator:
                         "scope": tool_result.get("scope"),
                         "session_token": tool_result.get("session_token"),
                         "connection_id": tool_result.get("connection_id"),
+                        "connect_url": tool_result.get("connect_url"),
                     })
 
                 if self.conversation_id:

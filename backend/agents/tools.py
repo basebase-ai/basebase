@@ -329,7 +329,7 @@ async def execute_tool(
         "foreach": lambda: _foreach(tool_input, organization_id, user_id, context),
         "trigger_sync": lambda: _trigger_sync(tool_input, organization_id),
         "search_documents": lambda: _search_documents(tool_input, organization_id, user_id),
-        "initiate_connector": lambda: _initiate_connector(tool_input, organization_id, user_id),
+        "initiate_connector": lambda: _initiate_connector(tool_input, organization_id, user_id, context),
         # Connector-driven generic tools
         "list_connected_connectors": lambda: _list_connected_connectors(organization_id),
         "get_connector_docs": lambda: _get_connector_docs(tool_input, organization_id),
@@ -5369,39 +5369,72 @@ async def _trigger_sync(
         return {"error": f"Failed to trigger sync: {str(e)}"}
 
 
+def _build_messenger_connect_link(
+    *,
+    provider: str,
+    organization_id: str,
+    user_id: str,
+    conversation_id: str | None,
+) -> str:
+    """Build a webapp magic link the user can click from a messenger to authorize a connector.
+
+    The link points at the frontend `/connect/:provider` route, which handles
+    auth (logging the user in if needed) and then runs the same Nango popup
+    flow the in-app Settings → Connectors button uses.
+    """
+    from urllib.parse import urlencode
+
+    from config import settings
+
+    base: str = settings.FRONTEND_URL.rstrip("/")
+    params: dict[str, str] = {
+        "org_id": organization_id,
+        "user_id": user_id,
+    }
+    if conversation_id:
+        params["conversation_id"] = conversation_id
+    return f"{base}/connect/{provider}?{urlencode(params)}"
+
+
 async def _initiate_connector(
     params: dict[str, Any],
     organization_id: str,
     user_id: str | None,
+    context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
-    Initiate OAuth connection flow for a connector.
-    
-    Returns session info that the frontend uses to open the OAuth popup.
+    Initiate the connection flow for a connector.
+
+    Behavior depends on the conversation source (web vs messenger):
+
+    * **web**: returns a Nango ``session_token`` so the AppLayout streaming
+      handler can pop open the embedded Nango Connect UI.
+    * **messengers** (Slack/Teams/SMS/WhatsApp/etc.): a popup can't be opened
+      from a chat surface, so we instead return a clickable magic link to the
+      webapp's ``/connect/:provider`` route. The user clicks it, signs in if
+      needed, and the webapp runs the same Nango popup flow used in Settings →
+      Connectors.
     """
     from config import get_nango_integration_id, PROVIDER_SHARING_DEFAULTS
     from connectors.registry import discover_connectors
     from services.nango import get_nango_client
 
-    provider = params.get("provider", "").strip().lower()
+    provider: str = params.get("provider", "").strip().lower()
 
     if not provider:
         return {"error": "provider is required (e.g., 'jira', 'salesforce', 'hubspot')."}
 
-    # Validate provider exists
     registry = discover_connectors()
     if provider not in registry and provider not in PROVIDER_SHARING_DEFAULTS:
-        available = sorted(set(list(registry.keys()) + list(PROVIDER_SHARING_DEFAULTS.keys())))
+        available: list[str] = sorted(set(list(registry.keys()) + list(PROVIDER_SHARING_DEFAULTS.keys())))
         return {
             "error": f"Unknown provider '{provider}'.",
             "available_connectors": available,
         }
 
-    # All integrations are user-scoped, user_id is required
     if not user_id:
         return {"error": "user_id is required for all connector authentication."}
 
-    # Check if already connected for this user
     async with get_session(organization_id=organization_id) as session:
         result = await session.execute(
             select(Integration).where(
@@ -5420,25 +5453,62 @@ async def _initiate_connector(
                 "provider": provider,
             }
 
-    # Handle built-in connectors (no OAuth needed)
-    builtin_connectors = {"web_search", "code_sandbox", "twilio", "artifacts"}
+    ctx: dict[str, Any] = context or {}
+    raw_source: str = str(ctx.get("source") or "web").strip().lower()
+    # Anything that isn't the in-app web client is treated as a chat surface
+    # where we can't open a browser popup directly. We hand the user a link.
+    is_messenger: bool = bool(raw_source) and raw_source != "web"
+    conversation_id: str | None = ctx.get("conversation_id")
+
+    builtin_connectors: set[str] = {"web_search", "code_sandbox", "twilio", "artifacts"}
     if provider in builtin_connectors:
+        if is_messenger:
+            connect_url: str = _build_messenger_connect_link(
+                provider=provider,
+                organization_id=organization_id,
+                user_id=user_id,
+                conversation_id=conversation_id,
+            )
+            return {
+                "action": "connect_link",
+                "provider": provider,
+                "connect_url": connect_url,
+                "message": (
+                    f"To enable {provider}, open this link and confirm: {connect_url}"
+                ),
+            }
         return {
             "action": "connect_builtin",
             "provider": provider,
             "message": f"Click to enable {provider}.",
         }
 
-    # Get Nango integration ID
+    if is_messenger:
+        # Don't burn a Nango session here — the user may not click the link,
+        # and the webapp will mint a fresh session when they do.
+        connect_url = _build_messenger_connect_link(
+            provider=provider,
+            organization_id=organization_id,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        return {
+            "action": "connect_link",
+            "provider": provider,
+            "connect_url": connect_url,
+            "message": (
+                f"To connect {provider}, open this link in your browser and authorize: "
+                f"{connect_url}"
+            ),
+        }
+
     try:
-        nango_integration_id = get_nango_integration_id(provider)
+        nango_integration_id: str = get_nango_integration_id(provider)
     except ValueError:
         return {"error": f"Provider '{provider}' is not configured for OAuth."}
 
-    # All connections are user-scoped
-    connection_id = f"{organization_id}:user:{user_id}"
+    connection_id: str = f"{organization_id}:user:{user_id}"
 
-    # Create Nango session
     nango = get_nango_client()
     try:
         session_data = await nango.create_connect_session(
@@ -5448,7 +5518,7 @@ async def _initiate_connector(
     except Exception as e:
         logger.error(f"[Tools._initiate_connector] Nango session failed: {e}")
         return {"error": f"Failed to create OAuth session: {str(e)}"}
-    
+
     return {
         "action": "connect_oauth",
         "provider": provider,
