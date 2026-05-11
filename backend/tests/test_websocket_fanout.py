@@ -3,11 +3,99 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Iterator
 from typing import Any
+
+import pytest
 
 from api import websockets
 from services import task_manager as task_manager_module
 from services.task_manager import TaskManager
+
+
+# ---------------------------------------------------------------------------
+# Shared test-side helpers
+# ---------------------------------------------------------------------------
+
+_SUBSCRIPTION_TASK_CANCEL_TIMEOUT_SECONDS: float = 2.0
+
+
+@pytest.fixture(autouse=True)
+def _stub_running_workflow_tool_updates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    """Prevent `_subscribe_workflow_tool_progress` from hitting the real DB.
+
+    `_rehydrate_running_workflow_tool_status` calls
+    `_collect_running_workflow_tool_updates`, which opens a SQL session and
+    blocks indefinitely without a configured database — causing every
+    subscription test to hang. Default to an empty list here; tests that need
+    persisted state can override with their own ``monkeypatch.setattr``.
+    """
+
+    async def _empty(_organization_id: str) -> list[dict[str, object]]:
+        return []
+
+    monkeypatch.setattr(
+        websockets,
+        "_collect_running_workflow_tool_updates",
+        _empty,
+    )
+    yield
+
+
+def _run_isolated(coro: Any) -> Any:
+    """Run a coroutine on a dedicated, freshly created event loop.
+
+    Tests that exercise ``_subscribe_workflow_tool_progress`` create background
+    tasks that may schedule ``asyncio.wait_for`` wrappers internally. Running
+    each test on its own loop (instead of one shared with ``pytest-asyncio``)
+    keeps every leftover task contained to that loop, which is then closed
+    here. This avoids cross-test interference that could otherwise hang the
+    suite when several subscription tests run sequentially.
+    """
+    loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        try:
+            pending: set[asyncio.Task[Any]] = {
+                task for task in asyncio.all_tasks(loop) if not task.done()
+            }
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
+        finally:
+            loop.close()
+
+
+async def _drive_subscription_until_messages(
+    socket: "_FakeSocket",
+    *,
+    min_messages: int,
+    extra_settle_seconds: float = 0.0,
+) -> None:
+    """Spawn the subscription, wait for ``min_messages``, then cancel.
+
+    ``await task`` is wrapped in ``asyncio.wait_for`` so a stuck cancellation
+    cannot block the test forever; the dedicated event loop in
+    ``_run_isolated`` will then drain any still-pending tasks.
+    """
+    task: asyncio.Task[None] = asyncio.create_task(
+        websockets._subscribe_workflow_tool_progress(socket, "org-1")  # noqa: SLF001
+    )
+    while len(socket.messages) < min_messages:
+        await asyncio.sleep(0.001)
+    if extra_settle_seconds:
+        await asyncio.sleep(extra_settle_seconds)
+    task.cancel()
+    try:
+        await asyncio.wait_for(task, timeout=_SUBSCRIPTION_TASK_CANCEL_TIMEOUT_SECONDS)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        pass
 
 
 class _FakeSocket:
@@ -29,7 +117,7 @@ def test_fanout_message_sends_concurrently() -> None:
     slow = _FakeSocket(delay_seconds=0.2)
 
     start = time.perf_counter()
-    dead = asyncio.run(websockets._fanout_message({fast, slow}, '{"ok": true}'))
+    dead = _run_isolated(websockets._fanout_message({fast, slow}, '{"ok": true}'))  # noqa: SLF001
     elapsed = time.perf_counter() - start
 
     assert dead == set()
@@ -45,21 +133,21 @@ def test_task_manager_broadcast_does_not_block_on_stalled_socket() -> None:
     stalled = _FakeSocket(delay_seconds=5.0)
 
     async def _run() -> float:
-        async with manager._lock:
+        async with manager._lock:  # noqa: SLF001
             manager._subscriptions[task_id] = {fast, stalled}  # noqa: SLF001
 
         start = time.perf_counter()
         await manager._broadcast(task_id, {"event": "tick"})  # noqa: SLF001
         elapsed_inner = time.perf_counter() - start
 
-        async with manager._lock:
+        async with manager._lock:  # noqa: SLF001
             remaining = manager._subscriptions[task_id]  # noqa: SLF001
 
         assert fast in remaining
         assert stalled not in remaining
         return elapsed_inner
 
-    elapsed = asyncio.run(_run())
+    elapsed = _run_isolated(_run())
     assert elapsed < 2.2
     assert len(fast.messages) == 1
 
@@ -138,7 +226,7 @@ def test_task_manager_broadcast_snapshots_message_before_session_close(monkeypat
             exclude_user_id="33333333-3333-3333-3333-333333333333",
         )
 
-    asyncio.run(_run())
+    _run_isolated(_run())
     assert captured_payloads == [{"id": "assistant-msg-1", "role": "assistant", "content_blocks": []}]
 
 
@@ -192,19 +280,10 @@ def test_workflow_tool_progress_subscription_forwards_redis_events(monkeypatch: 
         _fake_get_tool_progress_redis,
     )
 
-    async def _run() -> None:
-        task = asyncio.create_task(
-            websockets._subscribe_workflow_tool_progress(socket, "org-1")  # noqa: SLF001
-        )
-        while not socket.messages:
-            await asyncio.sleep(0.001)
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+    _run_isolated(
+        _drive_subscription_until_messages(socket, min_messages=1)
+    )
 
-    asyncio.run(_run())
     assert fake_redis.pubsub_instance.subscribed == ["tool_progress:org-1"]
     assert json.loads(socket.messages[0]) == event
 
@@ -258,20 +337,13 @@ def test_workflow_tool_progress_subscription_does_not_complete_on_worker_silence
         _fake_get_tool_progress_redis,
     )
 
-    async def _run() -> None:
-        task = asyncio.create_task(
-            websockets._subscribe_workflow_tool_progress(socket, "org-1")  # noqa: SLF001
+    _run_isolated(
+        _drive_subscription_until_messages(
+            socket,
+            min_messages=1,
+            extra_settle_seconds=0.02,
         )
-        while not socket.messages:
-            await asyncio.sleep(0.001)
-        await asyncio.sleep(0.02)
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-
-    asyncio.run(_run())
+    )
     assert [json.loads(message) for message in socket.messages] == [running_event]
 
 
@@ -324,19 +396,10 @@ def test_workflow_tool_progress_subscription_completes_after_max_timeout(
         _fake_get_tool_progress_redis,
     )
 
-    async def _run() -> None:
-        task = asyncio.create_task(
-            websockets._subscribe_workflow_tool_progress(socket, "org-1")  # noqa: SLF001
-        )
-        while len(socket.messages) < 2:
-            await asyncio.sleep(0.001)
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+    _run_isolated(
+        _drive_subscription_until_messages(socket, min_messages=2)
+    )
 
-    asyncio.run(_run())
     timeout_event = json.loads(socket.messages[1])
     assert timeout_event["conversation_id"] == "conv-timeout"
     assert timeout_event["tool_id"] == "tool-timeout"
@@ -391,19 +454,10 @@ def test_workflow_tool_progress_subscription_times_out_rehydrated_state(
         _fake_get_tool_progress_redis,
     )
 
-    async def _run() -> None:
-        task = asyncio.create_task(
-            websockets._subscribe_workflow_tool_progress(socket, "org-1")  # noqa: SLF001
-        )
-        while len(socket.messages) < 2:
-            await asyncio.sleep(0.001)
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+    _run_isolated(
+        _drive_subscription_until_messages(socket, min_messages=2)
+    )
 
-    asyncio.run(_run())
     rehydrated_event = json.loads(socket.messages[0])
     timeout_event = json.loads(socket.messages[1])
     assert rehydrated_event == persisted_event
@@ -466,7 +520,10 @@ def test_workflow_tool_progress_preserves_active_tools_across_reconnect(
         def pubsub(self) -> Any:
             return self._pubsub
 
-    redis_instances = [_FakeRedis(_FailingPubSub()), _FakeRedis(_SilentPubSub())]
+    redis_instances: list[_FakeRedis] = [
+        _FakeRedis(_FailingPubSub()),
+        _FakeRedis(_SilentPubSub()),
+    ]
 
     async def _fake_get_tool_progress_redis() -> _FakeRedis:
         return redis_instances.pop(0)
@@ -492,19 +549,9 @@ def test_workflow_tool_progress_preserves_active_tools_across_reconnect(
         _fake_get_tool_progress_redis,
     )
 
-    async def _run() -> None:
-        task = asyncio.create_task(
-            websockets._subscribe_workflow_tool_progress(socket, "org-1")  # noqa: SLF001
-        )
-        while len(socket.messages) < 2:
-            await asyncio.sleep(0.001)
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-
-    asyncio.run(_run())
+    _run_isolated(
+        _drive_subscription_until_messages(socket, min_messages=2)
+    )
     assert json.loads(socket.messages[0]) == running_event
     timeout_event = json.loads(socket.messages[1])
     assert timeout_event["conversation_id"] == "conv-reconnect"
@@ -550,18 +597,18 @@ def test_workflow_tool_progress_subscribes_before_rehydrate(monkeypatch: Any) ->
     monkeypatch.setattr(websockets, "_rehydrate_running_workflow_tool_status", _fake_rehydrate)
 
     async def _run() -> None:
-        task = asyncio.create_task(
+        task: asyncio.Task[None] = asyncio.create_task(
             websockets._subscribe_workflow_tool_progress(socket, "org-1")  # noqa: SLF001
         )
         while calls != ["subscribe", "rehydrate"]:
             await asyncio.sleep(0.001)
         task.cancel()
         try:
-            await task
-        except asyncio.CancelledError:
+            await asyncio.wait_for(task, timeout=_SUBSCRIPTION_TASK_CANCEL_TIMEOUT_SECONDS)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
             pass
 
-    asyncio.run(_run())
+    _run_isolated(_run())
     assert calls == ["subscribe", "rehydrate"]
 
 
@@ -602,7 +649,7 @@ def test_workflow_tool_progress_rehydrate_sends_persisted_state(monkeypatch: Any
         assert sent is True
         return last_sent
 
-    last_sent = asyncio.run(_run())
+    last_sent = _run_isolated(_run())
     assert len(socket.messages) == 1
     assert json.loads(socket.messages[0]) == persisted_event
     assert last_sent == {
@@ -644,7 +691,7 @@ def test_workflow_tool_progress_waits_for_redis_recovery_without_db_polling(monk
     )
     monkeypatch.setattr(websockets.asyncio, "sleep", _fake_sleep)
 
-    asyncio.run(websockets._wait_for_redis_tool_progress_recovery("org-1"))  # noqa: SLF001
+    _run_isolated(websockets._wait_for_redis_tool_progress_recovery("org-1"))  # noqa: SLF001
 
     assert redis_checks == 2
     assert collect_calls == 0
