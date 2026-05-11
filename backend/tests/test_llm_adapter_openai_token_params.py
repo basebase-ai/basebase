@@ -244,9 +244,20 @@ def test_deepseek_adapter_uses_openai_compatible_base_url():
     assert PROVIDER_BASE_URLS["deepseek"] == "https://api.deepseek.com"
 
 
-def test_deepseek_uses_max_tokens_parameter():
+def test_deepseek_uses_max_tokens_parameter_within_provider_output_limit():
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    assert adapter._build_token_limit_kwargs(model="deepseek-v4-pro", max_tokens=128_000) == {
+        "max_tokens": 128_000
+    }
+
+
+def test_deepseek_clamps_max_tokens_to_provider_output_limit():
     adapter = OpenAIAdapter(api_key="test-key")
 
     assert adapter._build_token_limit_kwargs(model="deepseek-v4-pro", max_tokens=1_000_000) == {
-        "max_tokens": 1_000_000
+        "max_tokens": 393_216
+    }
+    assert adapter._build_token_limit_kwargs(model="deepseek/deepseek-v4-flash", max_tokens=500_000) == {
+        "max_tokens": 393_216
     }

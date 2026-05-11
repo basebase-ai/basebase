@@ -106,7 +106,16 @@ interface ToolApprovalState {
 }
 
 const DEFAULT_MODEL_MAX_TOKENS = 200_000;
-const ONE_MILLION_TOKEN_MODELS = new Set<string>(['claude-opus-4-6', 'gpt-5.5', 'gpt5.5', 'qwen3.6-plus', 'deepseek-v4-pro']);
+const ONE_MILLION_TOKEN_MODELS = new Set<string>([
+  'claude-opus-4-6',
+  'gpt-5.5',
+  'gpt5.5',
+  'qwen3.6-plus',
+  'deepseek-v4-flash',
+  'deepseek-v4-pro',
+  'deepseek-chat',
+  'deepseek-reasoner',
+]);
 
 /**
  * Slack-like message thread typography & layout.

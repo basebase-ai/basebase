@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, AsyncIterator, Literal, Protocol
 
-from anthropic import APIStatusError as AnthropicAPIStatusError, AsyncAnthropic
+from anthropic import AsyncAnthropic
 from openai import APIStatusError as OpenAIAPIStatusError, AsyncOpenAI
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,21 @@ PROVIDER_BASE_URLS: dict[str, str] = {
     "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     "deepseek": "https://api.deepseek.com",
 }
+
+DEEPSEEK_CONTEXT_WINDOW_TOKENS: int = 1_000_000
+DEEPSEEK_MAX_OUTPUT_TOKENS: int = 384 * 1024
+DEEPSEEK_MODEL_PREFIXES: tuple[str, ...] = (
+    "deepseek-v4",
+    "deepseek-chat",
+    "deepseek-reasoner",
+)
+
+
+def is_deepseek_model(model: str) -> bool:
+    """Return whether a model name targets DeepSeek's OpenAI-compatible API."""
+    normalized_model: str = model.strip().lower().split("/")[-1]
+    return normalized_model.startswith(DEEPSEEK_MODEL_PREFIXES)
+
 
 PROVIDER_DEFAULT_MODELS: dict[str, dict[str, str]] = {
     "anthropic": {"primary": "claude-opus-4-6", "cheap": "claude-haiku-4-5-20251001"},
@@ -408,23 +423,37 @@ class OpenAIAdapter:
         self._supports_document_blocks: bool = supports_document_blocks
 
     def _build_token_limit_kwargs(self, *, model: str, max_tokens: int) -> dict[str, int]:
-        """Map token limit parameter name based on OpenAI model requirements."""
+        """Map and clamp token-limit parameters based on model requirements."""
         # Newer reasoning families (e.g. gpt-5 / gpt-5.5 / o-series) reject `max_tokens`.
         normalized_model: str = model.strip().lower().split("/")[-1]
         uses_completion_tokens: bool = normalized_model.startswith(("gpt-5", "gpt5", "o"))
         token_param_name: str = (
             "max_completion_tokens" if uses_completion_tokens else "max_tokens"
         )
+        requested_token_limit: int = max_tokens
+        token_limit: int = max_tokens
+        if is_deepseek_model(model) and max_tokens > DEEPSEEK_MAX_OUTPUT_TOKENS:
+            token_limit = DEEPSEEK_MAX_OUTPUT_TOKENS
+            logger.info(
+                "Clamping DeepSeek max_tokens to provider output limit",
+                extra={
+                    "model": model,
+                    "normalized_model": normalized_model,
+                    "requested_token_limit": requested_token_limit,
+                    "token_limit": token_limit,
+                },
+            )
         logger.debug(
             "OpenAI token limit param selected",
             extra={
                 "model": model,
                 "normalized_model": normalized_model,
                 "token_param_name": token_param_name,
-                "token_limit": max_tokens,
+                "token_limit": token_limit,
+                "requested_token_limit": requested_token_limit,
             },
         )
-        return {token_param_name: max_tokens}
+        return {token_param_name: token_limit}
 
     def _openai_not_found_fallback_models(self, model: str) -> list[str]:
         """Return same-family model candidates when a model is not found."""
