@@ -3137,6 +3137,94 @@ class ConfirmConnectionRequest(BaseModel):
     organization_id: str
     user_id: str  # Required - all integrations are user-scoped
     skip_initial_sync: bool = False
+    # Optional originating conversation. When set, after a successful confirm
+    # we post a "✓ Connected" message back into the conversation's source
+    # channel/thread (e.g. the Slack thread the user originally asked from).
+    conversation_id: Optional[str] = None
+
+
+async def _notify_connector_connected_in_conversation(
+    conversation_id: str,
+    organization_id: str,
+    provider: str,
+) -> None:
+    """Post a confirmation message back into a messenger conversation after OAuth.
+
+    Used when a user kicked off ``initiate_connector`` from Slack/Teams/etc.
+    and just finished authorizing in their browser via the magic link. Posting
+    in-thread tells them they can continue and surfaces the new integration to
+    the agent on the next message they send.
+
+    Best-effort — any failure is swallowed so a chat hiccup never breaks the
+    OAuth confirmation flow.
+    """
+    from messengers.registry import discover_messengers
+    from models.conversation import Conversation
+
+    try:
+        try:
+            conv_uuid: UUID = UUID(conversation_id)
+        except ValueError:
+            logger.warning(
+                "[connector-notify] Invalid conversation_id %s; skipping",
+                conversation_id,
+            )
+            return
+
+        async with get_admin_session() as session:
+            conv: Conversation | None = await session.get(Conversation, conv_uuid)
+
+        if conv is None:
+            logger.info(
+                "[connector-notify] Conversation %s not found; skipping",
+                conversation_id,
+            )
+            return
+        source: str = (conv.source or "").strip().lower()
+        if not source or source == "web":
+            return
+        source_channel_id: str | None = conv.source_channel_id
+        if not source_channel_id:
+            return
+
+        if ":" in source_channel_id:
+            channel_id, thread_id = source_channel_id.split(":", 1)
+        else:
+            channel_id = source_channel_id
+            thread_id = None
+
+        registry = discover_messengers()
+        messenger_cls = registry.get(source)
+        if messenger_cls is None:
+            logger.info(
+                "[connector-notify] No messenger registered for source=%s; skipping",
+                source,
+            )
+            return
+
+        messenger = messenger_cls()
+        text_message: str = (
+            f"✓ {provider} is connected. You can continue here — just ask me what you'd like to do."
+        )
+        try:
+            await messenger.format_and_post(
+                channel_id=channel_id,
+                thread_id=thread_id,
+                text_to_send=text_message,
+                organization_id=organization_id,
+            )
+        except Exception:
+            logger.exception(
+                "[connector-notify] Failed to post connect confirmation source=%s channel=%s thread=%s",
+                source,
+                channel_id,
+                thread_id,
+            )
+    except Exception:
+        logger.exception(
+            "[connector-notify] Unexpected error notifying conversation %s",
+            conversation_id,
+        )
 
 
 @router.post("/integrations/confirm")
@@ -3422,6 +3510,14 @@ async def confirm_integration(
             str(org_uuid),
             user_uuid,
             connection_metadata,
+        )
+
+    if request.conversation_id:
+        background_tasks.add_task(
+            _notify_connector_connected_in_conversation,
+            request.conversation_id,
+            str(org_uuid),
+            request.provider,
         )
     if request.provider == "github":
         async def _map_connected_github_identity() -> None:

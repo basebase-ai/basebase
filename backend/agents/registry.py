@@ -438,10 +438,15 @@ The sync runs in the background and may take a few minutes to complete.""",
 
 register_tool(
     name="initiate_connector",
-    description="""Initiate the OAuth connection flow for a new connector.
+    description="""Initiate the connection flow for a new connector.
 
 Use this when the user asks to connect a new integration like Jira, Salesforce, HubSpot, Slack, etc.
-This opens an OAuth popup in the user's browser to authorize the connection.
+
+Behavior depends on where the user is talking to you:
+- **Web app**: this opens an OAuth popup in the user's browser automatically.
+- **Slack / Teams / SMS / WhatsApp / other messengers**: a chat surface can't open a browser popup, so the tool result will include a `connect_url` (and a ready-to-send `message`). Surface that link to the user verbatim — do NOT promise that "a popup is opening" or that you'll "redirect" them. Tell them to click the link to finish authorization, then come back to the chat.
+
+Once the user finishes the OAuth flow, the integration is created automatically and you'll be able to query it on the next message — no further action from you is required.
 
 All connectors are user-scoped: each user connects their own account. For some connectors (e.g. HubSpot, Linear), the user can optionally share query or write access with teammates so others can use the data or act through that connection.
 
