@@ -477,3 +477,139 @@ async def test_execute_action_unknown_raises() -> None:
     c = _connector()
     with pytest.raises(ValueError, match="Unknown Attio action"):
         await c.execute_action("not_real", {})
+
+
+def test_incremental_filter_returns_none_when_no_sync_since() -> None:
+    c = _connector()
+    assert c._incremental_record_filter_for("people") is None
+    assert c._incremental_record_filter_for("companies") is None
+    assert c._incremental_record_filter_for("deals") is None
+
+
+def test_incremental_filter_includes_last_interaction_for_people_and_companies() -> None:
+    c = _connector()
+    cutoff: datetime = datetime(2026, 1, 1, 0, 0, 0)
+    c._sync_since_override = cutoff
+    iso: str = "2026-01-01T00:00:00.000Z"
+
+    expected_or: dict[str, Any] = {
+        "$or": [
+            {"created_at": {"$gte": iso}},
+            {"last_interaction": {"interacted_at": {"$gte": iso}}},
+        ]
+    }
+    assert c._incremental_record_filter_for("people") == expected_or
+    assert c._incremental_record_filter_for("companies") == expected_or
+
+
+def test_incremental_filter_uses_created_at_only_for_deals() -> None:
+    c = _connector()
+    cutoff: datetime = datetime(2026, 1, 1, 0, 0, 0)
+    c._sync_since_override = cutoff
+    iso: str = "2026-01-01T00:00:00.000Z"
+
+    assert c._incremental_record_filter_for("deals") == {"created_at": {"$gte": iso}}
+
+
+@pytest.mark.asyncio
+async def test_paginate_object_records_uses_per_object_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    c = _connector()
+    cutoff: datetime = datetime(2026, 1, 1, 0, 0, 0)
+    c._sync_since_override = cutoff
+    iso: str = "2026-01-01T00:00:00.000Z"
+
+    captured: list[tuple[str, str, dict[str, Any] | None]] = []
+
+    async def fake_make_request(
+        self: AttioConnector,
+        method: str,
+        endpoint: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        captured.append((method, endpoint, json_body))
+        return {"data": []}
+
+    monkeypatch.setattr(AttioConnector, "_make_request", fake_make_request)
+    monkeypatch.setattr(AttioConnector, "ensure_sync_active", _noop_ensure_sync_active)
+
+    await c.sync_contacts()
+    await c.sync_deals()
+
+    assert len(captured) == 2
+
+    people_body: dict[str, Any] | None = captured[0][2]
+    assert people_body is not None
+    assert people_body.get("filter") == {
+        "$or": [
+            {"created_at": {"$gte": iso}},
+            {"last_interaction": {"interacted_at": {"$gte": iso}}},
+        ]
+    }
+
+    deals_body: dict[str, Any] | None = captured[1][2]
+    assert deals_body is not None
+    assert deals_body.get("filter") == {"created_at": {"$gte": iso}}
+
+
+@pytest.mark.asyncio
+async def test_paginate_falls_back_to_created_at_on_unknown_attribute_slug(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If Attio rejects ``last_interaction`` with 400, we must retry once with
+    ``created_at`` only so a workspace where the attribute is missing still
+    syncs newly-created records instead of failing the whole sync."""
+    import httpx
+
+    c = _connector()
+    cutoff: datetime = datetime(2026, 1, 1, 0, 0, 0)
+    c._sync_since_override = cutoff
+    iso: str = "2026-01-01T00:00:00.000Z"
+
+    bodies_seen: list[dict[str, Any] | None] = []
+    call_count: dict[str, int] = {"n": 0}
+
+    async def fake_make_request(
+        self: AttioConnector,
+        method: str,
+        endpoint: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        bodies_seen.append(json_body)
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            request: httpx.Request = httpx.Request(method, f"https://api.attio.com{endpoint}")
+            response: httpx.Response = httpx.Response(
+                400,
+                request=request,
+                json={"message": "Unknown attribute slug: last_interaction"},
+            )
+            raise httpx.HTTPStatusError(
+                "Attio API error (400): Unknown attribute slug: last_interaction",
+                request=request,
+                response=response,
+            )
+        return {"data": [{"id": {"record_id": "p-1"}, "values": {}}]}
+
+    monkeypatch.setattr(AttioConnector, "_make_request", fake_make_request)
+    monkeypatch.setattr(AttioConnector, "ensure_sync_active", _noop_ensure_sync_active)
+
+    rows: list[dict[str, Any]] = await c._paginate_object_records("people")
+
+    assert len(bodies_seen) == 2
+    assert bodies_seen[0] is not None
+    assert bodies_seen[0].get("filter") == {
+        "$or": [
+            {"created_at": {"$gte": iso}},
+            {"last_interaction": {"interacted_at": {"$gte": iso}}},
+        ]
+    }
+    assert bodies_seen[1] is not None
+    assert bodies_seen[1].get("filter") == {"created_at": {"$gte": iso}}
+    assert len(rows) == 1
+    assert rows[0]["id"]["record_id"] == "p-1"

@@ -842,34 +842,53 @@ async def _ensure_org_admin_can_sync_all(organization_id: str, auth: AuthContext
 
 
 async def _execute_sync_all_integrations(organization_id: str) -> SyncAllResponse:
-    """Enqueue Celery sync for every active integration that supports SYNC."""
+    """Enqueue Celery sync for every active integration that supports SYNC.
+
+    Synchronously stamps ``sync_started_at`` on each integration before
+    enqueuing so the immediate ``/status`` poll from the UI reports
+    "syncing" — see the matching note in ``trigger_sync``.
+    """
+    from sqlalchemy.orm.attributes import flag_modified
+
     try:
         customer_uuid = UUID(organization_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid customer ID")
 
+    sync_started_iso: str = datetime.utcnow().isoformat()
     async with get_session(organization_id=organization_id) as session:
         result = await session.execute(
-            select(Integration.connector, Integration.user_id).where(
+            select(Integration).where(
                 Integration.organization_id == customer_uuid,
                 Integration.is_active == True,  # noqa: E712
             )
         )
-        integrations: list[tuple[str, UUID | None]] = list(result.all())
+        integrations: list[Integration] = list(result.scalars().all())
 
-    if not integrations:
-        raise HTTPException(status_code=404, detail="No active integrations found")
+        if not integrations:
+            raise HTTPException(status_code=404, detail="No active integrations found")
+
+        provider_user_pairs: list[tuple[str, UUID | None]] = []
+        for integration in integrations:
+            connector_cls = CONNECTORS.get(integration.connector)
+            if connector_cls is None or Capability.SYNC not in connector_cls.meta.capabilities:
+                continue
+            provider_user_pairs.append((integration.connector, integration.user_id))
+            stats: dict[str, Any] = dict(integration.sync_stats or {})
+            stats["sync_started_at"] = sync_started_iso
+            integration.sync_stats = stats
+            flag_modified(integration, "sync_stats")
+            integration.last_error = None
+        await session.commit()
 
     from workers.tasks.sync import sync_integration
 
     syncing_providers: list[str] = []
-    for prov, integration_user_id in integrations:
-        connector_cls = CONNECTORS.get(prov)
-        if connector_cls is not None and Capability.SYNC in connector_cls.meta.capabilities:
-            if prov not in syncing_providers:
-                syncing_providers.append(prov)
-            uid: str | None = str(integration_user_id) if integration_user_id else None
-            sync_integration.delay(organization_id, prov, uid)
+    for prov, integration_user_id in provider_user_pairs:
+        if prov not in syncing_providers:
+            syncing_providers.append(prov)
+        uid: str | None = str(integration_user_id) if integration_user_id else None
+        sync_integration.delay(organization_id, prov, uid)
 
     return SyncAllResponse(
         status="queued",
@@ -925,22 +944,42 @@ async def trigger_sync(
             detail=f"Provider {provider} does not support sync (query-only connector).",
         )
 
-    # Fetch *all* active integrations for this provider (may be per-user)
+    # Fetch *all* active integrations for this provider (may be per-user) and
+    # synchronously mark them as syncing. Doing the mark in the API process
+    # before enqueuing the Celery task closes a race with the immediate
+    # ``/status`` poll the frontend issues right after this trigger: without
+    # this, the worker hasn't yet called ``mark_sync_started``, so the status
+    # endpoint sees ``last_sync_at`` from the previous run and replies
+    # "completed" — which causes the UI to clear its spinner and stop polling
+    # before the actual sync finishes.
+    from sqlalchemy.orm.attributes import flag_modified
+
+    sync_started_iso: str = datetime.utcnow().isoformat()
     async with get_session(organization_id=organization_id) as session:
         result = await session.execute(
-            select(Integration.user_id).where(
+            select(Integration).where(
                 Integration.organization_id == customer_uuid,
                 Integration.connector == provider,
                 Integration.is_active == True,  # noqa: E712
             )
         )
-        integration_user_ids: list[UUID | None] = list(result.scalars().all())
+        integrations: list[Integration] = list(result.scalars().all())
 
-        if not integration_user_ids:
+        if not integrations:
             raise HTTPException(
                 status_code=404,
                 detail=f"No active {provider} integration found",
             )
+
+        integration_user_ids: list[UUID | None] = []
+        for integration in integrations:
+            integration_user_ids.append(integration.user_id)
+            stats: dict[str, Any] = dict(integration.sync_stats or {})
+            stats["sync_started_at"] = sync_started_iso
+            integration.sync_stats = stats
+            flag_modified(integration, "sync_stats")
+            integration.last_error = None
+        await session.commit()
 
     sync_since_override: datetime | None = parse_sync_since_param(since)
     since_iso: str | None = (
