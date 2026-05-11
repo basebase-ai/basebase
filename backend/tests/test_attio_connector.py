@@ -556,6 +556,146 @@ async def test_paginate_object_records_uses_per_object_filter(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation,object_slug,id_key",
+    [
+        ("delete_person", "people", "person_id"),
+        ("delete_company", "companies", "company_id"),
+        ("delete_deal", "deals", "deal_id"),
+    ],
+)
+async def test_write_delete_record_dispatches_to_object_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    object_slug: str,
+    id_key: str,
+) -> None:
+    c = _connector()
+    recorded: list[tuple[str, str, dict[str, Any] | None]] = []
+
+    async def fake_make_request(
+        self: AttioConnector,
+        method: str,
+        endpoint: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        recorded.append((method, endpoint, json_body))
+        return {}
+
+    async def fake_token(self: AttioConnector) -> tuple[str, str]:
+        return ("tok", "")
+
+    monkeypatch.setattr(AttioConnector, "_make_request", fake_make_request)
+    monkeypatch.setattr(AttioConnector, "get_oauth_token", fake_token)
+
+    rid: str = "abc123-record-id"
+    result_by_id: dict[str, Any] = await c.write(operation, {"id": rid})
+    assert result_by_id == {"deleted": True, "id": rid, "object": object_slug}
+    assert recorded[-1] == ("DELETE", f"/v2/objects/{object_slug}/records/{rid}", None)
+
+    rid2: str = "xyz789-record-id"
+    result_by_typed: dict[str, Any] = await c.write(operation, {id_key: rid2})
+    assert result_by_typed == {"deleted": True, "id": rid2, "object": object_slug}
+    assert recorded[-1] == ("DELETE", f"/v2/objects/{object_slug}/records/{rid2}", None)
+
+
+@pytest.mark.asyncio
+async def test_write_delete_note_uses_notes_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    c = _connector()
+    recorded: list[tuple[str, str]] = []
+
+    async def fake_make_request(
+        self: AttioConnector,
+        method: str,
+        endpoint: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        recorded.append((method, endpoint))
+        return {}
+
+    async def fake_token(self: AttioConnector) -> tuple[str, str]:
+        return ("tok", "")
+
+    monkeypatch.setattr(AttioConnector, "_make_request", fake_make_request)
+    monkeypatch.setattr(AttioConnector, "get_oauth_token", fake_token)
+
+    nid: str = "note-uuid-1"
+    result: dict[str, Any] = await c.write("delete_note", {"id": nid})
+    assert result == {"deleted": True, "id": nid, "object": "notes"}
+    assert recorded == [("DELETE", f"/v2/notes/{nid}")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation",
+    ["delete_person", "delete_company", "delete_deal", "delete_note"],
+)
+async def test_write_delete_requires_id(operation: str) -> None:
+    c = _connector()
+    with pytest.raises(ValueError, match="requires id"):
+        await c.write(operation, {})
+
+
+@pytest.mark.asyncio
+async def test_capture_before_state_for_delete_operations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """capture_before_state must fetch the existing record for delete_* ops so
+    the action ledger preserves an auditable copy of what was destroyed."""
+    c = _connector()
+    fetched: list[tuple[str, str]] = []
+
+    async def fake_make_request(
+        self: AttioConnector,
+        method: str,
+        endpoint: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        fetched.append((method, endpoint))
+        return {"data": {"id": {"record_id": "rec-1"}, "values": {"name": "Old"}}}
+
+    async def fake_token(self: AttioConnector) -> tuple[str, str]:
+        return ("tok", "")
+
+    monkeypatch.setattr(AttioConnector, "_make_request", fake_make_request)
+    monkeypatch.setattr(AttioConnector, "get_oauth_token", fake_token)
+
+    snap_person: dict[str, Any] | None = await c.capture_before_state(
+        "delete_person", {"id": "p-1"}
+    )
+    snap_company: dict[str, Any] | None = await c.capture_before_state(
+        "delete_company", {"id": "c-1"}
+    )
+    snap_deal: dict[str, Any] | None = await c.capture_before_state(
+        "delete_deal", {"id": "d-1"}
+    )
+    snap_note: dict[str, Any] | None = await c.capture_before_state(
+        "delete_note", {"id": "n-1"}
+    )
+
+    assert snap_person is not None and snap_company is not None
+    assert snap_deal is not None and snap_note is not None
+    assert fetched == [
+        ("GET", "/v2/objects/people/records/p-1"),
+        ("GET", "/v2/objects/companies/records/c-1"),
+        ("GET", "/v2/objects/deals/records/d-1"),
+        ("GET", "/v2/notes/n-1"),
+    ]
+
+
+def test_meta_includes_delete_write_operations() -> None:
+    c = _connector()
+    op_names: set[str] = {op.name for op in c.meta.write_operations}
+    assert {"delete_person", "delete_company", "delete_deal", "delete_note"} <= op_names
+
+
+@pytest.mark.asyncio
 async def test_paginate_falls_back_to_created_at_on_unknown_attribute_slug(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

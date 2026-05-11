@@ -324,6 +324,38 @@ class AttioConnector(BaseConnector):
                     {"name": "format", "type": "string", "required": False, "description": "plaintext or markdown"},
                 ],
             ),
+            WriteOperation(
+                name="delete_person",
+                entity_type="contact",
+                description="Permanently delete an Attio person record by record_id",
+                parameters=[
+                    {"name": "id", "type": "string", "required": True, "description": "Attio person record_id"},
+                ],
+            ),
+            WriteOperation(
+                name="delete_company",
+                entity_type="company",
+                description="Permanently delete an Attio company record by record_id",
+                parameters=[
+                    {"name": "id", "type": "string", "required": True, "description": "Attio company record_id"},
+                ],
+            ),
+            WriteOperation(
+                name="delete_deal",
+                entity_type="deal",
+                description="Permanently delete an Attio deal record by record_id",
+                parameters=[
+                    {"name": "id", "type": "string", "required": True, "description": "Attio deal record_id"},
+                ],
+            ),
+            WriteOperation(
+                name="delete_note",
+                entity_type="note",
+                description="Permanently delete an Attio note by note_id",
+                parameters=[
+                    {"name": "id", "type": "string", "required": True, "description": "Attio note_id"},
+                ],
+            ),
         ],
         actions=[
             ConnectorAction(
@@ -411,6 +443,8 @@ After connecting and syncing, query SQL on `contacts`, `accounts`, `deals`, `act
 - **create_deal** — Required: `name`, `stage` (must match a configured pipeline status **title** or **status UUID**), and **either** `owner_email` **or** `owner_workspace_member_id`. Call **`list_statuses`** first (default: deals + stage) to see exact titles/IDs for this workspace—do not guess. Optional: `value`, `currency`, `company_id`. **Custom attributes:** pass Attio attribute **api_slug** as extra top-level keys (e.g. `pipeline_type`) or grouped under optional `values` — each value is sent as-is in `data.values` per [Attio deals API](https://docs.attio.com/rest-api/endpoint-reference/deals/create-a-deal-record).
 - **update_deal** — Required: `id`. Optional: `name`, `stage`, `owner_email`, `owner_workspace_member_id`, `value`, `currency`, `company_id`. Same **custom attributes** rules as `create_deal`.
 - **create_note** — Required: `parent_object`, `parent_record_id`, `title`, `content`. Optional: `format` (`plaintext`|`markdown`).
+- **delete_person** / **delete_company** / **delete_deal** — Required: `id` (Attio `record_id`). Permanently deletes the record in Attio (irreversible). Use to clean up duplicates or unwanted records.
+- **delete_note** — Required: `id` (Attio `note_id`). Permanently deletes the note (irreversible).
 
 ## Actions (`run_on_connector`)
 
@@ -1112,22 +1146,58 @@ After connecting and syncing, query SQL on `contacts`, `accounts`, `deals`, `act
                     },
                 },
             )
+        if operation in ("delete_person", "delete_company", "delete_deal"):
+            object_slug: str = {
+                "delete_person": "people",
+                "delete_company": "companies",
+                "delete_deal": "deals",
+            }[operation]
+            id_key: str = {
+                "delete_person": "person_id",
+                "delete_company": "company_id",
+                "delete_deal": "deal_id",
+            }[operation]
+            rid: str = str(d.pop(id_key, None) or d.pop("id", "") or "").strip()
+            if not rid:
+                raise ValueError(f"{operation} requires id")
+            await self._make_request(
+                "DELETE",
+                f"/v2/objects/{object_slug}/records/{rid}",
+            )
+            return {"deleted": True, "id": rid, "object": object_slug}
+        if operation == "delete_note":
+            nid: str = str(d.pop("note_id", None) or d.pop("id", "") or "").strip()
+            if not nid:
+                raise ValueError("delete_note requires id")
+            await self._make_request("DELETE", f"/v2/notes/{nid}")
+            return {"deleted": True, "id": nid, "object": "notes"}
         raise ValueError(f"Unknown Attio write operation: {operation}")
 
     async def capture_before_state(self, operation: str, data: dict[str, Any]) -> dict[str, Any] | None:
+        # Mapping of operations that target a specific record to the (object_slug, id_key)
+        # used to fetch the current record state for the action ledger. Captures
+        # both update_* (so we can show the diff) and delete_* (so the deletion
+        # is recoverable / auditable).
+        record_lookups: dict[str, tuple[str, str]] = {
+            "update_person": ("people", "person_id"),
+            "update_company": ("companies", "company_id"),
+            "update_deal": ("deals", "deal_id"),
+            "delete_person": ("people", "person_id"),
+            "delete_company": ("companies", "company_id"),
+            "delete_deal": ("deals", "deal_id"),
+        }
         try:
-            if operation == "update_person":
-                rid: str = str(data.get("id") or data.get("person_id") or "").strip()
+            if operation in record_lookups:
+                object_slug, id_key = record_lookups[operation]
+                rid: str = str(data.get("id") or data.get(id_key) or "").strip()
                 if rid:
-                    return await self._make_request("GET", f"/v2/objects/people/records/{rid}")
-            if operation == "update_company":
-                rid2: str = str(data.get("id") or data.get("company_id") or "").strip()
-                if rid2:
-                    return await self._make_request("GET", f"/v2/objects/companies/records/{rid2}")
-            if operation == "update_deal":
-                rid3: str = str(data.get("id") or data.get("deal_id") or "").strip()
-                if rid3:
-                    return await self._make_request("GET", f"/v2/objects/deals/records/{rid3}")
+                    return await self._make_request(
+                        "GET", f"/v2/objects/{object_slug}/records/{rid}"
+                    )
+            if operation == "delete_note":
+                nid: str = str(data.get("id") or data.get("note_id") or "").strip()
+                if nid:
+                    return await self._make_request("GET", f"/v2/notes/{nid}")
         except Exception:
             return None
         return None
