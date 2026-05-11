@@ -17,7 +17,7 @@ def test_infer_provider_from_model_name() -> None:
     assert _infer_provider_from_model_name("MiniMax-M2.7-highspeed") == "minimax"
     assert _infer_provider_from_model_name("qwen3-max") == "qwen"
     assert _infer_provider_from_model_name("qwq-plus") == "qwen"
-    assert _infer_provider_from_model_name("deepseek-4.7") == "deepseek"
+    assert _infer_provider_from_model_name("deepseek-v4-pro") == "deepseek"
     assert _infer_provider_from_model_name("some-unknown-model") is None
 
 
@@ -145,7 +145,7 @@ def test_get_model_max_tokens_map_uses_explicit_windows_and_defaults(monkeypatch
     monkeypatch.setattr(
         llm_provider.settings,
         "ALL_MODEL_STRINGS",
-        "claude-opus-4-6:anthropic,gpt-5.5:openai,qwen3.6-plus:alibaba,deepseek-4.7:deepseek,random-model:openai",
+        "claude-opus-4-6:anthropic,gpt-5.5:openai,qwen3.6-plus:alibaba,deepseek-v4-pro:deepseek,random-model:openai",
     )
 
     max_tokens_map = llm_provider.get_model_max_tokens_map(default_max_tokens=200_000)
@@ -153,12 +153,12 @@ def test_get_model_max_tokens_map_uses_explicit_windows_and_defaults(monkeypatch
     assert max_tokens_map["claude-opus-4-6"] == 1_000_000
     assert max_tokens_map["gpt-5.5"] == 1_000_000
     assert max_tokens_map["qwen3.6-plus"] == 1_000_000
-    assert max_tokens_map["deepseek-4.7"] == 1_000_000
+    assert max_tokens_map["deepseek-v4-pro"] == 1_000_000
     assert max_tokens_map["random-model"] == 200_000
 
 
 def test_deepseek_output_token_limit_is_one_million() -> None:
-    assert get_model_output_token_limit("deepseek-4.7") == 1_000_000
+    assert get_model_output_token_limit("deepseek-v4-pro") == 1_000_000
     assert get_model_output_token_limit("gpt-5.5") == 32_768
 
 
@@ -169,12 +169,12 @@ def test_resolve_llm_config_uses_deepseek_defaults(monkeypatch) -> None:
     monkeypatch.setitem(llm_provider._GLOBAL_PROVIDER_KEYS, "deepseek", "test-deepseek-key")
     monkeypatch.setattr(llm_provider.settings, "DEFAULT_PRIMARY_MODEL", "")
     monkeypatch.setattr(llm_provider.settings, "DEFAULT_CHEAP_MODEL", "")
-    monkeypatch.setattr(llm_provider.settings, "ALL_MODEL_STRINGS", "deepseek-4.7:deepseek")
+    monkeypatch.setattr(llm_provider.settings, "ALL_MODEL_STRINGS", "deepseek-v4-pro:deepseek")
 
     class _Org:
         handle = "acme"
         llm_provider = None
-        llm_primary_model = "deepseek-4.7"
+        llm_primary_model = "deepseek-v4-pro"
         llm_cheap_model = None
         llm_workflow_model = None
 
@@ -186,6 +186,6 @@ def test_resolve_llm_config_uses_deepseek_defaults(monkeypatch) -> None:
     config = asyncio.run(resolve_llm_config("00000000-0000-0000-0000-000000000001"))
 
     assert config.provider == "deepseek"
-    assert config.primary_model == "deepseek-4.7"
-    assert config.cheap_model == "deepseek-4.7"
+    assert config.primary_model == "deepseek-v4-pro"
+    assert config.cheap_model == "deepseek-v4-pro"
     assert config.api_key == "test-deepseek-key"

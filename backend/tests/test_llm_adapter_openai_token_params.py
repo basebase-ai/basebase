@@ -233,9 +233,9 @@ def test_deepseek_adapter_uses_openai_compatible_base_url():
     adapter = get_adapter(
         LLMConfig(
             provider="deepseek",
-            primary_model="deepseek-4.7",
-            cheap_model="deepseek-4.7",
-            workflow_model="deepseek-4.7",
+            primary_model="deepseek-v4-pro",
+            cheap_model="deepseek-v4-pro",
+            workflow_model="deepseek-v4-pro",
             api_key="test-key",
         )
     )
@@ -247,6 +247,6 @@ def test_deepseek_adapter_uses_openai_compatible_base_url():
 def test_deepseek_uses_max_tokens_parameter():
     adapter = OpenAIAdapter(api_key="test-key")
 
-    assert adapter._build_token_limit_kwargs(model="deepseek-4.7", max_tokens=1_000_000) == {
+    assert adapter._build_token_limit_kwargs(model="deepseek-v4-pro", max_tokens=1_000_000) == {
         "max_tokens": 1_000_000
     }

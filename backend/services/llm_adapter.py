@@ -40,7 +40,7 @@ PROVIDER_DEFAULT_MODELS: dict[str, dict[str, str]] = {
     "openai": {"primary": "gpt-5.5", "cheap": "gpt-5.5-mini"},
     "gemini": {"primary": "gemini-2.5-pro", "cheap": "gemini-2.5-flash"},
     "qwen": {"primary": "qwen3.6-plus", "cheap": "qwen3-30b-a3b-instruct-2507"},
-    "deepseek": {"primary": "deepseek-4.7", "cheap": "deepseek-4.7"},
+    "deepseek": {"primary": "deepseek-v4-pro", "cheap": "deepseek-v4-pro"},
 }
 
 

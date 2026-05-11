@@ -136,7 +136,7 @@ const MODEL_FAMILY_DEFAULTS: Record<string, { primary: string; fast: string }> =
   openai: { primary: 'gpt-5.5', fast: 'gpt-5.5-mini' },
   gemini: { primary: 'gemini-2.5-pro', fast: 'gemini-2.5-flash' },
   alibaba: { primary: 'qwen3.6-plus', fast: 'qwen3-30b-a3b-instruct-2507' },
-  deepseek: { primary: 'deepseek-4.7', fast: 'deepseek-4.7' },
+  deepseek: { primary: 'deepseek-v4-pro', fast: 'deepseek-v4-pro' },
 };
 
 const isFastModelCandidate = (modelName: string): boolean => {
