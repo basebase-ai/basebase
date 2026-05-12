@@ -107,7 +107,7 @@ class _ThinkingThenToolAdapter:
 async def _collect_stream_for_model(
     orchestrator: ChatOrchestrator,
     model_name: str,
-) -> list[str]:
+) -> tuple[list[str], list[dict[str, object]]]:
     messages = [{"role": "user", "content": "hi"}]
     content_blocks: list[dict[str, object]] = []
     out: list[str] = []
@@ -118,7 +118,7 @@ async def _collect_stream_for_model(
         model_name,
     ):
         out.append(chunk)
-    return out
+    return out, content_blocks
 
 
 def test_stream_with_tools_replays_thinking_only_for_deepseek_models(monkeypatch) -> None:
@@ -136,11 +136,14 @@ def test_stream_with_tools_replays_thinking_only_for_deepseek_models(monkeypatch
     non_deepseek_orchestrator._adapter = non_deepseek_adapter
     non_deepseek_orchestrator._llm_config = SimpleNamespace(provider="anthropic")
 
-    asyncio.run(_collect_stream_for_model(non_deepseek_orchestrator, "claude-opus-4-6"))
+    _, non_deepseek_content_blocks = asyncio.run(
+        _collect_stream_for_model(non_deepseek_orchestrator, "claude-opus-4-6")
+    )
 
     non_deepseek_messages = non_deepseek_adapter.calls[1]["messages"]
     non_deepseek_assistant_content = non_deepseek_messages[1]["content"]
     assert all(block["type"] != "thinking" for block in non_deepseek_assistant_content)
+    assert all(block["type"] != "thinking" for block in non_deepseek_content_blocks)
 
     deepseek_orchestrator = ChatOrchestrator(
         user_id="u1",
@@ -151,8 +154,96 @@ def test_stream_with_tools_replays_thinking_only_for_deepseek_models(monkeypatch
     deepseek_orchestrator._adapter = deepseek_adapter
     deepseek_orchestrator._llm_config = SimpleNamespace(provider="deepseek")
 
-    asyncio.run(_collect_stream_for_model(deepseek_orchestrator, "deepseek-v4-pro"))
+    _, deepseek_content_blocks = asyncio.run(
+        _collect_stream_for_model(deepseek_orchestrator, "deepseek-v4-pro")
+    )
 
     deepseek_messages = deepseek_adapter.calls[1]["messages"]
     deepseek_assistant_content = deepseek_messages[1]["content"]
     assert deepseek_assistant_content[0] == {"type": "thinking", "thinking": "need a tool"}
+    assert deepseek_content_blocks[0] == {"type": "thinking", "thinking": "need a tool"}
+
+
+class _FakeScalarResult:
+    def __init__(self, messages):  # type: ignore[no-untyped-def]
+        self._messages = messages
+
+    def all(self):  # type: ignore[no-untyped-def]
+        return self._messages
+
+
+class _FakeExecuteResult:
+    def __init__(self, messages):  # type: ignore[no-untyped-def]
+        self._messages = messages
+
+    def scalars(self):  # type: ignore[no-untyped-def]
+        return _FakeScalarResult(self._messages)
+
+
+class _FakeSession:
+    def __init__(self, messages):  # type: ignore[no-untyped-def]
+        self._messages = messages
+
+    async def execute(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return _FakeExecuteResult(self._messages)
+
+
+class _FakeSessionManager:
+    def __init__(self, messages):  # type: ignore[no-untyped-def]
+        self._messages = messages
+
+    async def __aenter__(self):  # type: ignore[no-untyped-def]
+        return _FakeSession(self._messages)
+
+    async def __aexit__(self, *_args):  # type: ignore[no-untyped-def]
+        return False
+
+
+def test_load_history_replays_persisted_thinking_only_when_enabled(monkeypatch) -> None:
+    saved_messages = [
+        SimpleNamespace(
+            role="assistant",
+            content_blocks=[
+                {"type": "thinking", "thinking": "need a tool"},
+                {"type": "text", "text": "I'll check."},
+                {
+                    "type": "tool_use",
+                    "id": "tool-1",
+                    "name": "query_on_connector",
+                    "input": {"connector": "hubspot", "query": "x"},
+                    "result": {"status": "success"},
+                },
+            ],
+            _legacy_to_blocks=lambda: [],
+        )
+    ]
+
+    monkeypatch.setattr(
+        "agents.orchestrator.get_session",
+        lambda **_kwargs: _FakeSessionManager(saved_messages),
+    )
+
+    orchestrator = ChatOrchestrator(
+        user_id="00000000-0000-0000-0000-000000000001",
+        organization_id="00000000-0000-0000-0000-000000000002",
+        conversation_id="00000000-0000-0000-0000-000000000003",
+        source="web",
+    )
+
+    deepseek_history = asyncio.run(
+        orchestrator._load_history(limit=20, include_thinking_blocks=True)
+    )
+    assert deepseek_history[0]["content"][0] == {
+        "type": "thinking",
+        "thinking": "need a tool",
+    }
+
+    non_deepseek_history = asyncio.run(
+        orchestrator._load_history(limit=20, include_thinking_blocks=False)
+    )
+    assert all(
+        block["type"] != "thinking"
+        for message in non_deepseek_history
+        if isinstance(message["content"], list)
+        for block in message["content"]
+    )

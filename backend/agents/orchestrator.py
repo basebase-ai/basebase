@@ -1246,27 +1246,12 @@ class ChatOrchestrator:
             meta_ids: list[str] = [str(m["attachment_id"]) for m in attachment_meta]
             text_for_model = user_message + _linear_attachment_tool_hint(meta_ids)
 
-        # Skip history DB call for new conversations (zero messages to load).
-        if skip_history:
-            history: list[dict[str, Any]] = []
-            logger.info("[Orchestrator] Skipped history load (new conversation)")
-        else:
-            history = await self._load_history(limit=20)
-            logger.info("[Orchestrator] Loaded %d history messages", len(history))
-
-        # Build user content — may include attachment blocks (images, PDFs, text)
-        user_content: str | list[dict[str, Any]] = self._build_user_content(
-            text_for_model, attachment_ids,
-        )
-
-        # Add user message to context for Claude
-        messages: list[dict[str, Any]] = history + [
-            {"role": "user", "content": user_content}
-        ]
         cross_conversation_context_message: str | None = None
         slack_recent_channel_context_message: str | None = None
 
-        # Resolve per-org LLM provider/model/key
+        # Resolve per-org LLM provider/model/key before loading history so
+        # provider-specific persisted blocks can be included only when the
+        # selected model understands them.
         self._llm_config = await resolve_llm_config(self.organization_id)
         is_workflow_run: bool = bool((self.workflow_context or {}).get("is_workflow"))
         workflow_model_override = (self.workflow_context or {}).get("workflow_model_override")
@@ -1315,6 +1300,28 @@ class ChatOrchestrator:
             "provider": self._llm_config.provider,
             "is_workflow": is_workflow_run,
         })
+
+        # Skip history DB call for new conversations (zero messages to load).
+        include_deepseek_thinking_history = is_deepseek_model(selected_model)
+        if skip_history:
+            history: list[dict[str, Any]] = []
+            logger.info("[Orchestrator] Skipped history load (new conversation)")
+        else:
+            history = await self._load_history(
+                limit=20,
+                include_thinking_blocks=include_deepseek_thinking_history,
+            )
+            logger.info("[Orchestrator] Loaded %d history messages", len(history))
+
+        # Build user content — may include attachment blocks (images, PDFs, text)
+        user_content: str | list[dict[str, Any]] = self._build_user_content(
+            text_for_model, attachment_ids,
+        )
+
+        # Add user message to context for Claude
+        messages: list[dict[str, Any]] = history + [
+            {"role": "user", "content": user_content}
+        ]
 
         # Keep track of content blocks for saving (preserves interleaving order)
         content_blocks: list[dict[str, Any]] = []
@@ -1892,6 +1899,12 @@ class ChatOrchestrator:
 
                 break
 
+            # Persist DeepSeek thinking before tool calls so later turns can
+            # replay it as reasoning_content. Other provider thinking blocks are
+            # deliberately not stored here because their replay contracts differ.
+            if is_deepseek_model(model_name) and current_thinking_text.strip():
+                content_blocks.append({"type": "thinking", "thinking": current_thinking_text})
+
             # Flush current text to content_blocks before processing tools
             if current_text.strip():
                 content_blocks.append({"type": "text", "text": current_text})
@@ -2260,7 +2273,12 @@ class ChatOrchestrator:
             await session.commit()
             return conv_id
 
-    async def _load_history(self, limit: int = 20) -> list[dict[str, Any]]:
+    async def _load_history(
+        self,
+        limit: int = 20,
+        *,
+        include_thinking_blocks: bool = False,
+    ) -> list[dict[str, Any]]:
         """Load recent chat history from the current conversation.
         
         Reconstructs proper Claude message format:
@@ -2370,6 +2388,7 @@ class ChatOrchestrator:
                         # 3. assistant: [post-tool text] (if any)
                         
                         # Collect blocks before and after tool use
+                        pre_tool_thinking: list[str] = []
                         pre_tool_text: list[str] = []
                         post_tool_text: list[str] = []
                         current_tool_uses: list[dict[str, Any]] = []
@@ -2377,7 +2396,11 @@ class ChatOrchestrator:
                         seen_tool = False
                         
                         for block in blocks:
-                            if block.get("type") == "text":
+                            if block.get("type") == "thinking":
+                                thinking = block.get("thinking", "").strip()
+                                if include_thinking_blocks and thinking and not seen_tool:
+                                    pre_tool_thinking.append(thinking)
+                            elif block.get("type") == "text":
                                 text = block.get("text", "").strip()
                                 if text:
                                     if not seen_tool:
@@ -2419,8 +2442,10 @@ class ChatOrchestrator:
                                         "content": json.dumps({"error": "Result not available - tool execution may have failed"}),
                                     })
                         
-                        # Build assistant message with pre-tool text + tool_use
+                        # Build assistant message with pre-tool thinking + text + tool_use
                         claude_blocks: list[dict[str, Any]] = []
+                        for thinking in pre_tool_thinking:
+                            claude_blocks.append({"type": "thinking", "thinking": thinking})
                         for text in pre_tool_text:
                             claude_blocks.append({"type": "text", "text": text})
                         claude_blocks.extend(current_tool_uses)
