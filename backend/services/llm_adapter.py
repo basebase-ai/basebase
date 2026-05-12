@@ -871,9 +871,6 @@ class OpenAIAdapter:
             return blocks
 
         message = choice.message
-        reasoning_content = _get_attr_or_item(message, "reasoning_content")
-        if reasoning_content:
-            blocks.append(ContentBlock(type="thinking", thinking=reasoning_content))
         if message.content:
             blocks.append(ContentBlock(type="text", text=message.content))
         if message.tool_calls:

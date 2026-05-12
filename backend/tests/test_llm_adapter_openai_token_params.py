@@ -243,6 +243,27 @@ async def test_openai_complete_falls_back_when_gpt5_not_found():
     assert create_mock.await_args_list[1].kwargs["model"] == "gpt-5"
 
 
+def test_openai_completed_content_keeps_text_first_when_reasoning_content_present():
+    adapter = OpenAIAdapter(api_key="test-key")
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    reasoning_content="hidden reasoning",
+                    content="visible answer",
+                    tool_calls=None,
+                )
+            )
+        ]
+    )
+
+    blocks = adapter.build_completed_content(response)
+
+    assert [(block.type, block.text, block.thinking) for block in blocks] == [
+        ("text", "visible answer", None)
+    ]
+
+
 def test_deepseek_adapter_uses_openai_compatible_base_url():
     adapter = get_adapter(
         LLMConfig(
