@@ -261,3 +261,128 @@ def test_deepseek_clamps_max_tokens_to_provider_output_limit():
     assert adapter._build_token_limit_kwargs(model="deepseek/deepseek-v4-flash", max_tokens=500_000) == {
         "max_tokens": 393_216
     }
+
+
+class _SingleChunkAsyncIterator:
+    def __init__(self, chunks):
+        self._chunks = list(chunks)
+        self._idx = 0
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._idx >= len(self._chunks):
+            raise StopAsyncIteration
+        chunk = self._chunks[self._idx]
+        self._idx += 1
+        return chunk
+
+
+def test_deepseek_format_messages_preserves_reasoning_content_when_enabled():
+    adapter = OpenAIAdapter(api_key="test-key", supports_reasoning_content=True)
+
+    formatted = adapter.format_messages_for_api(
+        [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call a tool."},
+                    {"type": "text", "text": "Let me check."},
+                    {"type": "tool_use", "id": "call_1", "name": "lookup", "input": {"q": "x"}},
+                ],
+            }
+        ]
+    )
+
+    assert formatted == [
+        {
+            "role": "assistant",
+            "content": "Let me check.",
+            "reasoning_content": "I should call a tool.",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": '{"q": "x"}'},
+                }
+            ],
+        }
+    ]
+
+
+def test_openai_format_messages_drops_reasoning_content_by_default():
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    formatted = adapter.format_messages_for_api(
+        [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "do not pass to non-DeepSeek providers"},
+                    {"type": "tool_use", "id": "call_1", "name": "lookup", "input": {}},
+                ],
+            }
+        ]
+    )
+
+    assert "reasoning_content" not in formatted[0]
+
+
+@pytest.mark.asyncio
+async def test_deepseek_stream_emits_reasoning_and_enables_thinking_mode():
+    adapter = OpenAIAdapter(api_key="test-key", supports_reasoning_content=True)
+    chunks = [
+        SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        reasoning_content="think",
+                        content=None,
+                        tool_calls=None,
+                    ),
+                    finish_reason=None,
+                )
+            ],
+        ),
+        SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        reasoning_content=None,
+                        content="answer",
+                        tool_calls=None,
+                    ),
+                    finish_reason="stop",
+                )
+            ],
+        ),
+    ]
+    create_mock = AsyncMock(return_value=_SingleChunkAsyncIterator(chunks))
+    adapter._client = SimpleNamespace(  # type: ignore[assignment]
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock))
+    )
+
+    events = [
+        event
+        async for event in adapter.stream(
+            model="deepseek-v4-pro",
+            system="sys",
+            messages=[{"role": "user", "content": "hi"}],
+            thinking=True,
+            max_tokens=42,
+        )
+    ]
+
+    assert [event.type for event in events] == [
+        "thinking_start",
+        "thinking_delta",
+        "thinking_stop",
+        "text_start",
+        "text_delta",
+        "text_stop",
+    ]
+    assert events[1].text == "think"
+    assert events[4].text == "answer"
+    call_kwargs = create_mock.await_args.kwargs
+    assert call_kwargs["extra_body"] == {"thinking": {"type": "enabled"}}

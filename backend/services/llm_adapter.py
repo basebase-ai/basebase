@@ -415,12 +415,14 @@ class OpenAIAdapter:
         api_key: str,
         base_url: str | None = None,
         supports_document_blocks: bool = False,
+        supports_reasoning_content: bool = False,
     ) -> None:
         kwargs: dict[str, Any] = {"api_key": api_key}
         if base_url is not None:
             kwargs["base_url"] = base_url
         self._client: AsyncOpenAI = AsyncOpenAI(**kwargs)
         self._supports_document_blocks: bool = supports_document_blocks
+        self._supports_reasoning_content: bool = supports_reasoning_content
 
     def _build_token_limit_kwargs(self, *, model: str, max_tokens: int) -> dict[str, int]:
         """Map and clamp token-limit parameters based on model requirements."""
@@ -511,6 +513,7 @@ class OpenAIAdapter:
 
         tool_calls_accum: dict[int, dict[str, str]] = {}
         current_text_started: bool = False
+        current_thinking_started: bool = False
 
         stream: Any = None
         model_candidates: list[str] = [model, *self._openai_not_found_fallback_models(model)]
@@ -520,6 +523,12 @@ class OpenAIAdapter:
                 "model": candidate_model,
                 **self._build_token_limit_kwargs(model=candidate_model, max_tokens=max_tokens),
             }
+            if thinking and is_deepseek_model(candidate_model):
+                candidate_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+                logger.debug(
+                    "[OpenAIAdapter] Enabled DeepSeek thinking mode for streaming request",
+                    extra={"model": candidate_model},
+                )
             try:
                 stream = await self._client.chat.completions.create(**candidate_kwargs)
                 if idx > 0:
@@ -553,8 +562,19 @@ class OpenAIAdapter:
             if delta is None:
                 continue
 
+            if is_deepseek_model(model):
+                reasoning_content: str | None = getattr(delta, "reasoning_content", None)
+                if reasoning_content:
+                    if not current_thinking_started:
+                        yield StreamEvent(type="thinking_start")
+                        current_thinking_started = True
+                    yield StreamEvent(type="thinking_delta", text=reasoning_content)
+
             # Text content
             if delta.content:
+                if current_thinking_started:
+                    yield StreamEvent(type="thinking_stop")
+                    current_thinking_started = False
                 if not current_text_started:
                     yield StreamEvent(type="text_start")
                     current_text_started = True
@@ -565,6 +585,9 @@ class OpenAIAdapter:
                 for tc_delta in delta.tool_calls:
                     idx: int = tc_delta.index if tc_delta.index is not None else 0
                     if idx not in tool_calls_accum:
+                        if current_thinking_started:
+                            yield StreamEvent(type="thinking_stop")
+                            current_thinking_started = False
                         tool_calls_accum[idx] = {
                             "id": tc_delta.id or f"call_{idx}",
                             "name": "",
@@ -593,6 +616,9 @@ class OpenAIAdapter:
 
             # Finish
             if choice.finish_reason:
+                if current_thinking_started:
+                    yield StreamEvent(type="thinking_stop")
+                    current_thinking_started = False
                 if current_text_started:
                     yield StreamEvent(type="text_stop")
                 for tc_data in tool_calls_accum.values():
@@ -776,6 +802,7 @@ class OpenAIAdapter:
 
             if role == "assistant" and isinstance(content, list):
                 text_parts: list[str] = []
+                reasoning_parts: list[str] = []
                 tool_calls: list[dict[str, Any]] = []
                 for block in content:
                     if not isinstance(block, dict):
@@ -783,6 +810,10 @@ class OpenAIAdapter:
                     btype = block.get("type", "")
                     if btype == "text":
                         text_parts.append(_as_text(block.get("text", "")))
+                    elif btype == "thinking":
+                        reasoning_text = _as_text(block.get("thinking", block.get("text", "")))
+                        if reasoning_text:
+                            reasoning_parts.append(reasoning_text)
                     elif btype == "tool_use":
                         tool_calls.append({
                             "id": block.get("id", ""),
@@ -792,12 +823,15 @@ class OpenAIAdapter:
                                 "arguments": json.dumps(block.get("input", {})),
                             },
                         })
-                    # Skip thinking blocks — OpenAI doesn't use them
 
                 msg_dict: dict[str, Any] = {
                     "role": "assistant",
                     "content": "\n".join(text_parts),
                 }
+                if self._supports_reasoning_content and reasoning_parts:
+                    # DeepSeek thinking-mode tool-call turns require this exact
+                    # assistant reasoning field to be replayed on subsequent calls.
+                    msg_dict["reasoning_content"] = "".join(reasoning_parts)
                 if tool_calls:
                     msg_dict["tool_calls"] = tool_calls
                 result.append(msg_dict)
@@ -868,6 +902,7 @@ def get_adapter(config: LLMConfig) -> AnthropicAdapter | OpenAIAdapter:
             api_key=config.api_key,
             base_url=base_url,
             supports_document_blocks=supports_docs,
+            supports_reasoning_content=provider == "deepseek",
         )
 
     raise ValueError(f"Unsupported LLM provider: {config.provider}")

@@ -32,6 +32,7 @@ from services.llm_adapter import (
     OpenAIAdapter,
     StreamEvent,
     get_adapter,
+    is_deepseek_model,
 )
 from services.llm_provider import resolve_llm_config
 from services.llm_provider import (
@@ -1659,6 +1660,7 @@ class ChatOrchestrator:
         while True:
             # Track state for this streaming response
             current_text = ""
+            current_thinking = ""
             tool_uses: list[dict[str, Any]] = []
             current_tool: dict[str, Any] | None = None
             current_tool_input_json = ""
@@ -1676,6 +1678,7 @@ class ChatOrchestrator:
                 try:
                     # Reset state on retry
                     current_text = ""
+                    current_thinking = ""
                     tool_uses = []
                     current_tool = None
                     current_tool_input_json = ""
@@ -1711,6 +1714,8 @@ class ChatOrchestrator:
                             yield _json_dumps({"type": "thinking_start"})
 
                         elif event.type == "thinking_delta":
+                            thinking_chunk: str = event.text or ""
+                            current_thinking += thinking_chunk
                             yield _json_dumps({
                                 "type": "thinking_delta",
                                 "text": event.text,
@@ -2097,8 +2102,11 @@ class ChatOrchestrator:
 
             # Build assistant history from tracked state (provider-agnostic).
             # For Anthropic-family: thinking blocks are preserved for reasoning continuity.
-            # For OpenAI-family: only text + tool_use blocks.
+            # For DeepSeek: replay reasoning_content for thinking-mode tool-call turns.
+            # For other OpenAI-family providers: only text + tool_use blocks.
             assistant_content: list[dict[str, Any]] = []
+            if is_deepseek_model(model_name) and current_thinking:
+                assistant_content.append({"type": "thinking", "thinking": current_thinking})
             if current_text.strip():
                 assistant_content.append({"type": "text", "text": current_text})
             for tu in tool_uses:
