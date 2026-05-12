@@ -247,3 +247,119 @@ def test_load_history_replays_persisted_thinking_only_when_enabled(monkeypatch) 
         if isinstance(message["content"], list)
         for block in message["content"]
     )
+
+
+class _ThinkingToolThenFinalThinkingAdapter:
+    def __init__(self) -> None:
+        self._calls = 0
+        self.calls: list[dict[str, object]] = []
+
+    async def stream(self, **kwargs):  # type: ignore[no-untyped-def]
+        self._calls += 1
+        self.calls.append(kwargs)
+        if self._calls == 1:
+            yield StreamEvent(type="thinking_start")
+            yield StreamEvent(type="thinking_delta", text="first reasoning")
+            yield StreamEvent(type="thinking_stop")
+            yield StreamEvent(
+                type="tool_use_start",
+                tool_id="tool-1",
+                tool_name="query_on_connector",
+            )
+            yield StreamEvent(
+                type="tool_input_delta",
+                tool_input_json='{"connector":"hubspot","query":"x"}',
+            )
+            yield StreamEvent(type="tool_use_stop")
+            return
+
+        yield StreamEvent(type="thinking_start")
+        yield StreamEvent(type="thinking_delta", text="final reasoning")
+        yield StreamEvent(type="thinking_stop")
+        yield StreamEvent(type="text_delta", text="Final response")
+
+
+def test_stream_with_tools_persists_final_deepseek_thinking_after_tool(monkeypatch) -> None:
+    async def _fake_execute_tool(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return {"status": "success", "result": "ok"}
+
+    monkeypatch.setattr("agents.orchestrator.execute_tool", _fake_execute_tool)
+
+    orchestrator = ChatOrchestrator(
+        user_id="u1",
+        organization_id="org1",
+        source="web",
+    )
+    adapter = _ThinkingToolThenFinalThinkingAdapter()
+    orchestrator._adapter = adapter
+    orchestrator._llm_config = SimpleNamespace(provider="deepseek")
+
+    _, content_blocks = asyncio.run(_collect_stream_for_model(orchestrator, "deepseek-v4-pro"))
+
+    thinking_blocks = [block for block in content_blocks if block["type"] == "thinking"]
+    assert thinking_blocks == [
+        {"type": "thinking", "thinking": "first reasoning"},
+        {"type": "thinking", "thinking": "final reasoning"},
+    ]
+    assert content_blocks[-1] == {"type": "text", "text": "Final response"}
+
+
+def test_load_history_replays_thinking_before_each_deepseek_tool_subturn(monkeypatch) -> None:
+    saved_messages = [
+        SimpleNamespace(
+            role="assistant",
+            content_blocks=[
+                {"type": "thinking", "thinking": "reason for tool one"},
+                {
+                    "type": "tool_use",
+                    "id": "tool-1",
+                    "name": "query_on_connector",
+                    "input": {"connector": "hubspot", "query": "one"},
+                    "result": {"status": "success", "rows": [1]},
+                },
+                {"type": "thinking", "thinking": "reason for tool two"},
+                {
+                    "type": "tool_use",
+                    "id": "tool-2",
+                    "name": "query_on_connector",
+                    "input": {"connector": "hubspot", "query": "two"},
+                    "result": {"status": "success", "rows": [2]},
+                },
+                {"type": "thinking", "thinking": "final reasoning"},
+                {"type": "text", "text": "Final response"},
+            ],
+            _legacy_to_blocks=lambda: [],
+        )
+    ]
+
+    monkeypatch.setattr(
+        "agents.orchestrator.get_session",
+        lambda **_kwargs: _FakeSessionManager(saved_messages),
+    )
+
+    orchestrator = ChatOrchestrator(
+        user_id="00000000-0000-0000-0000-000000000001",
+        organization_id="00000000-0000-0000-0000-000000000002",
+        conversation_id="00000000-0000-0000-0000-000000000003",
+        source="web",
+    )
+
+    history = asyncio.run(orchestrator._load_history(limit=20, include_thinking_blocks=True))
+
+    assert history[0]["role"] == "assistant"
+    assert history[0]["content"][0] == {"type": "thinking", "thinking": "reason for tool one"}
+    assert history[0]["content"][1]["id"] == "tool-1"
+    assert history[1]["role"] == "user"
+    assert history[1]["content"][0]["tool_use_id"] == "tool-1"
+    assert history[2]["role"] == "assistant"
+    assert history[2]["content"][0] == {"type": "thinking", "thinking": "reason for tool two"}
+    assert history[2]["content"][1]["id"] == "tool-2"
+    assert history[3]["role"] == "user"
+    assert history[3]["content"][0]["tool_use_id"] == "tool-2"
+    assert history[4] == {
+        "role": "assistant",
+        "content": [
+            {"type": "thinking", "thinking": "final reasoning"},
+            {"type": "text", "text": "Final response"},
+        ],
+    }

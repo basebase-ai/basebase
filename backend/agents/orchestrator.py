@@ -1664,6 +1664,8 @@ class ChatOrchestrator:
         # Prepare messages for the target provider's API format
         tool_defs = get_tool_defs_for_context(self.workflow_context)
 
+        has_deepseek_tool_turn = False
+
         while True:
             # Track state for this streaming response
             current_text = ""
@@ -1887,6 +1889,17 @@ class ChatOrchestrator:
             
             # If no tool calls, we're done
             if not tool_uses:
+                # A final answer after one or more DeepSeek tool sub-turns can
+                # include additional reasoning_content. Persist it with the saved
+                # turn so future history reloads can replay the full DeepSeek
+                # reasoning_content contract for tool-using turns.
+                if (
+                    has_deepseek_tool_turn
+                    and is_deepseek_model(model_name)
+                    and current_thinking_text.strip()
+                ):
+                    content_blocks.append({"type": "thinking", "thinking": current_thinking_text})
+
                 # Save text to content_blocks
                 if current_text.strip():
                     content_blocks.append({"type": "text", "text": current_text})
@@ -1899,10 +1912,13 @@ class ChatOrchestrator:
 
                 break
 
+            is_deepseek_tool_turn = is_deepseek_model(model_name)
+            has_deepseek_tool_turn = has_deepseek_tool_turn or is_deepseek_tool_turn
+
             # Persist DeepSeek thinking before tool calls so later turns can
             # replay it as reasoning_content. Other provider thinking blocks are
             # deliberately not stored here because their replay contracts differ.
-            if is_deepseek_model(model_name) and current_thinking_text.strip():
+            if is_deepseek_tool_turn and current_thinking_text.strip():
                 content_blocks.append({"type": "thinking", "thinking": current_thinking_text})
 
             # Flush current text to content_blocks before processing tools
@@ -2382,34 +2398,40 @@ class ChatOrchestrator:
                     tool_uses = [b for b in blocks if b.get("type") == "tool_use"]
                     
                     if tool_uses:
-                        # Need to reconstruct the conversation properly:
-                        # 1. assistant: [pre-tool text + tool_use]
-                        # 2. user: [tool_result]
-                        # 3. assistant: [post-tool text] (if any)
-                        
-                        # Collect blocks before and after tool use
-                        pre_tool_thinking: list[str] = []
-                        pre_tool_text: list[str] = []
-                        post_tool_text: list[str] = []
-                        current_tool_uses: list[dict[str, Any]] = []
+                        # Reconstruct saved tool turns as provider-agnostic
+                        # assistant/tool-result sub-turns. DeepSeek thinking-mode
+                        # can produce reasoning before each chained tool call (and
+                        # again before the final answer), so keep thinking blocks
+                        # with the assistant sub-turn that immediately follows them
+                        # when explicitly requested by the selected model path.
+                        assistant_blocks: list[dict[str, Any]] = []
                         tool_results: list[dict[str, Any]] = []
-                        seen_tool = False
-                        
+
+                        def flush_tool_subturn() -> None:
+                            nonlocal assistant_blocks, tool_results
+                            if assistant_blocks:
+                                history.append({"role": "assistant", "content": assistant_blocks})
+                            if tool_results:
+                                history.append({"role": "user", "content": tool_results})
+                            assistant_blocks = []
+                            tool_results = []
+
                         for block in blocks:
-                            if block.get("type") == "thinking":
+                            block_type = block.get("type")
+                            if block_type == "thinking":
+                                if tool_results:
+                                    flush_tool_subturn()
                                 thinking = block.get("thinking", "").strip()
-                                if include_thinking_blocks and thinking and not seen_tool:
-                                    pre_tool_thinking.append(thinking)
-                            elif block.get("type") == "text":
+                                if include_thinking_blocks and thinking:
+                                    assistant_blocks.append({"type": "thinking", "thinking": thinking})
+                            elif block_type == "text":
+                                if tool_results:
+                                    flush_tool_subturn()
                                 text = block.get("text", "").strip()
                                 if text:
-                                    if not seen_tool:
-                                        pre_tool_text.append(text)
-                                    else:
-                                        post_tool_text.append(text)
-                            elif block.get("type") == "tool_use":
-                                seen_tool = True
-                                tool_id = block.get("id", f"tool_{len(current_tool_uses)}")
+                                    assistant_blocks.append({"type": "text", "text": text})
+                            elif block_type == "tool_use":
+                                tool_id = block.get("id", f"tool_{len(tool_results)}")
                                 tool_name = block.get("name", "unknown")
                                 tool_result = block.get("result")
                                 
@@ -2420,7 +2442,7 @@ class ChatOrchestrator:
                                     str(tool_result)[:200] if tool_result else "NO RESULT"
                                 )
                                 
-                                current_tool_uses.append({
+                                assistant_blocks.append({
                                     "type": "tool_use",
                                     "id": tool_id,
                                     "name": tool_name,
@@ -2441,37 +2463,26 @@ class ChatOrchestrator:
                                         "tool_use_id": tool_id,
                                         "content": json.dumps({"error": "Result not available - tool execution may have failed"}),
                                     })
-                        
-                        # Build assistant message with pre-tool thinking + text + tool_use
-                        claude_blocks: list[dict[str, Any]] = []
-                        for thinking in pre_tool_thinking:
-                            claude_blocks.append({"type": "thinking", "thinking": thinking})
-                        for text in pre_tool_text:
-                            claude_blocks.append({"type": "text", "text": text})
-                        claude_blocks.extend(current_tool_uses)
-                        
-                        if claude_blocks:
-                            history.append({"role": "assistant", "content": claude_blocks})
-                        
-                        # Add tool_result as user message
+
                         if tool_results:
-                            history.append({"role": "user", "content": tool_results})
-                        
-                        # Add post-tool text as assistant continuation
-                        # Must have an assistant message after tool_result to avoid consecutive user messages
-                        if post_tool_text:
-                            history.append({"role": "assistant", "content": " ".join(post_tool_text)})
-                        else:
-                            # Build a summary of tool results to help Claude understand context
+                            flush_tool_subturn()
+                        elif assistant_blocks:
+                            history.append({"role": "assistant", "content": assistant_blocks})
+
+                        # Preserve the existing invariant that a reconstructed
+                        # saved tool turn does not leave history ending with a
+                        # tool-result user message when no final assistant text
+                        # was saved after the tool completed.
+                        if history and history[-1].get("role") == "user":
                             result_summaries: list[str] = []
-                            for tr in tool_results:
+                            for tr in history[-1].get("content", []):
                                 try:
                                     content = json.loads(tr.get("content", "{}"))
                                     if "rows" in content:
                                         result_summaries.append(f"{content.get('row_count', len(content['rows']))} rows returned")
                                     elif "error" in content:
                                         result_summaries.append(f"error: {content['error'][:50]}")
-                                except:
+                                except Exception:
                                     pass
                             summary = ", ".join(result_summaries) if result_summaries else "results processed"
                             history.append({"role": "assistant", "content": f"Tool results: {summary}. I'll analyze these results."})
