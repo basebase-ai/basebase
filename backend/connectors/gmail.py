@@ -9,8 +9,10 @@ Responsibilities:
 """
 
 import base64
+import re
 import uuid
 from datetime import datetime, timedelta
+from html import unescape
 from typing import Any, Optional
 
 import httpx
@@ -25,6 +27,13 @@ from models.database import get_session
 from services.automated_agent_footer import ensure_automated_agent_footer
 
 GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1"
+
+# Max characters returned for `message:<id>` live body text (QUERY).
+_BODY_TEXT_MAX_CHARS: int = 20_000
+
+# Default / upper bound for list + thread QUERY result sizes.
+_QUERY_DEFAULT_MAX_MESSAGES: int = 10
+_QUERY_MAX_MESSAGES_CAP: int = 25
 
 
 class GmailConnector(BaseConnector):
@@ -52,7 +61,17 @@ class GmailConnector(BaseConnector):
             ),
         ],
         nango_integration_id="gmail",
-        description="Gmail – email sync and send",
+        description="Gmail – email sync, live search, and send",
+        query_description=(
+            "Live Gmail search via `query_on_connector(connector='gmail', query=...)` using Gmail's `q` syntax.\n"
+            "- **Search / list (snippets):** pass a Gmail search string, e.g. `from:alice@example.com newer_than:2d`, "
+            "`subject:\"proposal\"`, `has:attachment`. Append ` max:N` (default 10, max 25) to limit hits.\n"
+            "- **One message (full body):** `message:<gmail_message_id>` — returns decoded plain text (or stripped HTML) "
+            f"in `body_text`, truncated to {_BODY_TEXT_MAX_CHARS:,} characters.\n"
+            "- **Thread:** `thread:<thread_id>` — all messages in the thread with snippets; the **latest** message "
+            "also includes `body_text`.\n"
+            "See Google: Gmail search operators."
+        ),
         usage_guide="""# Gmail Usage Guide
 
 ## send_email action
@@ -81,7 +100,9 @@ Send an email via the user's connected Gmail account. Emails are sent from the a
 {"to": "client@example.com", "subject": "Proposal", "body": "Please find attached...", "cc": ["manager@company.com"]}
 ```
 
-**Querying email data:** Synced emails appear in the `activities` table. Use `run_sql_query` with `WHERE source_system = 'gmail'` to search by subject, description, or date.
+**Live search (on-demand):** Use `query_on_connector(connector='gmail', query='<Gmail q string>')` for up-to-the-minute results (see connector `query_description` for `message:` and `thread:` forms). Do **not** rely on sync alone for \"did someone reply yet?\".
+
+**Synced warehouse:** Emails also sync into the `activities` table. Use `run_sql_query` with `WHERE source_system = 'gmail'` for bulk/historical analytics on already-synced rows.
 """,
     )
 
@@ -195,6 +216,219 @@ Send an email via the user's connected Gmail account. Emails are sent from the a
         """Get full message details."""
         params = {"format": "metadata", "metadataHeaders": ["From", "To", "Cc", "Subject", "Date"]}
         return await self._make_request("GET", f"/users/me/messages/{message_id}", params=params)
+
+    async def _get_message_summary(self, message_id: str) -> dict[str, Any]:
+        """Fetch one message with metadata headers (cheap; used by live QUERY)."""
+        return await self._get_message_detail(message_id)
+
+    async def _get_message_full(self, message_id: str) -> dict[str, Any]:
+        """Fetch one message with full MIME payload (for body extraction)."""
+        return await self._make_request(
+            "GET",
+            f"/users/me/messages/{message_id}",
+            params={"format": "full"},
+        )
+
+    @staticmethod
+    def _strip_max_suffix(raw: str) -> tuple[str, int]:
+        """Strip trailing `` max:N`` from a list-style query; return (query, max_messages)."""
+        stripped: str = raw.strip()
+        match: re.Match[str] | None = re.search(r"\s+max:(\d+)\s*$", stripped, flags=re.IGNORECASE)
+        if not match:
+            return stripped, _QUERY_DEFAULT_MAX_MESSAGES
+        q_part: str = stripped[: match.start()].strip()
+        try:
+            n: int = int(match.group(1))
+        except ValueError:
+            return q_part, _QUERY_DEFAULT_MAX_MESSAGES
+        capped: int = max(1, min(n, _QUERY_MAX_MESSAGES_CAP))
+        return q_part, capped
+
+    @staticmethod
+    def _b64url_decode(data: str) -> bytes:
+        """Decode a Gmail API base64url ``body.data`` string."""
+        padded: str = data + "=" * ((4 - len(data) % 4) % 4)
+        return base64.urlsafe_b64decode(padded.encode("ascii"))
+
+    @staticmethod
+    def _strip_html_to_text(html: str) -> str:
+        """Best-effort HTML → plain text for QUERY results."""
+        without_blocks: str = re.sub(
+            r"(?is)<(script|style)[^>]*>.*?</\1>",
+            "",
+            html,
+        )
+        without_tags: str = re.sub(r"<[^>]+>", " ", without_blocks)
+        collapsed: str = re.sub(r"\s+", " ", without_tags).strip()
+        return unescape(collapsed)
+
+    def _extract_body_text(self, payload: dict[str, Any]) -> str:
+        """Walk a Gmail ``payload`` tree; prefer ``text/plain``, else stripped ``text/html``."""
+        plain_parts: list[str] = []
+        html_parts: list[str] = []
+
+        def walk(part: dict[str, Any]) -> None:
+            mime_type: str = str(part.get("mimeType") or "")
+            body: dict[str, Any] = part.get("body") or {}
+            raw_data: Any = body.get("data")
+            if isinstance(raw_data, str) and raw_data:
+                try:
+                    decoded: str = self._b64url_decode(raw_data).decode("utf-8", errors="replace")
+                except Exception:
+                    decoded = ""
+                if mime_type == "text/plain" and decoded:
+                    plain_parts.append(decoded)
+                elif mime_type == "text/html" and decoded:
+                    html_parts.append(decoded)
+            for sub in part.get("parts") or []:
+                if isinstance(sub, dict):
+                    walk(sub)
+
+        walk(payload)
+        if plain_parts:
+            text: str = "\n\n".join(plain_parts).strip()
+        elif html_parts:
+            text = self._strip_html_to_text("\n\n".join(html_parts))
+        else:
+            text = ""
+        if len(text) > _BODY_TEXT_MAX_CHARS:
+            text = text[:_BODY_TEXT_MAX_CHARS] + f"\n\n[Truncated — first {_BODY_TEXT_MAX_CHARS:,} characters]"
+        return text
+
+    def _gmail_message_to_query_row(
+        self,
+        gmail_msg: dict[str, Any],
+        *,
+        body_text: str | None = None,
+    ) -> dict[str, Any]:
+        """Shape a Gmail API message dict for ``query()`` JSON (not persisted)."""
+        activity: Optional[Activity] = self._normalize_message(gmail_msg)
+        if activity is None:
+            return {}
+        cf: dict[str, Any] = dict(activity.custom_fields or {})
+        date_val: str | None = None
+        if activity.activity_date is not None:
+            date_val = activity.activity_date.isoformat()
+        row: dict[str, Any] = {
+            "id": activity.source_id or "",
+            "thread_id": cf.get("thread_id"),
+            "subject": activity.subject,
+            "from": cf.get("from_email"),
+            "from_name": cf.get("from_name"),
+            "to": list(cf.get("to_emails") or []),
+            "cc": list(cf.get("cc_emails") or []),
+            "date": date_val,
+            "snippet": (gmail_msg.get("snippet") or "")[:2000],
+            "labels": list(cf.get("labels") or []),
+            "is_unread": bool(cf.get("is_unread")),
+            "is_sent": bool(cf.get("is_sent")),
+        }
+        if body_text is not None:
+            row["body_text"] = body_text
+        return row
+
+    async def query(self, request: str) -> dict[str, Any]:
+        """Live search / read Gmail on demand (QUERY capability)."""
+        stripped: str = request.strip()
+        if not stripped:
+            return {"error": "Empty query"}
+
+        lower: str = stripped.lower()
+        if lower.startswith("message:"):
+            raw_id: str = stripped[len("message:") :].strip()
+            if not raw_id:
+                return {"error": "message_id is required after 'message:'"}
+            full_msg: dict[str, Any] = await self._get_message_full(raw_id)
+            body_text: str = self._extract_body_text(full_msg.get("payload") or {})
+            row: dict[str, Any] = self._gmail_message_to_query_row(full_msg, body_text=body_text)
+            if not row:
+                return {"error": f"Could not normalize message: {raw_id}"}
+            return {"query": stripped, "count": 1, "messages": [row]}
+
+        if lower.startswith("thread:"):
+            thread_id: str = stripped[len("thread:") :].strip()
+            if not thread_id:
+                return {"error": "thread_id is required after 'thread:'"}
+            meta_params: dict[str, Any] = {
+                "format": "metadata",
+                "metadataHeaders": ["From", "To", "Cc", "Subject", "Date"],
+            }
+            thread_data: dict[str, Any] = await self._make_request(
+                "GET",
+                f"/users/me/threads/{thread_id}",
+                params=meta_params,
+            )
+            raw_messages: list[Any] = list(thread_data.get("messages") or [])
+            typed_messages: list[dict[str, Any]] = [m for m in raw_messages if isinstance(m, dict)]
+
+            def _internal_ms(msg: dict[str, Any]) -> int:
+                raw: Any = msg.get("internalDate")
+                try:
+                    return int(raw) if raw is not None else 0
+                except (TypeError, ValueError):
+                    return 0
+
+            typed_messages.sort(key=_internal_ms)
+            rows: list[dict[str, Any]] = []
+            last_id: str | None = None
+            for m in typed_messages:
+                mid_any = m.get("id")
+                if isinstance(mid_any, str) and mid_any:
+                    last_id = mid_any
+
+            for m in typed_messages:
+                mid_any = m.get("id")
+                if not isinstance(mid_any, str) or not mid_any:
+                    continue
+                body_for_row: str | None = None
+                if last_id is not None and mid_any == last_id:
+                    full_last: dict[str, Any] = await self._get_message_full(mid_any)
+                    body_for_row = self._extract_body_text(full_last.get("payload") or {})
+                    row_t = self._gmail_message_to_query_row(full_last, body_text=body_for_row)
+                else:
+                    summary: dict[str, Any] = await self._get_message_summary(mid_any)
+                    row_t = self._gmail_message_to_query_row(summary)
+                if row_t:
+                    rows.append(row_t)
+
+            return {
+                "query": stripped,
+                "thread_id": thread_id,
+                "count": len(rows),
+                "messages": rows,
+            }
+
+        q_raw: str
+        max_messages: int
+        q_raw, max_messages = self._strip_max_suffix(stripped)
+        if not q_raw:
+            return {"error": "Empty query after removing max: suffix"}
+
+        list_params: dict[str, Any] = {
+            "q": q_raw,
+            "maxResults": min(100, max_messages),
+        }
+        list_data: dict[str, Any] = await self._make_request("GET", "/users/me/messages", params=list_params)
+        refs: list[Any] = list(list_data.get("messages") or [])
+        out_rows: list[dict[str, Any]] = []
+        for ref in refs:
+            if len(out_rows) >= max_messages:
+                break
+            if not isinstance(ref, dict):
+                continue
+            mid: Any = ref.get("id")
+            if not isinstance(mid, str) or not mid:
+                continue
+            detail: dict[str, Any] = await self._get_message_summary(mid)
+            r = self._gmail_message_to_query_row(detail)
+            if r:
+                out_rows.append(r)
+
+        return {
+            "query": stripped,
+            "count": len(out_rows),
+            "messages": out_rows,
+        }
 
     async def sync_deals(self) -> int:
         """Gmail doesn't have deals - return 0."""
