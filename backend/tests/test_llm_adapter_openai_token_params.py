@@ -380,3 +380,58 @@ async def test_deepseek_stream_emits_reasoning_content_as_thinking_events():
         ("text_stop", None),
     ]
     assert create_mock.await_args.kwargs["extra_body"] == {"thinking": {"type": "enabled"}}
+
+
+@pytest.mark.asyncio
+async def test_non_deepseek_stream_ignores_reasoning_content_delta():
+    adapter = OpenAIAdapter(api_key="test-key")
+    stream = _ListAsyncIterator(
+        [
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            reasoning_content="provider reasoning",
+                            content=None,
+                            tool_calls=None,
+                        ),
+                        finish_reason=None,
+                    )
+                ]
+            ),
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            reasoning_content=None,
+                            content="answer",
+                            tool_calls=None,
+                        ),
+                        finish_reason="stop",
+                    )
+                ]
+            ),
+        ]
+    )
+    create_mock = AsyncMock(return_value=stream)
+    adapter._client = SimpleNamespace(  # type: ignore[assignment]
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock))
+    )
+
+    events = [
+        event
+        async for event in adapter.stream(
+            model="gpt-4o-mini",
+            system="sys",
+            messages=[{"role": "user", "content": "hi"}],
+            thinking=True,
+            max_tokens=42,
+        )
+    ]
+
+    assert [(event.type, event.text) for event in events] == [
+        ("text_start", None),
+        ("text_delta", "answer"),
+        ("text_stop", None),
+    ]
+    assert "extra_body" not in create_mock.await_args.kwargs

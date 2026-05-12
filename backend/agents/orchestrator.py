@@ -32,6 +32,7 @@ from services.llm_adapter import (
     OpenAIAdapter,
     StreamEvent,
     get_adapter,
+    is_deepseek_model,
 )
 from services.llm_provider import resolve_llm_config
 from services.llm_provider import (
@@ -2095,10 +2096,11 @@ class ChatOrchestrator:
                 break
 
             # Build assistant history from tracked state (provider-agnostic).
-            # Preserve thinking so DeepSeek thinking-mode tool turns can be replayed
-            # with reasoning_content in subsequent API calls.
+            # Only DeepSeek-family models need streamed thinking replayed as
+            # reasoning_content on tool turns; other providers (for example
+            # Anthropic) have provider-specific requirements for thinking blocks.
             assistant_content: list[dict[str, Any]] = []
-            if current_thinking_text.strip():
+            if is_deepseek_model(model_name) and current_thinking_text.strip():
                 assistant_content.append({"type": "thinking", "thinking": current_thinking_text})
             if current_text.strip():
                 assistant_content.append({"type": "text", "text": current_text})

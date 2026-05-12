@@ -538,6 +538,7 @@ class OpenAIAdapter:
         current_thinking_started: bool = False
 
         stream: Any = None
+        active_model: str = model
         model_candidates: list[str] = [model, *self._openai_not_found_fallback_models(model)]
         for idx, candidate_model in enumerate(model_candidates):
             candidate_kwargs: dict[str, Any] = {
@@ -548,6 +549,7 @@ class OpenAIAdapter:
             }
             try:
                 stream = await self._client.chat.completions.create(**candidate_kwargs)
+                active_model = candidate_model
                 if idx > 0:
                     logger.info(
                         "[OpenAIAdapter] Stream call succeeded with fallback model=%s requested_model=%s",
@@ -580,7 +582,7 @@ class OpenAIAdapter:
                 continue
 
             reasoning_content = _get_attr_or_item(delta, "reasoning_content")
-            if reasoning_content:
+            if is_deepseek_model(active_model) and reasoning_content:
                 if current_text_started:
                     yield StreamEvent(type="text_stop")
                     current_text_started = False
