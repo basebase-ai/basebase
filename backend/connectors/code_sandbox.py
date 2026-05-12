@@ -300,7 +300,14 @@ class CodeSandboxConnector(BaseConnector):
         )
         pending_participant_user_ids: list[str] = _extract_pending_participant_user_ids(params)
         if pending_participant_user_ids:
-            conversation_allowed_user_ids = sorted(set(conversation_allowed_user_ids).union(pending_participant_user_ids))
+            valid_pending_user_ids, validation_error = await _validate_pending_participant_user_ids(
+                pending_participant_user_ids,
+                self.organization_id,
+                conversation_id,
+            )
+            if validation_error:
+                return {"error": validation_error}
+            conversation_allowed_user_ids = sorted(set(conversation_allowed_user_ids).union(valid_pending_user_ids))
         if basebase_user_id not in conversation_allowed_user_ids:
             logger.warning(
                 "[Sandbox] User %s is not allowed for conversation %s",
@@ -518,6 +525,95 @@ def _extract_pending_participant_user_ids(params: dict[str, Any]) -> list[str]:
 
     return sorted(normalized)
 
+
+async def _validate_pending_participant_user_ids(
+    pending_user_ids: list[str],
+    organization_id: str,
+    conversation_id: str,
+) -> tuple[list[str], str | None]:
+    """Validate pending sandbox participants are real users in this organization."""
+    if not pending_user_ids:
+        return [], None
+
+    normalized_pending: set[str] = set()
+    invalid_user_ids: list[str] = []
+    for user_id in pending_user_ids:
+        try:
+            normalized_pending.add(str(UUID(user_id)))
+        except ValueError:
+            invalid_user_ids.append(user_id)
+
+    if invalid_user_ids:
+        logger.warning(
+            "[Sandbox] Rejected malformed pending participant IDs org=%s conversation=%s count=%d",
+            organization_id,
+            conversation_id,
+            len(invalid_user_ids),
+        )
+        return [], "Pending participant user IDs must be valid Basebase user IDs."
+
+    organization_user_ids: set[str] = await _get_organization_user_ids(
+        sorted(normalized_pending),
+        organization_id,
+    )
+    missing_user_ids: list[str] = sorted(normalized_pending - organization_user_ids)
+    if missing_user_ids:
+        logger.warning(
+            "[Sandbox] Rejected pending participant IDs outside organization "
+            "org=%s conversation=%s missing_count=%d",
+            organization_id,
+            conversation_id,
+            len(missing_user_ids),
+        )
+        return [], (
+            "Pending participant user IDs must belong to the current organization before sandbox access is granted."
+        )
+
+    logger.info(
+        "[Sandbox] Validated %d pending participant ID(s) for org=%s conversation=%s",
+        len(normalized_pending),
+        organization_id,
+        conversation_id,
+    )
+    return sorted(normalized_pending), None
+
+
+async def _get_organization_user_ids(user_ids: list[str], organization_id: str) -> set[str]:
+    """Return candidate user IDs that are members or guests of the organization."""
+    if not user_ids:
+        return set()
+
+    from sqlalchemy import and_, or_, select
+    from models.database import get_session
+    from models.org_member import ORG_MEMBER_SCOPING_STATUSES, OrgMember
+    from models.user import User
+
+    user_uuids: list[UUID] = [UUID(user_id) for user_id in user_ids]
+    organization_uuid: UUID = UUID(organization_id)
+
+    async with get_session(organization_id=organization_id) as session:
+        result = await session.execute(
+            select(User.id)
+            .outerjoin(
+                OrgMember,
+                and_(
+                    OrgMember.user_id == User.id,
+                    OrgMember.organization_id == organization_uuid,
+                    OrgMember.status.in_(ORG_MEMBER_SCOPING_STATUSES),
+                ),
+            )
+            .where(User.id.in_(user_uuids))
+            .where(
+                or_(
+                    OrgMember.id.is_not(None),
+                    and_(
+                        User.is_guest.is_(True),
+                        User.guest_organization_id == organization_uuid,
+                    ),
+                )
+            )
+        )
+        return {str(user_id) for user_id in result.scalars().all()}
 
 def _get_sandbox_context_sync(sandbox_id: str) -> dict[str, str]:
     from e2b import Sandbox
