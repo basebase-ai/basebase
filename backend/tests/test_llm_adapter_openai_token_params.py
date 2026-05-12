@@ -16,6 +16,20 @@ class _EmptyAsyncIterator:
         raise StopAsyncIteration
 
 
+class _ListAsyncIterator:
+    def __init__(self, items):
+        self._items = iter(items)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._items)
+        except StopIteration:
+            raise StopAsyncIteration
+
+
 def _openai_api_status_error(message: str, status_code: int = 404) -> APIStatusError:
     request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
     response = httpx.Response(status_code=status_code, request=request, headers={"x-request-id": "req_test"})
@@ -229,6 +243,27 @@ async def test_openai_complete_falls_back_when_gpt5_not_found():
     assert create_mock.await_args_list[1].kwargs["model"] == "gpt-5"
 
 
+def test_openai_completed_content_keeps_text_first_when_reasoning_content_present():
+    adapter = OpenAIAdapter(api_key="test-key")
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    reasoning_content="hidden reasoning",
+                    content="visible answer",
+                    tool_calls=None,
+                )
+            )
+        ]
+    )
+
+    blocks = adapter.build_completed_content(response)
+
+    assert [(block.type, block.text, block.thinking) for block in blocks] == [
+        ("text", "visible answer", None)
+    ]
+
+
 def test_deepseek_adapter_uses_openai_compatible_base_url():
     adapter = get_adapter(
         LLMConfig(
@@ -261,3 +296,163 @@ def test_deepseek_clamps_max_tokens_to_provider_output_limit():
     assert adapter._build_token_limit_kwargs(model="deepseek/deepseek-v4-flash", max_tokens=500_000) == {
         "max_tokens": 393_216
     }
+
+
+def test_deepseek_thinking_kwargs_use_extra_body_when_enabled():
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    assert adapter._build_thinking_kwargs(model="deepseek-v4-pro", thinking=True) == {
+        "reasoning_effort": "high",
+        "extra_body": {"thinking": {"type": "enabled"}},
+    }
+
+
+def test_non_deepseek_thinking_kwargs_are_omitted():
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    assert adapter._build_thinking_kwargs(model="gpt-4o-mini", thinking=True) == {}
+
+
+def test_deepseek_format_messages_converts_thinking_block_to_reasoning_content():
+    adapter = OpenAIAdapter(api_key="test-key", supports_reasoning_content=True)
+
+    formatted = adapter.format_messages_for_api(
+        [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "need a tool"},
+                    {"type": "text", "text": "I'll check."},
+                    {"type": "tool_use", "id": "call_1", "name": "lookup", "input": {"q": "x"}},
+                ],
+            }
+        ]
+    )
+
+    assert formatted == [
+        {
+            "role": "assistant",
+            "content": "I'll check.",
+            "reasoning_content": "need a tool",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": '{"q": "x"}'},
+                }
+            ],
+        }
+    ]
+
+
+def test_openai_format_messages_skips_thinking_blocks_without_reasoning_support():
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    formatted = adapter.format_messages_for_api(
+        [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "provider-specific reasoning"},
+                    {"type": "text", "text": "Visible answer."},
+                ],
+            }
+        ]
+    )
+
+    assert formatted == [{"role": "assistant", "content": "Visible answer."}]
+
+
+@pytest.mark.asyncio
+async def test_deepseek_stream_emits_reasoning_content_as_thinking_events():
+    adapter = OpenAIAdapter(api_key="test-key")
+    stream = _ListAsyncIterator(
+        [
+            SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(reasoning_content="think", content=None, tool_calls=None), finish_reason=None)]
+            ),
+            SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(reasoning_content=None, content="answer", tool_calls=None), finish_reason="stop")]
+            ),
+        ]
+    )
+    create_mock = AsyncMock(return_value=stream)
+    adapter._client = SimpleNamespace(  # type: ignore[assignment]
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock))
+    )
+
+    events = [
+        event
+        async for event in adapter.stream(
+            model="deepseek-v4-pro",
+            system="sys",
+            messages=[{"role": "user", "content": "hi"}],
+            thinking=True,
+            max_tokens=42,
+        )
+    ]
+
+    assert [(event.type, event.text) for event in events] == [
+        ("thinking_start", None),
+        ("thinking_delta", "think"),
+        ("thinking_stop", None),
+        ("text_start", None),
+        ("text_delta", "answer"),
+        ("text_stop", None),
+    ]
+    assert create_mock.await_args.kwargs["extra_body"] == {"thinking": {"type": "enabled"}}
+
+
+@pytest.mark.asyncio
+async def test_non_deepseek_stream_ignores_reasoning_content_delta():
+    adapter = OpenAIAdapter(api_key="test-key")
+    stream = _ListAsyncIterator(
+        [
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            reasoning_content="provider reasoning",
+                            content=None,
+                            tool_calls=None,
+                        ),
+                        finish_reason=None,
+                    )
+                ]
+            ),
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            reasoning_content=None,
+                            content="answer",
+                            tool_calls=None,
+                        ),
+                        finish_reason="stop",
+                    )
+                ]
+            ),
+        ]
+    )
+    create_mock = AsyncMock(return_value=stream)
+    adapter._client = SimpleNamespace(  # type: ignore[assignment]
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock))
+    )
+
+    events = [
+        event
+        async for event in adapter.stream(
+            model="gpt-4o-mini",
+            system="sys",
+            messages=[{"role": "user", "content": "hi"}],
+            thinking=True,
+            max_tokens=42,
+        )
+    ]
+
+    assert [(event.type, event.text) for event in events] == [
+        ("text_start", None),
+        ("text_delta", "answer"),
+        ("text_stop", None),
+    ]
+    assert "extra_body" not in create_mock.await_args.kwargs
