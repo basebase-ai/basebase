@@ -178,22 +178,30 @@ def test_extract_pending_participant_user_ids_supports_multiple_param_shapes() -
 
 @pytest.mark.asyncio
 async def test_execute_action_allows_pending_participant_when_about_to_add(monkeypatch) -> None:
-    connector = CodeSandboxConnector(organization_id="org_123")
+    org_id = "11111111-1111-1111-1111-111111111111"
+    existing_user_id = "22222222-2222-2222-2222-222222222222"
+    new_user_id = "33333333-3333-3333-3333-333333333333"
+    connector = CodeSandboxConnector(organization_id=org_id)
     monkeypatch.setattr("connectors.code_sandbox.settings.E2B_API_KEY", "test-key")
 
     async def _fake_allowed_users(conversation_id: str, organization_id: str) -> list[str]:
         assert conversation_id == "conv_123"
-        assert organization_id == "org_123"
-        return ["user_existing"]
+        assert organization_id == org_id
+        return [existing_user_id]
+
+    async def _fake_org_user_ids(user_ids: list[str], organization_id: str) -> set[str]:
+        assert user_ids == [new_user_id]
+        assert organization_id == org_id
+        return {new_user_id}
 
     async def _fake_get_sandbox_id(conversation_id: str, organization_id: str) -> str | None:
         assert conversation_id == "conv_123"
-        assert organization_id == "org_123"
+        assert organization_id == org_id
         return None
 
     async def _fake_save_sandbox_id(conversation_id: str, organization_id: str, sandbox_id: str | None) -> None:
         assert conversation_id == "conv_123"
-        assert organization_id == "org_123"
+        assert organization_id == org_id
         assert sandbox_id == "sbx_new"
 
     def _fake_create_sandbox(
@@ -202,10 +210,10 @@ async def test_execute_action_allows_pending_participant_when_about_to_add(monke
         basebase_user_id: str,
         allowed_user_ids_csv: str,
     ) -> str:
-        assert organization_id == "org_123"
+        assert organization_id == org_id
         assert conversation_id == "conv_123"
-        assert basebase_user_id == "user_new"
-        assert allowed_user_ids_csv == "user_existing,user_new"
+        assert basebase_user_id == new_user_id
+        assert allowed_user_ids_csv == f"{existing_user_id},{new_user_id}"
         return "sbx_new"
 
     def _fake_run_command(sandbox_id: str, command: str) -> dict[str, object]:
@@ -218,6 +226,7 @@ async def test_execute_action_allows_pending_participant_when_about_to_add(monke
         return []
 
     monkeypatch.setattr("connectors.code_sandbox._get_conversation_allowed_user_ids", _fake_allowed_users)
+    monkeypatch.setattr("connectors.code_sandbox._get_organization_user_ids", _fake_org_user_ids)
     monkeypatch.setattr("connectors.code_sandbox._get_sandbox_id_from_db", _fake_get_sandbox_id)
     monkeypatch.setattr("connectors.code_sandbox._save_sandbox_id_to_db", _fake_save_sandbox_id)
     monkeypatch.setattr("connectors.code_sandbox._create_sandbox_sync", _fake_create_sandbox)
@@ -229,12 +238,73 @@ async def test_execute_action_allows_pending_participant_when_about_to_add(monke
         {
             "command": "python3 -c 'print(1)'",
             "conversation_id": "conv_123",
-            "basebase_user_id": "user_new",
-            "about_to_add_user_ids": ["user_new"],
+            "basebase_user_id": new_user_id,
+            "about_to_add_user_ids": [new_user_id],
         },
     )
 
     assert result == {"exit_code": 0, "stdout": "1\n", "stderr": ""}
+
+
+@pytest.mark.asyncio
+async def test_execute_action_rejects_pending_participant_outside_organization(monkeypatch) -> None:
+    org_id = "11111111-1111-1111-1111-111111111111"
+    existing_user_id = "22222222-2222-2222-2222-222222222222"
+    outside_user_id = "44444444-4444-4444-4444-444444444444"
+    connector = CodeSandboxConnector(organization_id=org_id)
+    monkeypatch.setattr("connectors.code_sandbox.settings.E2B_API_KEY", "test-key")
+
+    async def _fake_allowed_users(conversation_id: str, organization_id: str) -> list[str]:
+        assert conversation_id == "conv_123"
+        assert organization_id == org_id
+        return [existing_user_id]
+
+    async def _fake_org_user_ids(user_ids: list[str], organization_id: str) -> set[str]:
+        assert user_ids == [outside_user_id]
+        assert organization_id == org_id
+        return set()
+
+    monkeypatch.setattr("connectors.code_sandbox._get_conversation_allowed_user_ids", _fake_allowed_users)
+    monkeypatch.setattr("connectors.code_sandbox._get_organization_user_ids", _fake_org_user_ids)
+
+    result = await connector.execute_action(
+        "execute_command",
+        {
+            "command": "python3 -c 'print(1)'",
+            "conversation_id": "conv_123",
+            "basebase_user_id": outside_user_id,
+            "about_to_add_user_ids": [outside_user_id],
+        },
+    )
+
+    assert result == {
+        "error": "Pending participant user IDs must belong to the current organization before sandbox access is granted."
+    }
+
+
+@pytest.mark.asyncio
+async def test_execute_action_rejects_malformed_pending_participant_id(monkeypatch) -> None:
+    connector = CodeSandboxConnector(organization_id="11111111-1111-1111-1111-111111111111")
+    monkeypatch.setattr("connectors.code_sandbox.settings.E2B_API_KEY", "test-key")
+
+    async def _fake_allowed_users(conversation_id: str, organization_id: str) -> list[str]:
+        assert conversation_id == "conv_123"
+        assert organization_id == "11111111-1111-1111-1111-111111111111"
+        return ["22222222-2222-2222-2222-222222222222"]
+
+    monkeypatch.setattr("connectors.code_sandbox._get_conversation_allowed_user_ids", _fake_allowed_users)
+
+    result = await connector.execute_action(
+        "execute_command",
+        {
+            "command": "python3 -c 'print(1)'",
+            "conversation_id": "conv_123",
+            "basebase_user_id": "not-a-uuid",
+            "about_to_add_user_ids": ["not-a-uuid"],
+        },
+    )
+
+    assert result == {"error": "Pending participant user IDs must be valid Basebase user IDs."}
 
 
 @pytest.mark.asyncio
