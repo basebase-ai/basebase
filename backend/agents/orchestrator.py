@@ -1892,6 +1892,12 @@ class ChatOrchestrator:
 
                 break
 
+            # Persist DeepSeek thinking for tool-call turns so saved history can
+            # replay reasoning_content on later requests. DeepSeek requires this
+            # for all subsequent turns after a thinking-mode tool call.
+            if is_deepseek_model(model_name) and current_thinking.strip():
+                content_blocks.append({"type": "thinking", "thinking": current_thinking})
+
             # Flush current text to content_blocks before processing tools
             if current_text.strip():
                 content_blocks.append({"type": "text", "text": current_text})
@@ -2375,6 +2381,7 @@ class ChatOrchestrator:
                         # 3. assistant: [post-tool text] (if any)
                         
                         # Collect blocks before and after tool use
+                        tool_call_thinking: list[str] = []
                         pre_tool_text: list[str] = []
                         post_tool_text: list[str] = []
                         current_tool_uses: list[dict[str, Any]] = []
@@ -2382,7 +2389,11 @@ class ChatOrchestrator:
                         seen_tool = False
                         
                         for block in blocks:
-                            if block.get("type") == "text":
+                            if block.get("type") == "thinking":
+                                thinking = block.get("thinking", "").strip()
+                                if thinking:
+                                    tool_call_thinking.append(thinking)
+                            elif block.get("type") == "text":
                                 text = block.get("text", "").strip()
                                 if text:
                                     if not seen_tool:
@@ -2424,8 +2435,10 @@ class ChatOrchestrator:
                                         "content": json.dumps({"error": "Result not available - tool execution may have failed"}),
                                     })
                         
-                        # Build assistant message with pre-tool text + tool_use
+                        # Build assistant message with DeepSeek thinking + pre-tool text + tool_use
                         claude_blocks: list[dict[str, Any]] = []
+                        for thinking in tool_call_thinking:
+                            claude_blocks.append({"type": "thinking", "thinking": thinking})
                         for text in pre_tool_text:
                             claude_blocks.append({"type": "text", "text": text})
                         claude_blocks.extend(current_tool_uses)
