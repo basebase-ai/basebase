@@ -412,6 +412,7 @@ class GranolaConnector(BaseConnector):
             provider=self.source_system,
             count=0,
             status="syncing",
+            integration_id=self.current_integration_id,
         )
 
         mcp: GranolaMcpClient = await self._get_mcp_client()
@@ -539,6 +540,7 @@ class GranolaConnector(BaseConnector):
                         provider=self.source_system,
                         count=count,
                         status="syncing",
+                        integration_id=self.current_integration_id,
                     )
                     logger.debug(
                         "Synced Granola meeting %s -> meeting %s",
@@ -564,6 +566,7 @@ class GranolaConnector(BaseConnector):
                 provider=self.source_system,
                 count=0,
                 status="failed",
+                integration_id=self.current_integration_id,
             )
             raise
 
@@ -572,6 +575,7 @@ class GranolaConnector(BaseConnector):
             provider=self.source_system,
             count=activities_count,
             status="completed",
+            integration_id=self.current_integration_id,
         )
 
         return {

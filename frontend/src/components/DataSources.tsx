@@ -319,6 +319,12 @@ export function DataSources(): JSX.Element {
   }, [user?.id, fetchUserOrganizations]);
 
   const [syncingProviders, setSyncingProviders] = useState<Set<string>>(new Set());
+  /**
+   * Multi-account: track the integration row ids currently syncing. When a
+   * `sync_progress` WS event carries `integration_id`, only that one row spins.
+   * Falls back to provider-level state when the event predates this field.
+   */
+  const [syncingIntegrationIds, setSyncingIntegrationIds] = useState<Set<string>>(new Set());
   const [syncStartedAt, setSyncStartedAt] = useState<Record<string, number>>({});
   const [syncProgress, setSyncProgress] = useState<Record<string, number>>({});
   const [syncProgressPercent, setSyncProgressPercent] = useState<Record<string, number>>({});
@@ -624,6 +630,37 @@ export function DataSources(): JSX.Element {
     setSyncProgressPercent((prev) => ({ ...prev, [provider]: Math.max(prev[provider] ?? 0, 8) }));
   }, []);
 
+  const markIntegrationSyncing = useCallback(
+    (integrationId: string, provider?: string): void => {
+      setSyncingIntegrationIds((prev) => {
+        if (prev.has(integrationId)) return prev;
+        const next = new Set(prev);
+        next.add(integrationId);
+        return next;
+      });
+      // Seed provider-keyed bookkeeping so the percent-bar ticker continues to
+      // advance even though the spinner itself is gated per row.
+      if (provider !== undefined && provider.length > 0) {
+        const now: number = Date.now();
+        setSyncStartedAt((prev) => ({ ...prev, [provider]: prev[provider] ?? now }));
+        setSyncProgressPercent((prev) => ({
+          ...prev,
+          [provider]: Math.max(prev[provider] ?? 0, 8),
+        }));
+      }
+    },
+    [],
+  );
+
+  const finishIntegrationSync = useCallback((integrationId: string): void => {
+    setSyncingIntegrationIds((prev) => {
+      if (!prev.has(integrationId)) return prev;
+      const next = new Set(prev);
+      next.delete(integrationId);
+      return next;
+    });
+  }, []);
+
   const finishProviderSync = useCallback((provider: string): void => {
     setSyncProgressPercent((prev) => ({ ...prev, [provider]: 100 }));
     setTimeout(() => {
@@ -687,10 +724,16 @@ export function DataSources(): JSX.Element {
         count?: number;
         status?: string;
         step?: string;
+        integration_id?: string;
       };
       if (data.type !== 'sync_progress' || data.provider === undefined) return;
 
-      const provider = data.provider;
+      const provider: string = data.provider;
+      const integrationId: string | null =
+        typeof data.integration_id === 'string' && data.integration_id.length > 0
+          ? data.integration_id
+          : null;
+
       if (typeof data.count === 'number' && Number.isFinite(data.count)) {
         setSyncProgress((prev) => ({
           ...prev,
@@ -705,17 +748,31 @@ export function DataSources(): JSX.Element {
       }
 
       if (data.status === 'syncing') {
-        markProviderSyncing(provider);
+        if (integrationId !== null) {
+          markIntegrationSyncing(integrationId, provider);
+        } else {
+          // Legacy event with no per-row id: keep provider-wide behavior.
+          markProviderSyncing(provider);
+        }
       }
 
       if (data.status === 'completed' || data.status === 'failed') {
         void fetchIntegrations();
-        finishProviderSync(provider);
+        if (integrationId !== null) {
+          setSyncingIntegrationIds((prev) => {
+            if (!prev.has(integrationId)) return prev;
+            const next = new Set(prev);
+            next.delete(integrationId);
+            return next;
+          });
+        } else {
+          finishProviderSync(provider);
+        }
       }
     } catch {
       // Ignore non-JSON messages or parsing errors
     }
-  }, [fetchIntegrations, finishProviderSync, markProviderSyncing]);
+  }, [fetchIntegrations, finishProviderSync, markIntegrationSyncing, markProviderSyncing]);
   
   // Connect to WebSocket for sync progress updates - authenticated via JWT token
   useWebSocket(
@@ -1328,8 +1385,16 @@ export function DataSources(): JSX.Element {
     });
   };
 
-  const handleSync = async (provider: string, sinceIso?: string): Promise<void> => {
-    if (syncingProviders.has(provider) || !organizationId) return;
+  const handleSync = async (
+    provider: string,
+    sinceIso?: string,
+    integrationRowId?: string,
+  ): Promise<void> => {
+    if (!organizationId) return;
+    // Per-row sync: gate on the integration row, not the whole provider, so a
+    // second account for the same provider can still be triggered manually.
+    if (integrationRowId !== undefined && syncingIntegrationIds.has(integrationRowId)) return;
+    if (integrationRowId === undefined && syncingProviders.has(provider)) return;
     if (provider === 'github' && githubRequiresRepoReview) {
       setGithubReposExpanded(true);
       setSyncError('Select and save GitHub repositories before syncing.');
@@ -1338,7 +1403,19 @@ export function DataSources(): JSX.Element {
     }
 
     setSyncError(null);
-    markProviderSyncing(provider);
+    if (integrationRowId !== undefined) {
+      markIntegrationSyncing(integrationRowId, provider);
+    } else {
+      markProviderSyncing(provider);
+    }
+
+    const finishOptimistic = (): void => {
+      if (integrationRowId !== undefined) {
+        finishIntegrationSync(integrationRowId);
+      } else {
+        finishProviderSync(provider);
+      }
+    };
 
     try {
       // Google Drive uses its own sync endpoint (user-scoped)
@@ -1348,16 +1425,19 @@ export function DataSources(): JSX.Element {
         if (error) throw new Error(error);
         // Drive sync runs in background — wait a bit then refresh integrations
         setTimeout(() => {
-          finishProviderSync(provider);
+          finishOptimistic();
           void fetchIntegrations();
         }, 15000);
         return;
       }
 
-      const syncUrl: string =
-        sinceIso !== undefined && sinceIso.length > 0
-          ? `${API_BASE}/sync/${organizationId}/${provider}?since=${encodeURIComponent(sinceIso)}`
-          : `${API_BASE}/sync/${organizationId}/${provider}`;
+      const syncParams: URLSearchParams = new URLSearchParams();
+      if (sinceIso !== undefined && sinceIso.length > 0) syncParams.set('since', sinceIso);
+      if (integrationRowId !== undefined) syncParams.set('integration_id', integrationRowId);
+      const querySuffix: string = syncParams.toString();
+      const syncUrl: string = querySuffix
+        ? `${API_BASE}/sync/${organizationId}/${provider}?${querySuffix}`
+        : `${API_BASE}/sync/${organizationId}/${provider}`;
 
       const authHeaders = await getAuthenticatedRequestHeaders();
       const response = await fetch(syncUrl, {
@@ -1377,7 +1457,7 @@ export function DataSources(): JSX.Element {
         const status = await statusRes.json();
 
         if (status.status === 'completed' || status.status === 'failed' || attempts >= maxAttempts) {
-          finishProviderSync(provider);
+          finishOptimistic();
 
           if (status.status === 'failed') {
             const providerName = getConnectorDisplay(provider).name;
@@ -1403,7 +1483,7 @@ export function DataSources(): JSX.Element {
       console.error('Sync error:', error);
       setSyncError(error instanceof Error ? error.message : `Failed to sync ${getConnectorDisplay(provider).name}`);
       setTimeout(() => setSyncError(null), 8000);
-      finishProviderSync(provider);
+      finishOptimistic();
     }
   };
 
@@ -1887,7 +1967,14 @@ export function DataSources(): JSX.Element {
       (state === 'connected' || state === 'org-connected') &&
       getConnectorDisplay(integration.provider).hasSync !== false &&
       isFreshSyncStartedAt(integration.syncStats?.sync_started_at);
-    const isSyncing = syncingProviders.has(integration.provider) || isSyncingFromServer;
+    // Prefer per-integration tracking so that connecting / syncing one account
+    // does not spin every row for the same provider (multi-account UX). The
+    // provider-wide marker is intentionally NOT OR'd in here: it would make
+    // every row for the provider show "Syncing…" even when only one account
+    // was triggered. Server-side ``sync_started_at`` already gives us the
+    // authoritative per-row state.
+    const isSyncingThisRow: boolean = syncingIntegrationIds.has(integration.id);
+    const isSyncing: boolean = isSyncingThisRow || isSyncingFromServer;
     const isDisconnecting = disconnectingIntegrationIds.has(integration.id);
     const accountSubtitle: string | null =
       integration.accountLabel ?? integration.accountIdentifier ?? null;
@@ -1914,7 +2001,7 @@ export function DataSources(): JSX.Element {
           text: isSyncing ? 'Syncing...' : 'Sync',
           className:
             'inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-surface-600 bg-surface-800 px-3 text-xs font-medium text-surface-200 transition-colors hover:bg-surface-700 disabled:opacity-50',
-          action: () => void handleSync(integration.provider),
+          action: () => void handleSync(integration.provider, undefined, integration.id),
           disabled: isSyncing,
         };
       }
@@ -2087,7 +2174,7 @@ export function DataSources(): JSX.Element {
                         disabled={isSyncing}
                         onClick={() => {
                           setRowMenuOpenForId(null);
-                          void handleSync(integration.provider);
+                          void handleSync(integration.provider, undefined, integration.id);
                         }}
                       >
                         Sync now
@@ -2099,7 +2186,11 @@ export function DataSources(): JSX.Element {
                         disabled={isSyncing}
                         onClick={() => {
                           setRowMenuOpenForId(null);
-                          void handleSync(integration.provider, isoUtcSubtractMs(RESYNC_OFFSET_MS.hours24));
+                          void handleSync(
+                            integration.provider,
+                            isoUtcSubtractMs(RESYNC_OFFSET_MS.hours24),
+                            integration.id,
+                          );
                         }}
                       >
                         Resync · last 24 hours
@@ -2111,7 +2202,11 @@ export function DataSources(): JSX.Element {
                         disabled={isSyncing}
                         onClick={() => {
                           setRowMenuOpenForId(null);
-                          void handleSync(integration.provider, isoUtcSubtractMs(RESYNC_OFFSET_MS.days7));
+                          void handleSync(
+                            integration.provider,
+                            isoUtcSubtractMs(RESYNC_OFFSET_MS.days7),
+                            integration.id,
+                          );
                         }}
                       >
                         Resync · last 7 days
@@ -2123,7 +2218,11 @@ export function DataSources(): JSX.Element {
                         disabled={isSyncing}
                         onClick={() => {
                           setRowMenuOpenForId(null);
-                          void handleSync(integration.provider, isoUtcSubtractMs(RESYNC_OFFSET_MS.days30));
+                          void handleSync(
+                            integration.provider,
+                            isoUtcSubtractMs(RESYNC_OFFSET_MS.days30),
+                            integration.id,
+                          );
                         }}
                       >
                         Resync · last 30 days
@@ -2220,7 +2319,7 @@ export function DataSources(): JSX.Element {
 
   return (
     <div className="flex-1 overflow-y-auto overflow-x-hidden">
-      {/* Mobile — Browse connectors + overflow for Sync all */}
+      {/* Mobile — Add connector + overflow for Sync all */}
       <div className="sticky top-0 z-20 flex-shrink-0 border-b border-surface-800 bg-surface-950/95 px-4 py-2 backdrop-blur-sm md:hidden">
         <div className="flex items-center justify-end gap-2">
           <button
@@ -2231,7 +2330,7 @@ export function DataSources(): JSX.Element {
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
             </svg>
-            Browse connectors
+            Add connector
           </button>
           {canSyncAllConnectors && (
             <div className="relative shrink-0" data-page-overflow-root>
@@ -2285,9 +2384,12 @@ export function DataSources(): JSX.Element {
             <button
               type="button"
               onClick={openAddConnectorModal}
-              className="rounded-lg border border-surface-600 px-4 py-2 text-sm font-medium text-surface-100 transition-colors hover:bg-surface-800"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-surface-600 px-4 py-2 text-sm font-medium text-surface-100 transition-colors hover:bg-surface-800"
             >
-              Browse connectors
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Add connector
             </button>
             {canSyncAllConnectors && (
               <div className="relative" data-page-overflow-root>
@@ -2761,7 +2863,8 @@ export function DataSources(): JSX.Element {
           (st === 'connected' || st === 'org-connected') &&
           getConnectorDisplay(d.provider).hasSync !== false &&
           isFreshSyncStartedAt(d.syncStats?.sync_started_at);
-        const isSyncingDrawer = syncingProviders.has(d.provider) || isSyncingDrawerFromServer;
+        const isSyncingDrawerThisRow: boolean = syncingIntegrationIds.has(d.id);
+        const isSyncingDrawer: boolean = isSyncingDrawerThisRow || isSyncingDrawerFromServer;
         const syncPercentDrawer = isSyncingDrawer ? (syncProgressPercent[d.provider] ?? 8) : 0;
         const hasSyncDrawer = getConnectorDisplay(d.provider).hasSync !== false;
         const showResyncDrawer =
@@ -2964,7 +3067,7 @@ export function DataSources(): JSX.Element {
                   <button
                     type="button"
                     disabled={isSyncingDrawer}
-                    onClick={() => void handleSync(d.provider)}
+                    onClick={() => void handleSync(d.provider, undefined, d.id)}
                     className="rounded-lg border border-surface-600 bg-surface-800 px-3 py-2 text-xs font-medium text-surface-100 hover:bg-surface-700 disabled:opacity-50"
                   >
                     {isSyncingDrawer ? 'Syncing…' : 'Sync now'}
@@ -2975,7 +3078,7 @@ export function DataSources(): JSX.Element {
                     <button
                       type="button"
                       disabled={isSyncingDrawer}
-                      onClick={() => void handleSync(d.provider, isoUtcSubtractMs(RESYNC_OFFSET_MS.hours24))}
+                      onClick={() => void handleSync(d.provider, isoUtcSubtractMs(RESYNC_OFFSET_MS.hours24), d.id)}
                       className="rounded-lg border border-surface-600 px-3 py-2 text-xs font-medium text-surface-200 hover:bg-surface-800 disabled:opacity-50"
                     >
                       Resync 24h
@@ -2983,7 +3086,7 @@ export function DataSources(): JSX.Element {
                     <button
                       type="button"
                       disabled={isSyncingDrawer}
-                      onClick={() => void handleSync(d.provider, isoUtcSubtractMs(RESYNC_OFFSET_MS.days7))}
+                      onClick={() => void handleSync(d.provider, isoUtcSubtractMs(RESYNC_OFFSET_MS.days7), d.id)}
                       className="rounded-lg border border-surface-600 px-3 py-2 text-xs font-medium text-surface-200 hover:bg-surface-800 disabled:opacity-50"
                     >
                       Resync 7d
@@ -2991,7 +3094,7 @@ export function DataSources(): JSX.Element {
                     <button
                       type="button"
                       disabled={isSyncingDrawer}
-                      onClick={() => void handleSync(d.provider, isoUtcSubtractMs(RESYNC_OFFSET_MS.days30))}
+                      onClick={() => void handleSync(d.provider, isoUtcSubtractMs(RESYNC_OFFSET_MS.days30), d.id)}
                       className="rounded-lg border border-surface-600 px-3 py-2 text-xs font-medium text-surface-200 hover:bg-surface-800 disabled:opacity-50"
                     >
                       Resync 30d

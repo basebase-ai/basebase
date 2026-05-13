@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, bindparam, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import (
     BUILTIN_CONNECTORS,
@@ -3246,10 +3247,17 @@ async def _probe_account_metadata_for_confirm(
     user_id_str: str,
     nango_connection_id: str,
 ) -> AccountMetadata:
-    """Resolve stable account identifier for a fresh Nango connection (pre-DB row)."""
+    """Resolve stable account identifier for a fresh Nango connection (pre-DB row).
+
+    When the connector cannot resolve a real identity (missing scopes, transient
+    upstream failure, unknown provider), we return ``identifier=None`` so the row
+    stays NULL-keyed. We deliberately do not persist the opaque Nango connection
+    id as ``account_identifier``/``account_label`` because it surfaces as a
+    user-visible UUID in the connectors list.
+    """
     connector_cls: type[BaseConnector] | None = resolve_connector(provider)
     if connector_cls is None:
-        return AccountMetadata(identifier=nango_connection_id, label=None, avatar_url=None)
+        return AccountMetadata(identifier=None, label=None, avatar_url=None)
     probe: BaseConnector = connector_cls(organization_id_str, user_id_str)
     probe._nango_connection_override = nango_connection_id
     try:
@@ -3260,7 +3268,81 @@ async def _probe_account_metadata_for_confirm(
             provider,
             exc,
         )
-        return AccountMetadata(identifier=nango_connection_id, label=None, avatar_url=None)
+        return AccountMetadata(identifier=None, label=None, avatar_url=None)
+
+
+async def _find_existing_integration_for_confirm(
+    session: AsyncSession,
+    *,
+    organization_id: UUID,
+    provider: str,
+    user_id: UUID,
+    account_identifier: str | None,
+    nango_connection_id: str | None,
+) -> Integration | None:
+    """Find an existing integration row to upsert during confirm.
+
+    Order:
+    1. Exact ``account_identifier`` match (only when identifier is known).
+    2. Existing row with the same Nango ``connection_id`` (covers re-confirms
+       and lets us upgrade a row whose ``account_identifier`` was previously
+       written as the Nango UUID before the metadata fetch was fixed).
+    3. Most recent legacy NULL-identifier row for backfill / single-account upgrade.
+    """
+    if account_identifier:
+        match = await session.execute(
+            select(Integration).where(
+                Integration.organization_id == organization_id,
+                Integration.connector == provider,
+                Integration.user_id == user_id,
+                Integration.account_identifier == account_identifier,
+            )
+        )
+        existing: Integration | None = match.scalar_one_or_none()
+        if existing is not None:
+            return existing
+
+    if nango_connection_id:
+        by_connection = await session.execute(
+            select(Integration).where(
+                Integration.organization_id == organization_id,
+                Integration.connector == provider,
+                Integration.user_id == user_id,
+                Integration.nango_connection_id == nango_connection_id,
+            )
+        )
+        by_conn_row: Integration | None = by_connection.scalar_one_or_none()
+        if by_conn_row is not None:
+            return by_conn_row
+
+    legacy = await session.execute(
+        select(Integration)
+        .where(
+            Integration.organization_id == organization_id,
+            Integration.connector == provider,
+            Integration.user_id == user_id,
+            Integration.account_identifier.is_(None),
+        )
+        .order_by(Integration.updated_at.desc().nullslast())
+        .limit(1)
+    )
+    return legacy.scalar_one_or_none()
+
+
+def _apply_account_meta_to_integration(
+    integration: Integration,
+    account_meta: AccountMetadata,
+) -> None:
+    """Persist account identity onto an Integration row.
+
+    When ``identifier`` is ``None`` we leave ``account_identifier``/``account_label``
+    untouched so the row stays NULL-keyed and the connectors UI does not surface
+    a placeholder (e.g. a Nango UUID) as the account label.
+    """
+    if account_meta.identifier is None:
+        return
+    integration.account_identifier = account_meta.identifier
+    integration.account_label = account_meta.label or account_meta.identifier
 
 
 @router.post("/integrations/confirm")
@@ -3448,29 +3530,14 @@ async def confirm_integration(
             {"org_id": str(org_uuid)}
         )
 
-        match_result = await session.execute(
-            select(Integration).where(
-                Integration.organization_id == org_uuid,
-                Integration.connector == request.provider,
-                Integration.user_id == user_uuid,
-                Integration.account_identifier == account_meta.identifier,
-            )
+        existing_row: Integration | None = await _find_existing_integration_for_confirm(
+            session,
+            organization_id=org_uuid,
+            provider=request.provider,
+            user_id=user_uuid,
+            account_identifier=account_meta.identifier,
+            nango_connection_id=nango_connection_id,
         )
-        existing_row: Integration | None = match_result.scalar_one_or_none()
-
-        if existing_row is None:
-            legacy_match = await session.execute(
-                select(Integration)
-                .where(
-                    Integration.organization_id == org_uuid,
-                    Integration.connector == request.provider,
-                    Integration.user_id == user_uuid,
-                    Integration.account_identifier.is_(None),
-                )
-                .order_by(Integration.updated_at.desc().nullslast())
-                .limit(1)
-            )
-            existing_row = legacy_match.scalar_one_or_none()
 
         if existing_row is not None:
             existing_row.nango_connection_id = nango_connection_id
@@ -3481,8 +3548,7 @@ async def confirm_integration(
             existing_row.share_synced_data = sharing_defaults.share_synced_data
             existing_row.share_query_access = sharing_defaults.share_query_access
             existing_row.share_write_access = sharing_defaults.share_write_access
-            existing_row.account_identifier = account_meta.identifier
-            existing_row.account_label = account_meta.label or account_meta.identifier
+            _apply_account_meta_to_integration(existing_row, account_meta)
             if merged_extra is not None:
                 existing_row.extra_data = merged_extra
             integration_id = str(existing_row.id)
@@ -3501,7 +3567,11 @@ async def confirm_integration(
                 share_write_access=sharing_defaults.share_write_access,
                 pending_sharing_config=False,
                 account_identifier=account_meta.identifier,
-                account_label=account_meta.label or account_meta.identifier,
+                account_label=(
+                    (account_meta.label or account_meta.identifier)
+                    if account_meta.identifier
+                    else None
+                ),
             )
             session.add(new_integration)
             await session.flush()
@@ -4231,29 +4301,14 @@ async def nango_callback(
             if await _get_org_membership(guard_cb, user_uuid, org_uuid) is None:
                 raise HTTPException(status_code=403, detail="User not authorized")
 
-        match_result = await session.execute(
-            select(Integration).where(
-                Integration.organization_id == org_uuid,
-                Integration.connector == provider,
-                Integration.user_id == user_uuid,
-                Integration.account_identifier == account_meta.identifier,
-            )
+        existing: Integration | None = await _find_existing_integration_for_confirm(
+            session,
+            organization_id=org_uuid,
+            provider=provider,
+            user_id=user_uuid,
+            account_identifier=account_meta.identifier,
+            nango_connection_id=connection_id,
         )
-        existing: Integration | None = match_result.scalar_one_or_none()
-
-        if existing is None:
-            legacy_match = await session.execute(
-                select(Integration)
-                .where(
-                    Integration.organization_id == org_uuid,
-                    Integration.connector == provider,
-                    Integration.user_id == user_uuid,
-                    Integration.account_identifier.is_(None),
-                )
-                .order_by(Integration.updated_at.desc().nullslast())
-                .limit(1)
-            )
-            existing = legacy_match.scalar_one_or_none()
 
         if existing is not None:
             existing.is_active = True
@@ -4261,8 +4316,7 @@ async def nango_callback(
             existing.nango_connection_id = connection_id
             existing.updated_at = datetime.utcnow()
             existing.pending_sharing_config = True
-            existing.account_identifier = account_meta.identifier
-            existing.account_label = account_meta.label or account_meta.identifier
+            _apply_account_meta_to_integration(existing, account_meta)
             if merged_extra is not None:
                 existing.extra_data = merged_extra
             integration_id = str(existing.id)
@@ -4281,7 +4335,11 @@ async def nango_callback(
                 share_write_access=sharing_defaults.share_write_access,
                 pending_sharing_config=True,
                 account_identifier=account_meta.identifier,
-                account_label=account_meta.label or account_meta.identifier,
+                account_label=(
+                    (account_meta.label or account_meta.identifier)
+                    if account_meta.identifier
+                    else None
+                ),
             )
             session.add(new_integration)
             await session.flush()
@@ -4532,7 +4590,7 @@ async def disconnect_integration(
             detail="user_id is required to disconnect an integration"
         )
 
-    async with get_session() as db_session:
+    async with get_session(organization_id=str(org_uuid)) as db_session:
         await db_session.execute(
             text("SELECT set_config('app.current_org_id', :org_id, true)"),
             {"org_id": str(org_uuid)}

@@ -193,6 +193,20 @@ class BaseConnector(ABC):
         self._nango_connection_override: str | None = None
 
     @property
+    def current_integration_id(self) -> str | None:
+        """UUID of the integration row this connector instance is bound to, if known.
+
+        Set after ``_select_integration`` (e.g. via ``get_oauth_token`` or
+        ``mark_sync_started``). Connectors include it in WebSocket sync events
+        so the UI can scope the "Syncing…" indicator to the correct row when a
+        user has multiple accounts connected for the same provider.
+        """
+        integration: Integration | None = self._integration
+        if integration is None or integration.id is None:
+            return None
+        return str(integration.id)
+
+    @property
     def sync_since(self) -> datetime | None:
         """Return the cutoff time for incremental sync, or None for first sync.
 
@@ -514,8 +528,16 @@ class BaseConnector(ABC):
     async def fetch_account_metadata(self) -> AccountMetadata:
         """Return stable account identity after OAuth.
 
-        OAuth subclasses should override with provider-specific calls. Built-in
-        non-Nango connectors return a slug-based placeholder.
+        Non-OAuth connectors (API key / bearer / custom) have a single connection
+        per (org, user, connector), so the slug is a perfectly stable identifier
+        and we use it directly.
+
+        OAuth subclasses MUST override this to call the provider's "who am I"
+        endpoint and return the real account email / workspace id / portal id.
+        We deliberately raise here instead of synthesizing one from the Nango
+        connection id because that id is opaque and surfaces as a UUID in the UI.
+        The confirm flow catches this exception and leaves
+        ``account_identifier``/``account_label`` NULL.
         """
         from connectors.account_metadata import AccountMetadata
         from connectors.registry import AuthType
@@ -526,14 +548,10 @@ class BaseConnector(ABC):
             label: str = self.meta.name if hasattr(self, "meta") else slug
             return AccountMetadata(identifier=slug, label=label, avatar_url=None)
 
-        await self.get_oauth_token()
-        cid_raw: str | None = self._nango_connection_override
-        if not cid_raw and self._integration is not None:
-            cid_raw = self._integration.nango_connection_id
-        cid: str = (cid_raw or "").strip()
-        if not cid:
-            raise ValueError("Missing Nango connection id for account metadata")
-        return AccountMetadata(identifier=cid, label=None, avatar_url=None)
+        raise NotImplementedError(
+            f"{self.source_system}: OAuth connectors must override "
+            "fetch_account_metadata() to return a real account identifier"
+        )
 
     @abstractmethod
     async def sync_deals(self) -> int:

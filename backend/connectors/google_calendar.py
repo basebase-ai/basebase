@@ -143,7 +143,7 @@ class GoogleCalendarConnector(BaseConnector):
         from connectors.google_userinfo import fetch_google_account_metadata
 
         token, _ = await self.get_oauth_token()
-        return await fetch_google_account_metadata(token)
+        return await fetch_google_account_metadata(token, sources=("calendar", "userinfo"))
 
     async def _get_headers(self) -> dict[str, str]:
         """Get authorization headers for Google Calendar API."""
@@ -307,6 +307,7 @@ class GoogleCalendarConnector(BaseConnector):
             provider=self.source_system,
             count=0,
             status="syncing",
+            integration_id=self.current_integration_id,
         )
 
         # Build resolver from existing CRM data in the database
@@ -481,6 +482,7 @@ class GoogleCalendarConnector(BaseConnector):
                                 provider=self.source_system,
                                 count=count,
                                 status="syncing",
+                                integration_id=self.current_integration_id,
                             )
 
                         if meeting is not None:
@@ -569,6 +571,7 @@ class GoogleCalendarConnector(BaseConnector):
             provider=self.source_system,
             count=count,
             status="completed",
+            integration_id=self.current_integration_id,
         )
         
         print(f"[GCal Sync] Successfully synced {count} activities")

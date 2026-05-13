@@ -128,18 +128,22 @@ async def broadcast_sync_progress(
     count: int,
     status: str = "syncing",
     step: Optional[str] = None,
+    integration_id: Optional[str] = None,
 ) -> None:
     """
     Broadcast sync progress to all connected clients for an organization.
-    
+
     Called from connectors during sync to update the UI in real-time.
-    
+
     Args:
         organization_id: The organization UUID
         provider: The provider name (e.g., "google_calendar")
         count: Current count of synced items
         status: "syncing" or "completed"
         step: Current sync phase (e.g., "accounts", "deals", "contacts", "activities")
+        integration_id: Specific integration row UUID this event targets. When
+            present, the UI scopes its "syncing" indicator to that row only
+            (multi-account: one provider can have multiple connected accounts).
     """
     data: dict[str, str | int] = {
         "provider": provider,
@@ -148,6 +152,8 @@ async def broadcast_sync_progress(
     }
     if step is not None:
         data["step"] = step
+    if integration_id is not None and integration_id.strip():
+        data["integration_id"] = integration_id.strip()
     await sync_broadcaster.broadcast(
         organization_id=organization_id,
         event_type="sync_progress",
