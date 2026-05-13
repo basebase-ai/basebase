@@ -32,10 +32,8 @@ def upgrade() -> None:
         sa.Column("account_label", sa.String(length=512), nullable=True),
     )
 
-    op.drop_constraint(
-        "uq_integration_org_connector_user",
-        "integrations",
-        type_="unique",
+    op.execute(
+        'ALTER TABLE integrations DROP CONSTRAINT IF EXISTS "uq_integration_org_connector_user"'
     )
 
     op.create_index(

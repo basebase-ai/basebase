@@ -43,6 +43,7 @@ from config import (
 from connectors.account_metadata import AccountMetadata
 from connectors.base import BaseConnector
 from connectors.registry import resolve_connector
+from models.database import get_admin_session, get_session
 from models.integration import Integration, merge_account_avatar_into_extra_data
 from models.user import User
 from models.organization import Organization
