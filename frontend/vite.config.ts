@@ -7,6 +7,11 @@ export default defineConfig({
   plugins: [react()],
   envDir: path.resolve(__dirname, '..'), // Read .env from project root
   appType: 'spa', // Enable SPA fallback for client-side routing
+  test: {
+    environment: 'jsdom',
+    include: ['src/**/*.test.{ts,tsx}'],
+    passWithNoTests: true,
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

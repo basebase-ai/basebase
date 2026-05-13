@@ -104,6 +104,10 @@ export interface Integration {
   teamTotal: number;
   syncStats: SyncStats | null;
   displayName: string | null;
+  /** Provider account identity (email, portal id, Slack team id, …) */
+  accountIdentifier: string | null;
+  accountLabel: string | null;
+  accountAvatarUrl: string | null;
 }
 
 // =============================================================================

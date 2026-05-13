@@ -29,6 +29,7 @@ from sqlalchemy import select, and_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from config import settings, get_nango_integration_id
+from connectors.account_metadata import AccountMetadata
 from connectors.base import BaseConnector
 from connectors.registry import (
     AuthType, Capability, ConnectorAction, ConnectorMeta, ConnectorScope,
@@ -586,9 +587,15 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
         user_id: str,
         *,
         sync_since_override: datetime | None = None,
+        integration_id: str | None = None,
+        account_identifier: str | None = None,
     ) -> None:
         super().__init__(
-            organization_id, user_id=user_id, sync_since_override=sync_since_override
+            organization_id,
+            user_id=user_id,
+            sync_since_override=sync_since_override,
+            integration_id=integration_id,
+            account_identifier=account_identifier,
         )
         self._integration_last_sync_at: datetime | None = None
         self._nango_connection_id: str | None = None
@@ -612,16 +619,26 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
         if self._token:
             return self._token, ""
 
+        if self._nango_connection_override:
+            return await super().get_oauth_token()
+
         async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
-            connection_id: str = f"{self.organization_id}:user:{self.user_id}"
-            result = await session.execute(
-                select(Integration.nango_connection_id, Integration.last_sync_at).where(
+            legacy_connection_id: str = f"{self.organization_id}:user:{self.user_id}"
+            stmt = (
+                select(Integration.nango_connection_id, Integration.last_sync_at)
+                .where(
                     Integration.organization_id == UUID(self.organization_id),
                     Integration.connector == "google_drive",
                     Integration.user_id == UUID(self.user_id),
                 )
+                .order_by(Integration.updated_at.desc().nullslast())
             )
-            integration_row = result.one_or_none()
+            if self._integration_id_filter is not None:
+                stmt = stmt.where(Integration.id == self._integration_id_filter)
+            if self._account_identifier_filter is not None:
+                stmt = stmt.where(Integration.account_identifier == self._account_identifier_filter)
+            stmt = stmt.limit(1)
+            integration_row = (await session.execute(stmt)).one_or_none()
 
             if integration_row is None:
                 raise ValueError(
@@ -636,9 +653,15 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
 
         self._token = await nango.get_token(
             nango_integration_id,
-            self._nango_connection_id or connection_id,
+            self._nango_connection_id or legacy_connection_id,
         )
         return self._token, ""
+
+    async def fetch_account_metadata(self) -> AccountMetadata:
+        from connectors.google_userinfo import fetch_google_account_metadata
+
+        token, _ = await self.get_oauth_token()
+        return await fetch_google_account_metadata(token)
 
     def _get_headers(self) -> dict[str, str]:
         """Build request headers with OAuth token."""

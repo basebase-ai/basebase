@@ -49,6 +49,7 @@ from uuid import UUID
 from sqlalchemy import case, select, update
 
 from config import get_nango_integration_id
+from connectors.account_metadata import AccountMetadata
 from connectors.registry import ConnectorMeta  # noqa: F401 – re-export for convenience
 from models.database import get_session
 from models.integration import Integration
@@ -163,6 +164,8 @@ class BaseConnector(ABC):
         user_id: str | None = None,
         *,
         sync_since_override: datetime | None = None,
+        integration_id: str | None = None,
+        account_identifier: str | None = None,
     ) -> None:
         """
         Initialize the connector.
@@ -172,6 +175,8 @@ class BaseConnector(ABC):
             user_id: UUID of the user who owns this integration (required for all connectors)
             sync_since_override: When set (e.g. manual "resync from"), used as incremental
                 cutoff instead of ``last_sync_at``. Naive UTC recommended.
+            integration_id: When set, DB lookups target this integration row only (multi-account).
+            account_identifier: When set, DB lookups filter to this account (multi-account).
         """
         self.organization_id = organization_id
         self.user_id = user_id
@@ -179,6 +184,13 @@ class BaseConnector(ABC):
         self._credentials: dict[str, Any] | None = None
         self._integration: Integration | None = None
         self._sync_since_override: datetime | None = sync_since_override
+        self._integration_id_filter: UUID | None = (
+            UUID(integration_id.strip()) if integration_id and integration_id.strip() else None
+        )
+        aid: str | None = account_identifier.strip() if account_identifier and account_identifier.strip() else None
+        self._account_identifier_filter: str | None = aid
+        # Ephemeral Nango connection id (OAuth confirm before DB row exists).
+        self._nango_connection_override: str | None = None
 
     @property
     def sync_since(self) -> datetime | None:
@@ -422,6 +434,10 @@ class BaseConnector(ABC):
             conditions.append(Integration.is_active == True)  # noqa: E712
         if self.user_id:
             conditions.append(Integration.user_id == UUID(self.user_id))
+        if self._integration_id_filter is not None:
+            conditions.append(Integration.id == self._integration_id_filter)
+        if self._account_identifier_filter is not None:
+            conditions.append(Integration.account_identifier == self._account_identifier_filter)
 
         order_clauses: list[Any] = []
         if not self.user_id:
@@ -455,6 +471,70 @@ class BaseConnector(ABC):
             session.expunge(selected)
         return selected
 
+    async def _select_all_integrations(
+        self,
+        session: Any,
+        *,
+        require_active: bool = False,
+    ) -> list[Integration]:
+        """Return every matching integration row (multi-account fan-out)."""
+        conditions: list[Any] = [
+            Integration.organization_id == UUID(self.organization_id),
+            Integration.connector == self.source_system,
+        ]
+        if require_active:
+            conditions.append(Integration.is_active == True)  # noqa: E712
+        if self.user_id:
+            conditions.append(Integration.user_id == UUID(self.user_id))
+        if self._integration_id_filter is not None:
+            conditions.append(Integration.id == self._integration_id_filter)
+        if self._account_identifier_filter is not None:
+            conditions.append(Integration.account_identifier == self._account_identifier_filter)
+
+        order_clauses: list[Any] = []
+        if not self.user_id:
+            order_clauses.append(
+                case((Integration.user_id.is_(None), 0), else_=1)
+            )
+        order_clauses.extend([
+            Integration.updated_at.desc().nullslast(),
+            Integration.created_at.desc().nullslast(),
+        ])
+
+        result = await session.execute(
+            select(Integration)
+            .where(*conditions)
+            .order_by(*order_clauses)
+        )
+        rows: list[Integration] = list(result.scalars().all())
+        for row in rows:
+            session.expunge(row)
+        return rows
+
+    async def fetch_account_metadata(self) -> AccountMetadata:
+        """Return stable account identity after OAuth.
+
+        OAuth subclasses should override with provider-specific calls. Built-in
+        non-Nango connectors return a slug-based placeholder.
+        """
+        from connectors.account_metadata import AccountMetadata
+        from connectors.registry import AuthType
+
+        auth_type = getattr(self.meta, "auth_type", None)
+        if auth_type in (AuthType.API_KEY, AuthType.CUSTOM, AuthType.BEARER_TOKEN):
+            slug: str = self.source_system
+            label: str = self.meta.name if hasattr(self, "meta") else slug
+            return AccountMetadata(identifier=slug, label=label, avatar_url=None)
+
+        await self.get_oauth_token()
+        cid_raw: str | None = self._nango_connection_override
+        if not cid_raw and self._integration is not None:
+            cid_raw = self._integration.nango_connection_id
+        cid: str = (cid_raw or "").strip()
+        if not cid:
+            raise ValueError("Missing Nango connection id for account metadata")
+        return AccountMetadata(identifier=cid, label=None, avatar_url=None)
+
     @abstractmethod
     async def sync_deals(self) -> int:
         """Fetch and normalize deals, return count synced."""
@@ -464,8 +544,6 @@ class BaseConnector(ABC):
     async def sync_accounts(self) -> int:
         """Fetch and normalize accounts, return count synced."""
         pass
-
-    @abstractmethod
     async def sync_contacts(self) -> int:
         """Fetch and normalize contacts, return count synced."""
         pass
@@ -560,24 +638,39 @@ class BaseConnector(ABC):
         if self._token:
             return self._token, ""
 
-        # Verify we have an active integration for this user
-        async with get_session(organization_id=self.organization_id) as session:
-            integration = await self._select_integration(session, require_active=True)
+        override_id: str | None = (
+            self._nango_connection_override.strip()
+            if self._nango_connection_override and self._nango_connection_override.strip()
+            else None
+        )
 
-            if not integration:
-                user_msg = f" for user {self.user_id}" if self.user_id else ""
-                raise ValueError(
-                    f"No active {self.source_system} integration{user_msg} for organization: {self.organization_id}"
-                )
+        if override_id:
+            uid: UUID | None = UUID(self.user_id) if self.user_id else None
+            self._integration = Integration(
+                organization_id=UUID(self.organization_id),
+                connector=self.source_system,
+                provider=self.source_system,
+                user_id=uid,
+                nango_connection_id=override_id,
+                is_active=True,
+            )
+        else:
+            async with get_session(organization_id=self.organization_id) as session:
+                integration = await self._select_integration(session, require_active=True)
 
-            self._integration = integration
+                if not integration:
+                    user_msg = f" for user {self.user_id}" if self.user_id else ""
+                    raise ValueError(
+                        f"No active {self.source_system} integration{user_msg} "
+                        f"for organization: {self.organization_id}"
+                    )
 
-        # Get token from Nango
+                self._integration = integration
+
         nango = get_nango_client()
         nango_integration_id = get_nango_integration_id(self.source_system)
 
-        # Use the actual Nango connection ID from the integration record
-        connection_id = self._integration.nango_connection_id
+        connection_id = self._integration.nango_connection_id if self._integration else None
         if not connection_id:
             raise ValueError(
                 f"No Nango connection ID stored for {self.source_system} integration"
@@ -626,7 +719,7 @@ class BaseConnector(ABC):
 
         # Ensure integration is loaded
         if not self._integration:
-            await self.get_token()
+            await self.get_oauth_token()
 
         nango = get_nango_client()
         nango_integration_id = get_nango_integration_id(self.source_system)

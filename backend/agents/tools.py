@@ -472,6 +472,9 @@ async def _get_connector_instance(
     user_id: str | None,
     required_capability: str | None = None,
     preferred_integration_user_id: str | None = None,
+    *,
+    integration_id: str | None = None,
+    account_identifier: str | None = None,
 ) -> tuple["BaseConnector | None", str | None]:
     """Resolve a connector by slug, verify active Integration, and instantiate.
 
@@ -507,6 +510,10 @@ async def _get_connector_instance(
                 Integration.user_id == UUID(preferred_integration_user_id),
                 Integration.is_active == True,  # noqa: E712
             ]
+            if integration_id and integration_id.strip():
+                preferred_filters.append(Integration.id == UUID(integration_id.strip()))
+            if account_identifier and account_identifier.strip():
+                preferred_filters.append(Integration.account_identifier == account_identifier.strip())
 
             requester_matches_preferred = bool(user_id) and preferred_integration_user_id == user_id
             if (
@@ -522,25 +529,34 @@ async def _get_connector_instance(
                 preferred_filters.append(preferred_share_flag_map[required_capability] == True)  # noqa: E712
 
             result = await session.execute(
-                select(Integration).where(
-                    *preferred_filters,
-                )
+                select(Integration)
+                .where(*preferred_filters)
+                .order_by(Integration.updated_at.desc().nullslast())
+                .limit(1)
             )
-            integration: Integration | None = result.scalar_one_or_none()
+            integration: Integration | None = result.scalars().first()
         else:
             integration = None
 
         # Next, try to find user's own integration
         if integration is None and user_id:
+            user_filters: list[Any] = [
+                Integration.organization_id == UUID(organization_id),
+                Integration.connector == slug,
+                Integration.user_id == UUID(user_id),
+                Integration.is_active == True,  # noqa: E712
+            ]
+            if integration_id and integration_id.strip():
+                user_filters.append(Integration.id == UUID(integration_id.strip()))
+            if account_identifier and account_identifier.strip():
+                user_filters.append(Integration.account_identifier == account_identifier.strip())
             result = await session.execute(
-                select(Integration).where(
-                    Integration.organization_id == UUID(organization_id),
-                    Integration.connector == slug,
-                    Integration.user_id == UUID(user_id),
-                    Integration.is_active == True,  # noqa: E712
-                )
+                select(Integration)
+                .where(*user_filters)
+                .order_by(Integration.updated_at.desc().nullslast())
+                .limit(1)
             )
-            integration = result.scalar_one_or_none()
+            integration = result.scalars().first()
 
         # If no personal integration, look for shared integrations
         if integration is None:
@@ -606,7 +622,12 @@ async def _get_connector_instance(
         integration_user_id = str(integration.user_id)
 
     # Instantiate connector with the integration owner's user_id
-    instance: BaseConnector = connector_cls(organization_id, user_id=integration_user_id)
+    instance: BaseConnector = connector_cls(
+        organization_id,
+        user_id=integration_user_id,
+        integration_id=integration_id.strip() if integration_id and integration_id.strip() else None,
+        account_identifier=account_identifier.strip() if account_identifier and account_identifier.strip() else None,
+    )
 
     # Dynamic MCP slugs (mcp_deepwiki, etc.) share the McpConnector class whose
     # source_system is "mcp", but the Integration row uses the dynamic slug.
@@ -916,9 +937,13 @@ async def _query_on_connector(
     params: dict[str, Any], organization_id: str, user_id: str | None
 ) -> dict[str, Any]:
     """Dispatch a query to a QUERY-capable connector."""
+    from models.integration import Integration
+
     connector: str = (params.get("connector") or "").strip()
     query: str = (params.get("query") or "").strip()
     info: dict[str, Any] = dict(params.get("info") or {})
+    account_param: str = str(params.get("account") or params.get("account_identifier") or "").strip()
+
     if not connector:
         return {"error": "connector is required"}
     if not query:
@@ -937,36 +962,109 @@ async def _query_on_connector(
     if not dp_result.allowed:
         return {"error": dp_result.deny_reason or "Connector query not allowed"}
 
-    instance, error = await _get_connector_instance(connector, organization_id, user_id, required_capability="query")
-    if error:
-        return {"error": error}
-    assert instance is not None
-
-    cross_user_warning = _build_cross_user_connector_warning(connector, instance, user_id)
-
-    try:
-        if info:
-            logger.info(
-                "[Tools] query_on_connector(%s) info=%s",
-                connector,
-                info,
+    owner_rows: list[Integration] = []
+    if user_id:
+        async with get_session(organization_id=organization_id) as session:
+            stmt = (
+                select(Integration)
+                .where(
+                    Integration.organization_id == UUID(organization_id),
+                    Integration.connector == connector,
+                    Integration.user_id == UUID(user_id),
+                    Integration.is_active == True,  # noqa: E712
+                )
+                .order_by(Integration.updated_at.desc().nullslast())
             )
-        result = await instance.query(query)
-        if info and isinstance(result, dict):
-            result.setdefault("info", info)
-        return _attach_cross_user_connector_warning(result, cross_user_warning)
-    except ExternalConnectionRevokedError as exc:
-        logger.warning("[Tools] query_on_connector(%s) connection revoked: %s", connector, exc)
-        return await _attach_connector_docs(
-            _build_connection_revoked_result(connector, f"Query to {connector}", exc),
-            connector, organization_id,
+            if account_param:
+                stmt = stmt.where(Integration.account_identifier == account_param)
+            owner_rows = list((await session.execute(stmt)).scalars().all())
+
+    multi_account: bool = bool(user_id and len(owner_rows) > 1 and not account_param)
+
+    if not multi_account:
+        pick_id: str | None = str(owner_rows[0].id) if owner_rows else None
+        instance, error = await _get_connector_instance(
+            connector,
+            organization_id,
+            user_id,
+            required_capability="query",
+            integration_id=pick_id,
+            account_identifier=account_param or None,
         )
-    except Exception as exc:
-        logger.error("[Tools] query_on_connector(%s) failed: %s", connector, exc, exc_info=True)
-        return await _attach_connector_docs(
-            {"error": f"Query to {connector} failed: {exc}"},
-            connector, organization_id,
+        if error:
+            return {"error": error}
+        assert instance is not None
+
+        cross_user_warning = _build_cross_user_connector_warning(connector, instance, user_id)
+
+        try:
+            if info:
+                logger.info(
+                    "[Tools] query_on_connector(%s) info=%s",
+                    connector,
+                    info,
+                )
+            result = await instance.query(query)
+            if info and isinstance(result, dict):
+                result.setdefault("info", info)
+            return _attach_cross_user_connector_warning(result, cross_user_warning)
+        except ExternalConnectionRevokedError as exc:
+            logger.warning("[Tools] query_on_connector(%s) connection revoked: %s", connector, exc)
+            return await _attach_connector_docs(
+                _build_connection_revoked_result(connector, f"Query to {connector}", exc),
+                connector, organization_id,
+            )
+        except Exception as exc:
+            logger.error("[Tools] query_on_connector(%s) failed: %s", connector, exc, exc_info=True)
+            return await _attach_connector_docs(
+                {"error": f"Query to {connector} failed: {exc}"},
+                connector, organization_id,
+            )
+
+    async def _run_one(row: Integration) -> dict[str, Any]:
+        label: str = row.account_label or row.account_identifier or str(row.id)
+        inst, err = await _get_connector_instance(
+            connector,
+            organization_id,
+            user_id,
+            required_capability="query",
+            integration_id=str(row.id),
         )
+        if err or inst is None:
+            return {"account": label, "error": err or "no_connector_instance"}
+        try:
+            res = await inst.query(query)
+        except ExternalConnectionRevokedError as exc:
+            return {
+                "account": label,
+                "error": str(exc),
+                "user_guidance": _build_connection_revoked_result(connector, f"Query to {connector}", exc).get(
+                    "user_guidance"
+                ),
+            }
+        except Exception as exc:
+            return {"account": label, "error": str(exc)}
+        if isinstance(res, dict):
+            payload: dict[str, Any] = dict(res)
+        else:
+            payload = {"result": res}
+        payload["account"] = label
+        return payload
+
+    first_inst, _ = await _get_connector_instance(
+        connector,
+        organization_id,
+        user_id,
+        required_capability="query",
+        integration_id=str(owner_rows[0].id),
+    )
+    cross_user_warning = _build_cross_user_connector_warning(connector, first_inst, user_id)
+
+    items: list[dict[str, Any]] = await asyncio.gather(*[_run_one(r) for r in owner_rows])
+    merged: dict[str, Any] = {"multi_account": True, "items": items}
+    if info:
+        merged["info"] = info
+    return _attach_cross_user_connector_warning(merged, cross_user_warning)
 
 
 
@@ -5294,7 +5392,7 @@ async def _trigger_sync(
         return {"error": "Provider is required (e.g., 'hubspot', 'gmail', 'salesforce')."}
     
     # Active integrations (often multiple user-scoped rows per org + connector)
-    owner_ids: list[str | None] = []
+    sync_targets: list[tuple[str | None, str]] = []
     async with get_session(organization_id=organization_id) as session:
         result = await session.execute(
             select(Integration)
@@ -5315,11 +5413,10 @@ async def _trigger_sync(
                 "error": f"No active {provider} integration found.",
                 "suggestion": f"Go to Data Sources and connect {provider}.",
             }
-        # Snapshot scalar identifiers while the rows are still bound to a live
-        # session. Accessing ORM attributes after the session exits can trigger
-        # detached-instance refresh errors.
-        owner_ids = [str(integration.user_id) if integration.user_id else None for integration in integrations]
-    
+        for integration in integrations:
+            owner: str | None = str(integration.user_id) if integration.user_id else None
+            sync_targets.append((owner, str(integration.id)))
+
     dp_ctx = ConnectorContext(
         organization_id=organization_id,
         user_id=None,
@@ -5336,12 +5433,17 @@ async def _trigger_sync(
         task_ids: list[str] = []
         logger.info(
             "[Tools._trigger_sync] Queueing %d sync task(s) for provider=%s org=%s",
-            len(owner_ids),
+            len(sync_targets),
             provider,
             organization_id,
         )
-        for owner_id in owner_ids:
-            task = sync_integration.delay(organization_id, provider, user_id=owner_id)
+        for owner_id, integ_id in sync_targets:
+            task = sync_integration.delay(
+                organization_id,
+                provider,
+                user_id=owner_id,
+                integration_id=integ_id,
+            )
             task_ids.append(task.id)
 
         if len(task_ids) == 1:
@@ -5434,24 +5536,6 @@ async def _initiate_connector(
 
     if not user_id:
         return {"error": "user_id is required for all connector authentication."}
-
-    async with get_session(organization_id=organization_id) as session:
-        result = await session.execute(
-            select(Integration).where(
-                Integration.organization_id == UUID(organization_id),
-                Integration.connector == provider,
-                Integration.user_id == UUID(user_id),
-                Integration.is_active == True,  # noqa: E712
-            )
-        )
-        existing = result.scalar_one_or_none()
-
-        if existing:
-            return {
-                "status": "already_connected",
-                "message": f"{provider} is already connected.",
-                "provider": provider,
-            }
 
     ctx: dict[str, Any] = context or {}
     raw_source: str = str(ctx.get("source") or "web").strip().lower()

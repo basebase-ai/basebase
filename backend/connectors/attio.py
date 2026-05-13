@@ -17,6 +17,7 @@ from typing import Any, Final
 
 import httpx
 
+from connectors.account_metadata import AccountMetadata
 from connectors.base import BaseConnector
 from connectors.models import AccountRecord, ActivityRecord, ContactRecord, DealRecord
 from connectors.registry import (
@@ -456,6 +457,40 @@ After connecting and syncing, query SQL on `contacts`, `accounts`, `deals`, `act
 - **list_statuses** — Optional `object` (default `deals`), optional `attribute` (default `stage`). Returns workspace-specific status titles/UUIDs; **use before create_deal** so `stage` matches Attio.
 """,
     )
+
+    async def fetch_account_metadata(self) -> AccountMetadata:
+        token, _ = await self.get_oauth_token()
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response: httpx.Response = await client.get(
+                f"{ATTIO_API_BASE}/v2/self",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                },
+            )
+            response.raise_for_status()
+            payload: Any = response.json()
+        inner: dict[str, Any] = payload if isinstance(payload, dict) else {}
+        data_obj: Any = inner.get("data")
+        if isinstance(data_obj, dict):
+            inner = data_obj
+        wid_raw: Any = inner.get("workspace_id") or inner.get("workspaceId")
+        workspace_id: str = str(wid_raw).strip() if wid_raw else ""
+        if not workspace_id:
+            ws_obj: Any = inner.get("workspace") or inner.get("active_workspace") or inner.get("activeWorkspace")
+            if isinstance(ws_obj, dict):
+                for k in ("workspace_id", "workspaceId", "id"):
+                    v: Any = ws_obj.get(k)
+                    if isinstance(v, str) and v.strip():
+                        workspace_id = v.strip()
+                        break
+        if not workspace_id:
+            raise ValueError("Attio /v2/self missing workspace id")
+        name_raw: Any = inner.get("workspace_name") or inner.get("name")
+        label: str = (
+            str(name_raw).strip() if isinstance(name_raw, str) and name_raw.strip() else workspace_id
+        )
+        return AccountMetadata(identifier=workspace_id, label=label, avatar_url=None)
 
     async def _get_headers(self) -> dict[str, str]:
         token: str

@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 import httpx
 
+from connectors.account_metadata import AccountMetadata
 from connectors.base import BaseConnector
 from connectors.registry import (
     AuthType, Capability, ConnectorAction, ConnectorMeta, ConnectorScope,
@@ -46,12 +47,35 @@ class MicrosoftMailConnector(BaseConnector):
                     {"name": "body", "type": "string", "required": True, "description": "Email body (plain text)"},
                     {"name": "cc", "type": "array", "required": False, "description": "CC recipients"},
                     {"name": "bcc", "type": "array", "required": False, "description": "BCC recipients"},
+                    {
+                        "name": "account",
+                        "type": "string",
+                        "required": False,
+                        "description": "Connected mailbox to send from (defaults to primary).",
+                    },
                 ],
             ),
         ],
         nango_integration_id="microsoft-mail",
         description="Microsoft Outlook Mail – email sync and send",
     )
+
+    async def fetch_account_metadata(self) -> AccountMetadata:
+        token, _ = await self.get_oauth_token()
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{MICROSOFT_GRAPH_API_BASE}/me",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            response.raise_for_status()
+            data: dict[str, Any] = response.json()
+        mail_raw: Any = data.get("mail") or data.get("userPrincipalName")
+        ident: str = str(mail_raw).strip().lower() if mail_raw else ""
+        if not ident:
+            raise ValueError("Microsoft Graph /me missing mail")
+        name_raw: Any = data.get("displayName")
+        label: str = str(name_raw).strip() if isinstance(name_raw, str) and name_raw.strip() else ident
+        return AccountMetadata(identifier=ident, label=label, avatar_url=None)
 
     async def _get_headers(self) -> dict[str, str]:
         """Get authorization headers for Microsoft Graph API."""
@@ -292,6 +316,7 @@ class MicrosoftMailConnector(BaseConnector):
                 bcc=params.get("bcc"),
                 reply_to=params.get("reply_to"),
                 save_to_sent=params.get("save_to_sent", True),
+                account=params.get("account"),
             )
         raise ValueError(f"Unknown action: {action}")
 
@@ -304,6 +329,7 @@ class MicrosoftMailConnector(BaseConnector):
         bcc: Optional[list[str]] = None,
         reply_to: Optional[str] = None,
         save_to_sent: bool = True,
+        account: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         Send an email via the user's Microsoft/Outlook account.
@@ -316,86 +342,98 @@ class MicrosoftMailConnector(BaseConnector):
             bcc: Optional BCC recipients
             reply_to: Optional reply-to address
             save_to_sent: Whether to save to Sent Items (default True)
+            account: Optional connected mailbox address to send from
             
         Returns:
             Dict with success status and message details
         """
-        # Build recipients list
-        to_list = [to] if isinstance(to, str) else to
-        body_with_footer: str = ensure_automated_agent_footer(body)
-        if body_with_footer != body:
-            print(f"[MicrosoftMailConnector] Applied automated-agent footer before send to {to_list}")
-        
-        # Build recipient objects
-        to_recipients = [
-            {"emailAddress": {"address": addr}} for addr in to_list
-        ]
-        
-        cc_recipients = []
-        if cc:
-            cc_recipients = [{"emailAddress": {"address": addr}} for addr in cc]
-        
-        bcc_recipients = []
-        if bcc:
-            bcc_recipients = [{"emailAddress": {"address": addr}} for addr in bcc]
-        
-        # Build message payload
-        message_payload: dict[str, Any] = {
-            "message": {
-                "subject": subject,
-                "body": {
-                    "contentType": "Text",
-                    "content": body_with_footer,
-                },
-                "toRecipients": to_recipients,
-            },
-            "saveToSentItems": save_to_sent,
-        }
-        
-        if cc_recipients:
-            message_payload["message"]["ccRecipients"] = cc_recipients
-        if bcc_recipients:
-            message_payload["message"]["bccRecipients"] = bcc_recipients
-        if reply_to:
-            message_payload["message"]["replyTo"] = [
-                {"emailAddress": {"address": reply_to}}
+        prev_filter: str | None = self._account_identifier_filter
+        prev_token: str | None = self._token
+        try:
+            acct: str | None = account.strip().lower() if isinstance(account, str) and account.strip() else None
+            if acct:
+                self._account_identifier_filter = acct
+                self._token = None
+
+            # Build recipients list
+            to_list = [to] if isinstance(to, str) else to
+            body_with_footer: str = ensure_automated_agent_footer(body)
+            if body_with_footer != body:
+                print(f"[MicrosoftMailConnector] Applied automated-agent footer before send to {to_list}")
+
+            # Build recipient objects
+            to_recipients = [
+                {"emailAddress": {"address": addr}} for addr in to_list
             ]
-        
-        headers = await self._get_headers()
-        url = f"{MICROSOFT_GRAPH_API_BASE}/me/sendMail"
-        
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    url,
-                    headers=headers,
-                    json=message_payload,
-                    timeout=30.0,
-                )
-                
-                # Microsoft returns 202 Accepted on success (no body)
-                if response.status_code == 202:
+
+            cc_recipients = []
+            if cc:
+                cc_recipients = [{"emailAddress": {"address": addr}} for addr in cc]
+
+            bcc_recipients = []
+            if bcc:
+                bcc_recipients = [{"emailAddress": {"address": addr}} for addr in bcc]
+
+            # Build message payload
+            message_payload: dict[str, Any] = {
+                "message": {
+                    "subject": subject,
+                    "body": {
+                        "contentType": "Text",
+                        "content": body_with_footer,
+                    },
+                    "toRecipients": to_recipients,
+                },
+                "saveToSentItems": save_to_sent,
+            }
+
+            if cc_recipients:
+                message_payload["message"]["ccRecipients"] = cc_recipients
+            if bcc_recipients:
+                message_payload["message"]["bccRecipients"] = bcc_recipients
+            if reply_to:
+                message_payload["message"]["replyTo"] = [
+                    {"emailAddress": {"address": reply_to}}
+                ]
+
+            headers = await self._get_headers()
+            url = f"{MICROSOFT_GRAPH_API_BASE}/me/sendMail"
+
+            async with httpx.AsyncClient() as client:
+                try:
+                    response = await client.post(
+                        url,
+                        headers=headers,
+                        json=message_payload,
+                        timeout=30.0,
+                    )
+
+                    # Microsoft returns 202 Accepted on success (no body)
+                    if response.status_code == 202:
+                        return {
+                            "success": True,
+                            "status": "sent",
+                            "to": to_list,
+                        }
+
+                    response.raise_for_status()
                     return {
                         "success": True,
                         "status": "sent",
                         "to": to_list,
                     }
-                
-                response.raise_for_status()
-                return {
-                    "success": True,
-                    "status": "sent",
-                    "to": to_list,
-                }
-                
-            except httpx.HTTPStatusError as e:
-                error_msg = e.response.text if e.response else str(e)
-                return {
-                    "success": False,
-                    "error": f"Microsoft Graph API error: {error_msg}",
-                }
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": str(e),
-                }
+
+                except httpx.HTTPStatusError as e:
+                    error_msg = e.response.text if e.response else str(e)
+                    return {
+                        "success": False,
+                        "error": f"Microsoft Graph API error: {error_msg}",
+                    }
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "error": str(e),
+                    }
+        finally:
+            self._account_identifier_filter = prev_filter
+            self._token = prev_token

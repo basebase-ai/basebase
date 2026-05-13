@@ -1436,6 +1436,9 @@ export const useChatStore = create<ChatState>()(
           team_total: number;
           sync_stats: SyncStats | null;
           display_name: string | null;
+          account_identifier: string | null;
+          account_label: string | null;
+          account_avatar_url: string | null;
         }
 
         const data = (await response.json()) as {
@@ -1465,6 +1468,9 @@ export const useChatStore = create<ChatState>()(
           teamTotal: i.team_total,
           syncStats: i.sync_stats,
           displayName: i.display_name ?? null,
+          accountIdentifier: i.account_identifier ?? null,
+          accountLabel: i.account_label ?? null,
+          accountAvatarUrl: i.account_avatar_url ?? null,
         }));
 
         set({ integrations, integrationsLoading: false });

@@ -197,6 +197,7 @@ def _extract_fallback_text_from_blocks(blocks: list[dict[str, Any]]) -> str:
     return fallback
 
 from api.websockets import broadcast_sync_progress
+from connectors.account_metadata import AccountMetadata
 from connectors.base import BaseConnector, ExternalConnectionRevokedError, build_connection_removed_message
 from connectors.registry import (
     AuthType, Capability, ConnectorAction, ConnectorMeta, ConnectorScope,
@@ -253,6 +254,12 @@ class SlackConnector(BaseConnector):
                     {"name": "user_id", "type": "string", "required": False, "description": "Slack user ID (e.g. 'U123'). If provided without channel, Basebase opens a DM to this user and sends the message."},
                     {"name": "text", "type": "string", "required": True, "description": "Message text in Slack mrkdwn format"},
                     {"name": "thread_ts", "type": "string", "required": False, "description": "Thread timestamp to reply in-thread (when channel is provided)"},
+                    {
+                        "name": "account",
+                        "type": "string",
+                        "required": False,
+                        "description": "Slack workspace team id when multiple workspaces are connected (defaults to primary).",
+                    },
                 ],
             ),
             ConnectorAction(
@@ -352,6 +359,8 @@ Returns normalized messages for one channel since a cutoff (does not write to th
         team_id: str | None = None,
         *,
         sync_since_override: datetime | None = None,
+        integration_id: str | None = None,
+        account_identifier: str | None = None,
     ) -> None:
         """Initialize Slack connector.
 
@@ -366,6 +375,8 @@ Returns normalized messages for one channel since a cutoff (does not write to th
             organization_id=organization_id,
             user_id=user_id,
             sync_since_override=sync_since_override,
+            integration_id=integration_id,
+            account_identifier=account_identifier,
         )
         self.team_id = (team_id or "").strip() or None
         self._user_info_cache: dict[str, dict[str, Any]] = {}
@@ -392,6 +403,10 @@ Returns normalized messages for one channel since a cutoff (does not write to th
             Integration.connector == self.source_system,
             Integration.extra_data["team_id"].astext == self.team_id,
         ]
+        if self._integration_id_filter is not None:
+            conditions.append(Integration.id == self._integration_id_filter)
+        if self._account_identifier_filter is not None:
+            conditions.append(Integration.account_identifier == self._account_identifier_filter)
         if require_active:
             conditions.append(Integration.is_active == True)  # noqa: E712
         if self.user_id:
@@ -474,6 +489,25 @@ Returns normalized messages for one channel since a cutoff (does not write to th
                     return self._token, ""
 
         return await super().get_oauth_token()
+
+    async def fetch_account_metadata(self) -> AccountMetadata:
+        token, _ = await self.get_oauth_token()
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                "https://slack.com/api/auth.test",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            response.raise_for_status()
+            data: dict[str, Any] = response.json()
+        if not data.get("ok"):
+            raise ValueError(str(data.get("error") or "slack_auth_test_failed"))
+        tid_raw: Any = data.get("team_id")
+        tid: str = str(tid_raw).strip() if tid_raw else ""
+        if not tid:
+            raise ValueError("Slack auth.test missing team_id")
+        team_raw: Any = data.get("team")
+        label: str = str(team_raw).strip() if isinstance(team_raw, str) and team_raw.strip() else tid
+        return AccountMetadata(identifier=tid, label=label, avatar_url=None)
 
     async def _get_headers(self) -> dict[str, str]:
         """Get authorization headers for Slack API."""
@@ -1584,12 +1618,13 @@ Returns normalized messages for one channel since a cutoff (does not write to th
             user_id: str | None = params.get("user_id")
             text: str = params.get("text") or params.get("message") or ""
             thread_ts: str | None = params.get("thread_ts")
+            account: str | None = params.get("account")
             if not str(text).strip():
                 raise ValueError("send_message requires non-empty text")
             if user_id and not channel:
                 return await self.send_direct_message(user_id, text)
             if channel:
-                return await self.post_message(channel, text, thread_ts=thread_ts)
+                return await self.post_message(channel, text, thread_ts=thread_ts, account=account)
             raise ValueError("send_message requires 'channel' or 'user_id' and non-empty text")
         if action == "fetch_channel_history":
             ch: str | None = (
@@ -1644,6 +1679,7 @@ Returns normalized messages for one channel since a cutoff (does not write to th
         text: str,
         thread_ts: Optional[str] = None,
         blocks: Optional[list[dict[str, Any]]] = None,
+        account: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         Post a message to a Slack channel.
@@ -1653,10 +1689,31 @@ Returns normalized messages for one channel since a cutoff (does not write to th
             text: Message text (used as fallback if blocks provided)
             thread_ts: Optional thread timestamp to reply in thread
             blocks: Optional Block Kit blocks for rich formatting
+            account: Optional Slack team/workspace id when multiple workspaces are connected
         
         Returns:
             Response with channel, ts (timestamp), and message details
         """
+        prev_filter: str | None = self._account_identifier_filter
+        prev_token: str | None = self._token
+        try:
+            acct: str | None = account.strip() if isinstance(account, str) and account.strip() else None
+            if acct:
+                self._account_identifier_filter = acct
+                self._token = None
+
+            return await self._post_message_impl(channel, text, thread_ts=thread_ts, blocks=blocks)
+        finally:
+            self._account_identifier_filter = prev_filter
+            self._token = prev_token
+
+    async def _post_message_impl(
+        self,
+        channel: str,
+        text: str,
+        thread_ts: Optional[str] = None,
+        blocks: Optional[list[dict[str, Any]]] = None,
+    ) -> dict[str, Any]:
         channel = await self._resolve_channel_for_post(channel)
 
         # When blocks are provided, text is already mrkdwn from the caller. Otherwise convert.

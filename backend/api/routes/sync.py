@@ -868,12 +868,12 @@ async def _execute_sync_all_integrations(organization_id: str) -> SyncAllRespons
         if not integrations:
             raise HTTPException(status_code=404, detail="No active integrations found")
 
-        provider_user_pairs: list[tuple[str, UUID | None]] = []
+        sync_jobs: list[tuple[str, UUID | None, UUID]] = []
         for integration in integrations:
             connector_cls = CONNECTORS.get(integration.connector)
             if connector_cls is None or Capability.SYNC not in connector_cls.meta.capabilities:
                 continue
-            provider_user_pairs.append((integration.connector, integration.user_id))
+            sync_jobs.append((integration.connector, integration.user_id, integration.id))
             stats: dict[str, Any] = dict(integration.sync_stats or {})
             stats["sync_started_at"] = sync_started_iso
             integration.sync_stats = stats
@@ -884,11 +884,11 @@ async def _execute_sync_all_integrations(organization_id: str) -> SyncAllRespons
     from workers.tasks.sync import sync_integration
 
     syncing_providers: list[str] = []
-    for prov, integration_user_id in provider_user_pairs:
+    for prov, integration_user_id, integ_id in sync_jobs:
         if prov not in syncing_providers:
             syncing_providers.append(prov)
         uid: str | None = str(integration_user_id) if integration_user_id else None
-        sync_integration.delay(organization_id, prov, uid)
+        sync_integration.delay(organization_id, prov, uid, integration_id=str(integ_id))
 
     return SyncAllResponse(
         status="queued",
@@ -971,9 +971,9 @@ async def trigger_sync(
                 detail=f"No active {provider} integration found",
             )
 
-        integration_user_ids: list[UUID | None] = []
+        sync_pairs: list[tuple[UUID | None, UUID]] = []
         for integration in integrations:
-            integration_user_ids.append(integration.user_id)
+            sync_pairs.append((integration.user_id, integration.id))
             stats: dict[str, Any] = dict(integration.sync_stats or {})
             stats["sync_started_at"] = sync_started_iso
             integration.sync_stats = stats
@@ -988,13 +988,14 @@ async def trigger_sync(
 
     from workers.tasks.sync import sync_integration
 
-    for integration_user_id in integration_user_ids:
+    for integration_user_id, integ_uuid in sync_pairs:
         user_id: str | None = str(integration_user_id) if integration_user_id else None
         sync_integration.delay(
             organization_id,
             provider,
             user_id,
             sync_since_override_iso=since_iso,
+            integration_id=str(integ_uuid),
         )
 
     return SyncTriggerResponse(
@@ -1019,7 +1020,8 @@ async def get_sync_status(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid customer ID")
 
-    # DB is the primary source of truth — check sync_started_at first
+    # DB is the primary source of truth — aggregate across all integration rows
+    # for this provider (multi-account) so status reflects any in-flight sync.
     async with get_session(organization_id=organization_id) as session:
         result = await session.execute(
             select(
@@ -1031,54 +1033,69 @@ async def get_sync_status(
                 Integration.connector == provider,
             )
         )
-        integration_row: tuple[dict[str, Any] | None, str | None, datetime | None] | None = (
-            result.first()
+        integration_rows: list[tuple[dict[str, Any] | None, str | None, datetime | None]] = list(
+            result.all()
         )
 
-    if integration_row:
-        stats, last_err, last_sync_at = integration_row
+    stale_cutoff: timedelta = timedelta(hours=2)
+    now_utc: datetime = datetime.utcnow()
+
+    earliest_syncing_started: datetime | None = None
+    for stats, _le, _lsa in integration_rows:
         sync_started_raw: str | None = (
             stats.get("sync_started_at") if isinstance(stats, dict) else None
         )
+        if not sync_started_raw:
+            continue
+        try:
+            sync_started: datetime = datetime.fromisoformat(sync_started_raw)
+        except (ValueError, TypeError):
+            continue
+        if now_utc - sync_started < stale_cutoff:
+            if earliest_syncing_started is None or sync_started < earliest_syncing_started:
+                earliest_syncing_started = sync_started
 
-        if sync_started_raw:
-            try:
-                sync_started: datetime = datetime.fromisoformat(sync_started_raw)
-                stale_cutoff: timedelta = timedelta(hours=2)
-                if datetime.utcnow() - sync_started < stale_cutoff:
-                    return SyncStatusResponse(
-                        organization_id=organization_id,
-                        provider=provider,
-                        status="syncing",
-                        started_at=f"{sync_started.isoformat()}Z",
-                        completed_at=None,
-                        error=None,
-                        counts=None,
-                    )
-            except (ValueError, TypeError):
-                pass
+    if earliest_syncing_started is not None:
+        return SyncStatusResponse(
+            organization_id=organization_id,
+            provider=provider,
+            status="syncing",
+            started_at=f"{earliest_syncing_started.isoformat()}Z",
+            completed_at=None,
+            error=None,
+            counts=None,
+        )
 
-        if last_err and last_err.strip():
-            completed_at: str | None = None
-            if last_sync_at:
-                completed_at = f"{last_sync_at.isoformat()}Z"
-            return SyncStatusResponse(
-                organization_id=organization_id,
-                provider=provider,
-                status="failed",
-                started_at=None,
-                completed_at=completed_at,
-                error=last_err,
-                counts=None,
-            )
+    any_error: str | None = None
+    latest_completed: datetime | None = None
+    for _stats, last_err, last_sync_at in integration_rows:
+        if last_err and str(last_err).strip():
+            any_error = str(last_err).strip()
+        if last_sync_at is not None:
+            if latest_completed is None or last_sync_at > latest_completed:
+                latest_completed = last_sync_at
 
-    if integration_row and integration_row[2]:
+    if any_error:
+        completed_at_err: str | None = None
+        if latest_completed:
+            completed_at_err = f"{latest_completed.isoformat()}Z"
+        return SyncStatusResponse(
+            organization_id=organization_id,
+            provider=provider,
+            status="failed",
+            started_at=None,
+            completed_at=completed_at_err,
+            error=any_error,
+            counts=None,
+        )
+
+    if latest_completed is not None:
         return SyncStatusResponse(
             organization_id=organization_id,
             provider=provider,
             status="completed",
             started_at=None,
-            completed_at=f"{integration_row[2].isoformat()}Z",
+            completed_at=f"{latest_completed.isoformat()}Z",
             error=None,
             counts=None,
         )

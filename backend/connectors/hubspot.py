@@ -22,6 +22,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 from api.websockets import broadcast_sync_progress
+from connectors.account_metadata import AccountMetadata
 from connectors.base import BaseConnector
 from connectors.registry import (
     AuthType,
@@ -577,10 +578,16 @@ Notes are activities attached to deals (or contacts/companies). Use HubSpot **so
         user_id: Optional[str] = None,
         *,
         sync_since_override: datetime | None = None,
+        integration_id: str | None = None,
+        account_identifier: str | None = None,
     ) -> None:
         """Initialize connector with owner and pipeline caches."""
         super().__init__(
-            organization_id, user_id=user_id, sync_since_override=sync_since_override
+            organization_id,
+            user_id=user_id,
+            sync_since_override=sync_since_override,
+            integration_id=integration_id,
+            account_identifier=account_identifier,
         )
         # Cache for HubSpot owner ID -> internal user ID mapping
         self._owner_cache: dict[str, Optional[uuid.UUID]] = {}
@@ -593,6 +600,26 @@ Notes are activities attached to deals (or contacts/companies). Use HubSpot **so
         # HubSpot owner ID -> full owner dict (email, firstName, lastName) for proactive user creation
         self._owner_detail_cache: dict[str, dict[str, Any]] = {}
         self._owner_email_cache_loaded: bool = False
+
+    async def fetch_account_metadata(self) -> AccountMetadata:
+        from connectors.account_metadata import AccountMetadata
+
+        token, _ = await self.get_oauth_token()
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{HUBSPOT_API_BASE}/account-info/v3/details",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            response.raise_for_status()
+            payload: dict[str, Any] = response.json()
+        portal_raw: Any = payload.get("portalId")
+        portal_id: str = str(portal_raw).strip() if portal_raw is not None else ""
+        if not portal_id:
+            raise ValueError("HubSpot account-info missing portalId")
+        name_raw: Any = payload.get("name") or payload.get("accountName") or payload.get("companyCurrency")
+        name: str = str(name_raw).strip() if isinstance(name_raw, str) and name_raw.strip() else ""
+        label: str = f"{name} ({portal_id})" if name else f"HubSpot {portal_id}"
+        return AccountMetadata(identifier=portal_id, label=label, avatar_url=None)
 
     async def sync_all(self) -> dict[str, int]:
         """Run all sync operations with progress broadcasting."""
