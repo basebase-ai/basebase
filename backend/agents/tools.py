@@ -22,6 +22,7 @@ import logging
 import re
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -933,6 +934,25 @@ def _build_connection_revoked_result(
     }
 
 
+@dataclass(frozen=True)
+class _IntegrationOptionLite:
+    """Plain-Python snapshot of an ``Integration`` row for use after a session closes.
+
+    Holds only the scalar columns ``_query_on_connector`` needs for routing and
+    display, so we never carry ORM instances out of their ``async with
+    get_session(...)`` block (doing so risks "Instance is not bound to a
+    Session; attribute refresh operation cannot proceed").
+    """
+
+    id: str
+    account_identifier: str | None
+    account_label: str | None
+
+    @property
+    def display_label(self) -> str:
+        return self.account_label or self.account_identifier or self.id
+
+
 async def _query_on_connector(
     params: dict[str, Any], organization_id: str, user_id: str | None
 ) -> dict[str, Any]:
@@ -962,7 +982,7 @@ async def _query_on_connector(
     if not dp_result.allowed:
         return {"error": dp_result.deny_reason or "Connector query not allowed"}
 
-    owner_rows: list[Integration] = []
+    owner_options: list[_IntegrationOptionLite] = []
     if user_id:
         async with get_session(organization_id=organization_id) as session:
             stmt = (
@@ -977,12 +997,20 @@ async def _query_on_connector(
             )
             if account_param:
                 stmt = stmt.where(Integration.account_identifier == account_param)
-            owner_rows = list((await session.execute(stmt)).scalars().all())
+            rows: list[Integration] = list((await session.execute(stmt)).scalars().all())
+            owner_options = [
+                _IntegrationOptionLite(
+                    id=str(row.id),
+                    account_identifier=row.account_identifier,
+                    account_label=row.account_label,
+                )
+                for row in rows
+            ]
 
-    multi_account: bool = bool(user_id and len(owner_rows) > 1 and not account_param)
+    multi_account: bool = bool(user_id and len(owner_options) > 1 and not account_param)
 
     if not multi_account:
-        pick_id: str | None = str(owner_rows[0].id) if owner_rows else None
+        pick_id: str | None = owner_options[0].id if owner_options else None
         instance, error = await _get_connector_instance(
             connector,
             organization_id,
@@ -1021,14 +1049,14 @@ async def _query_on_connector(
                 connector, organization_id,
             )
 
-    async def _run_one(row: Integration) -> dict[str, Any]:
-        label: str = row.account_label or row.account_identifier or str(row.id)
+    async def _run_one(option: _IntegrationOptionLite) -> dict[str, Any]:
+        label: str = option.display_label
         inst, err = await _get_connector_instance(
             connector,
             organization_id,
             user_id,
             required_capability="query",
-            integration_id=str(row.id),
+            integration_id=option.id,
         )
         if err or inst is None:
             return {"account": label, "error": err or "no_connector_instance"}
@@ -1056,11 +1084,11 @@ async def _query_on_connector(
         organization_id,
         user_id,
         required_capability="query",
-        integration_id=str(owner_rows[0].id),
+        integration_id=owner_options[0].id,
     )
     cross_user_warning = _build_cross_user_connector_warning(connector, first_inst, user_id)
 
-    items: list[dict[str, Any]] = await asyncio.gather(*[_run_one(r) for r in owner_rows])
+    items: list[dict[str, Any]] = await asyncio.gather(*[_run_one(opt) for opt in owner_options])
     merged: dict[str, Any] = {"multi_account": True, "items": items}
     if info:
         merged["info"] = info
