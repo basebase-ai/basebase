@@ -93,6 +93,24 @@ def test_query_on_connector_fetches_artifact_payload(monkeypatch):
     async def _fake_get_connector_instance(*_args, **_kwargs):
         return _FakeArtifactsConnector(), None
 
+    @asynccontextmanager
+    async def _fake_get_session(*_args, **_kwargs):
+        """_query_on_connector loads Integration rows when user_id is set; avoid real DB in tests."""
+
+        class _ExecResult:
+            def scalars(self) -> "_ExecResult":
+                return self
+
+            def all(self) -> list[object]:
+                return []
+
+        class _Sess:
+            async def execute(self, _stmt: object) -> _ExecResult:
+                return _ExecResult()
+
+        yield _Sess()
+
+    monkeypatch.setattr(tools, "get_session", _fake_get_session)
     monkeypatch.setattr(tools, "check_connector_call", _allow_connector_call)
     monkeypatch.setattr(tools, "_get_connector_instance", _fake_get_connector_instance)
 
