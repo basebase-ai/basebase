@@ -39,6 +39,7 @@ from services.workflow_pause import get_workflow_execution_pause_until
 from services.public_preview_warmup import warm_public_preview_cache
 from services.slack_identity import get_alternate_slack_user_ids_for_identity
 from services.sql_safety import prepare_safe_sql_query
+from utils.text_encoding import decode_escaped_unicode_text
 
 logger = logging.getLogger(__name__)
 
@@ -437,7 +438,7 @@ class AppsConnector(BaseConnector):
             # Materialize all needed fields while the instance is still bound
             # to the active SQLAlchemy session. This avoids DetachedInstanceError
             # when attribute refresh is attempted after context exit.
-            title: str = app.title
+            title: str = decode_escaped_unicode_text(app.title) or app.title
             description: str | None = app.description
             queries: dict[str, Any] = dict(app.queries or {})
             frontend_code: str = app.frontend_code
@@ -545,7 +546,10 @@ class AppsConnector(BaseConnector):
 
     async def _create(self, data: dict[str, Any]) -> dict[str, Any]:
         """Create a new app."""
-        title: str = str(data.get("title", "Untitled App"))
+        title: str = (
+            decode_escaped_unicode_text(str(data.get("title", "Untitled App")))
+            or "Untitled App"
+        )
         description: str = str(data.get("description", ""))
         queries: dict[str, Any] = data.get("queries", {})
         frontend_code: str = str(data.get("frontend_code", ""))
@@ -831,7 +835,7 @@ class AppsConnector(BaseConnector):
                 app.frontend_code_compiled = transpile_result[0] if transpile_result else None
 
             if new_title is not None:
-                app.title = str(new_title)
+                app.title = decode_escaped_unicode_text(str(new_title)) or str(new_title)
 
             if new_description is not None:
                 app.description = str(new_description)
