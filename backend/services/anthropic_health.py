@@ -6,6 +6,10 @@ from typing import Any
 
 from anthropic import APIStatusError
 
+from services.llm_adapter import (
+    DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE,
+    DeepSeekImageUnsupportedError,
+)
 from services.incident_throttling import clear_incident_failure, evaluate_incident_creation, mark_incident_created
 from services.pagerduty import create_pagerduty_incident
 
@@ -48,6 +52,9 @@ def user_message_for_agent_stream_failure(exc: BaseException) -> str:
 
     Maps common transient Anthropic API failures (after retries are exhausted) to clear copy.
     """
+    if isinstance(exc, DeepSeekImageUnsupportedError):
+        return f"\n{DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE}"
+
     if isinstance(exc, APIStatusError):
         body: Any = getattr(exc, "body", None)
         if isinstance(body, dict):

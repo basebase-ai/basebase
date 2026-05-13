@@ -43,8 +43,9 @@ DEEPSEEK_MODEL_PREFIXES: tuple[str, ...] = (
 )
 DEEPSEEK_V4_VISION_MODEL_PREFIX: str = "deepseek-v4-vision"
 DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE: str = (
-    "DeepSeek v4 does not accept image attachments. Please switch to "
-    "DeepSeek-V4-Vision or another vision-capable model, or resend your message without images."
+    "I can’t process image attachments with DeepSeek-V4-Pro. I haven’t analyzed "
+    "the image in this turn. Please switch to DeepSeek-V4-Vision or another "
+    "vision-capable model, or resend your message without images."
 )
 
 
