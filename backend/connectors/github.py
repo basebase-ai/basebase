@@ -21,6 +21,7 @@ import httpx
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from connectors.account_metadata import AccountMetadata
 from connectors.base import BaseConnector
 from connectors.registry import (
     AuthType, Capability, ConnectorMeta, ConnectorScope, WriteOperation,
@@ -214,9 +215,15 @@ Use `run_sql_query` on `github_repositories`, `github_commits`, `github_pull_req
         user_id: Optional[str] = None,
         *,
         sync_since_override: datetime | None = None,
+        integration_id: str | None = None,
+        account_identifier: str | None = None,
     ) -> None:
         super().__init__(
-            organization_id, user_id, sync_since_override=sync_since_override
+            organization_id,
+            user_id,
+            sync_since_override=sync_since_override,
+            integration_id=integration_id,
+            account_identifier=account_identifier,
         )
         # Cache: GitHub login → internal user UUID (or None)
         self._login_cache: dict[str, UUID | None] = {}
@@ -241,6 +248,9 @@ Use `run_sql_query` on `github_repositories`, `github_commits`, `github_pull_req
         if self._token:
             return self._token, ""
 
+        if self._nango_connection_override:
+            return await super().get_oauth_token()
+
         async with get_session(organization_id=self.organization_id) as session:
             conditions: list[Any] = [
                 Integration.organization_id == UUID(self.organization_id),
@@ -249,6 +259,10 @@ Use `run_sql_query` on `github_repositories`, `github_commits`, `github_pull_req
             ]
             if self.user_id:
                 conditions.append(Integration.user_id == UUID(self.user_id))
+            if self._integration_id_filter is not None:
+                conditions.append(Integration.id == self._integration_id_filter)
+            if self._account_identifier_filter is not None:
+                conditions.append(Integration.account_identifier == self._account_identifier_filter)
 
             result = await session.execute(
                 select(
@@ -290,6 +304,21 @@ Use `run_sql_query` on `github_repositories`, `github_commits`, `github_pull_req
             self._nango_connection_id,
         )
         return self._token, ""
+
+    async def fetch_account_metadata(self) -> AccountMetadata:
+
+        data: dict[str, Any] = await self._gh_get("/user")
+        login_raw: Any = data.get("login")
+        login: str = str(login_raw).strip() if login_raw else ""
+        if not login:
+            raise ValueError("GitHub /user missing login")
+        name_raw: Any = data.get("name")
+        label: str = str(name_raw).strip() if isinstance(name_raw, str) and name_raw.strip() else login
+        avatar_raw: Any = data.get("avatar_url")
+        avatar: str | None = (
+            str(avatar_raw).strip() if isinstance(avatar_raw, str) and avatar_raw.strip() else None
+        )
+        return AccountMetadata(identifier=login.lower(), label=label, avatar_url=avatar)
 
     # ── HTTP helpers ─────────────────────────────────────────────────────
 

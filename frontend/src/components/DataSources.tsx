@@ -377,7 +377,7 @@ export function DataSources(): JSX.Element {
     void checkInFlight();
     return () => { cancelled = true; };
   }, [organization?.id, rawIntegrations]);
-  const [disconnectingProviders, setDisconnectingProviders] = useState<Set<string>>(new Set());
+  const [disconnectingIntegrationIds, setDisconnectingIntegrationIds] = useState<Set<string>>(new Set());
   const [connectingProvider, setConnectingProvider] = useState<string | null>(null);
   const [slackMappings, setSlackMappings] = useState<SlackUserMapping[]>([]);
   const [slackMappingsLoading, setSlackMappingsLoading] = useState(false);
@@ -526,15 +526,17 @@ export function DataSources(): JSX.Element {
 
   // Disconnect confirmation modal state
   interface DisconnectModalState {
+    integrationId: string;
     provider: string;
+    accountSummary: string | null;
     step: 'confirm' | 'ask-delete';
   }
   const [disconnectModal, setDisconnectModal] = useState<DisconnectModalState | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   /** Which integration row id has the overflow menu open (null = closed). */
   const [rowMenuOpenForId, setRowMenuOpenForId] = useState<string | null>(null);
-  /** Provider slug for slide-out detail drawer (null = closed). */
-  const [detailProvider, setDetailProvider] = useState<string | null>(null);
+  /** Integration row id for slide-out detail drawer (null = closed). */
+  const [detailIntegrationId, setDetailIntegrationId] = useState<string | null>(null);
   /** Desktop header page overflow (Sync all, mobile-only helpers). */
   const [pageOverflowOpen, setPageOverflowOpen] = useState<boolean>(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
@@ -563,13 +565,13 @@ export function DataSources(): JSX.Element {
   }, [rowMenuOpenForId]);
 
   useEffect(() => {
-    if (detailProvider === null) return;
+    if (detailIntegrationId === null) return;
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setDetailProvider(null);
+      if (e.key === 'Escape') setDetailIntegrationId(null);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [detailProvider]);
+  }, [detailIntegrationId]);
 
   useEffect(() => {
     if (!pageOverflowOpen) return;
@@ -868,6 +870,10 @@ export function DataSources(): JSX.Element {
       };
     });
 
+  const githubPrimaryRowId: string | undefined = integrations.find(
+    (i) => i.provider === 'github' && i.currentUserConnected,
+  )?.id;
+
   // Also include available (not connected) integrations
   const connectedProviders = new Set(integrations.map((i) => i.provider));
   const connectorSlugs = connectorsFromApi.length > 0
@@ -892,6 +898,9 @@ export function DataSources(): JSX.Element {
       teamTotal: 0,
       syncStats: null,
       displayName: null,
+      accountIdentifier: null,
+      accountLabel: null,
+      accountAvatarUrl: null,
       shareSyncedData: defaults.shareSyncedData,
       shareQueryAccess: defaults.shareQueryAccess,
       shareWriteAccess: defaults.shareWriteAccess,
@@ -912,7 +921,7 @@ export function DataSources(): JSX.Element {
     if (!githubCard) return;
     githubCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
     setGithubAutoScrollPending(false);
-  }, [allIntegrations.length, githubAutoScrollPending, githubReposExpanded]);
+  }, [allIntegrations.length, githubAutoScrollPending, githubReposExpanded, githubPrimaryRowId]);
 
   // Full list of all connectors for the add-connector modal (from API or fallback)
   const allConnectorsForModal: DisplayIntegration[] = connectorSlugs.map((provider: string): DisplayIntegration => {
@@ -933,6 +942,9 @@ export function DataSources(): JSX.Element {
       teamTotal: 0,
       syncStats: null,
       displayName: null,
+      accountIdentifier: null,
+      accountLabel: null,
+      accountAvatarUrl: null,
       shareSyncedData: defaults.shareSyncedData,
       shareQueryAccess: defaults.shareQueryAccess,
       shareWriteAccess: defaults.shareWriteAccess,
@@ -1137,22 +1149,36 @@ export function DataSources(): JSX.Element {
     }
   }, [connectBuiltinConnector, fetchIntegrations, ispotClientId, ispotClientSecret, ispotConnecting, organizationId, userId]);
 
-  const handleDisconnect = (provider: string): void => {
-    if (!organizationId || !userId || disconnectingProviders.has(provider)) return;
+  const handleDisconnect = (integration: DisplayIntegration): void => {
+    if (!organizationId || !userId || disconnectingIntegrationIds.has(integration.id)) return;
+    const accountSummary: string | null =
+      integration.accountLabel ?? integration.accountIdentifier ?? null;
     setSyncError(null);
     setDisconnectError(null);
-    setDisconnectModal({ provider, step: 'confirm' });
+    setDisconnectModal({
+      integrationId: integration.id,
+      provider: integration.provider,
+      accountSummary,
+      step: 'confirm',
+    });
   };
 
-  const executeDisconnect = async (provider: string, deleteData: boolean): Promise<void> => {
+  const executeDisconnect = async (
+    provider: string,
+    deleteData: boolean,
+    integrationRowId: string,
+  ): Promise<void> => {
     setDisconnectModal(null);
 
     // Set disconnecting state immediately for instant UI feedback
-    setDisconnectingProviders((prev) => new Set(prev).add(provider));
+    setDisconnectingIntegrationIds((prev) => new Set(prev).add(integrationRowId));
 
     const params = new URLSearchParams({ organization_id: organizationId, user_id: userId });
     if (deleteData) {
       params.set('delete_data', 'true');
+    }
+    if (integrationRowId && !integrationRowId.startsWith('pending-')) {
+      params.set('integration_id', integrationRowId);
     }
     const url = `${API_BASE}/auth/integrations/${provider}?${params.toString()}`;
 
@@ -1210,19 +1236,19 @@ export function DataSources(): JSX.Element {
       } catch (fetchError) {
         console.error('Failed to refresh integrations after disconnect:', fetchError);
       }
-      setDisconnectingProviders((prev) => {
-        if (!prev.has(provider)) return prev;
+      setDisconnectingIntegrationIds((prev) => {
+        if (!prev.has(integrationRowId)) return prev;
         const next = new Set(prev);
-        next.delete(provider);
+        next.delete(integrationRowId);
         return next;
       });
     } catch (error) {
       console.error('Failed to disconnect:', error);
       setDisconnectError(`Failed to disconnect: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setTimeout(() => setDisconnectError(null), 6000);
-      setDisconnectingProviders((prev) => {
+      setDisconnectingIntegrationIds((prev) => {
         const next = new Set(prev);
-        next.delete(provider);
+        next.delete(integrationRowId);
         return next;
       });
     }
@@ -1624,16 +1650,16 @@ export function DataSources(): JSX.Element {
     ...fromTeamConnectorsSorted,
   ];
   const detailIntegration: DisplayIntegration | null =
-    detailProvider === null
+    detailIntegrationId === null
       ? null
-      : connectedIntegrationPool.find((i) => i.provider === detailProvider) ?? null;
+      : connectedIntegrationPool.find((i) => i.id === detailIntegrationId) ?? null;
 
   const detailTileState: TileState | null =
     detailIntegration === null
       ? null
-      : myConnectorsSorted.some((i) => i.provider === detailIntegration.provider)
+      : myConnectorsSorted.some((i) => i.id === detailIntegration.id)
         ? 'connected'
-        : orgConnectorsSorted.some((i) => i.provider === detailIntegration.provider)
+        : orgConnectorsSorted.some((i) => i.id === detailIntegration.id)
           ? 'org-connected'
           : 'team-only';
 
@@ -1862,7 +1888,9 @@ export function DataSources(): JSX.Element {
       getConnectorDisplay(integration.provider).hasSync !== false &&
       isFreshSyncStartedAt(integration.syncStats?.sync_started_at);
     const isSyncing = syncingProviders.has(integration.provider) || isSyncingFromServer;
-    const isDisconnecting = disconnectingProviders.has(integration.provider);
+    const isDisconnecting = disconnectingIntegrationIds.has(integration.id);
+    const accountSubtitle: string | null =
+      integration.accountLabel ?? integration.accountIdentifier ?? null;
     const syncPercent = isSyncing ? (syncProgressPercent[integration.provider] ?? 8) : 0;
 
     const hasSyncCapability: boolean = getConnectorDisplay(integration.provider).hasSync !== false;
@@ -1906,11 +1934,16 @@ export function DataSources(): JSX.Element {
     const canDisconnect: boolean =
       (state === 'connected' && integration.isOwner) || state === 'org-connected';
 
+    const showAddAnotherAccount: boolean =
+      ((state === 'connected' && integration.isOwner) || state === 'org-connected') &&
+      !integration.provider.startsWith('mcp_');
+
     const showRowMenu: boolean =
       (state === 'connected' && integration.isOwner) ||
       state === 'team-only' ||
       showResyncInMenu ||
-      canDisconnect;
+      canDisconnect ||
+      showAddAnotherAccount;
 
     const menuBtnClass =
       'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-surface-600 text-surface-300 transition-colors hover:bg-surface-800 disabled:opacity-50';
@@ -1922,37 +1955,56 @@ export function DataSources(): JSX.Element {
           isDisconnecting ? 'pointer-events-none opacity-50 transition-opacity duration-200' : undefined
         }
         ref={(el) => {
-          connectorCardRefs.current[integration.provider] = el;
+          connectorCardRefs.current[integration.id] = el;
+          if (githubPrimaryRowId !== undefined && integration.id === githubPrimaryRowId) {
+            connectorCardRefs.current.github = el;
+          }
         }}
       >
         <div className="flex items-center gap-2 px-2 py-2 sm:gap-3">
           <button
             type="button"
             className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left outline-none ring-primary-500/40 hover:bg-surface-900/80 focus-visible:ring-2 sm:gap-3"
-            onClick={() => setDetailProvider(integration.provider)}
+            onClick={() => setDetailIntegrationId(integration.id)}
             title={integration.name}
           >
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-surface-900">
-              {renderIconCompact(integration.icon)}
+            <span className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-visible rounded-md bg-surface-900">
+              {integration.accountAvatarUrl ? (
+                <img
+                  src={integration.accountAvatarUrl}
+                  alt=""
+                  className="absolute -right-0.5 -top-0.5 z-10 h-4 w-4 rounded-full border border-surface-900 object-cover"
+                />
+              ) : null}
+              <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-md bg-surface-900">
+                {renderIconCompact(integration.icon)}
+              </span>
             </span>
-            <span className="flex min-w-0 flex-1 items-center gap-2">
-              <span className="truncate text-sm text-surface-100">{integration.name}</span>
-              {integration.provider.startsWith('mcp_') && (
-                <span className="shrink-0 rounded bg-surface-700 px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide text-surface-400">
-                  Custom
-                </span>
-              )}
-              {(state === 'org-connected' || state === 'team-only') && (
-                <span className="shrink-0 rounded bg-surface-800 px-1.5 py-0 text-[10px] font-medium text-surface-500">
-                  Team
-                </span>
-              )}
-              {renderSharedWithTeamPill(integration, state)}
-              {(state === 'connected' || state === 'org-connected') &&
-                integration.lastError &&
-                !isSyncing && (
-                  <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" title={integration.lastError} />
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="flex min-w-0 flex-1 items-center gap-2">
+                <span className="truncate text-sm text-surface-100">{integration.name}</span>
+                {integration.provider.startsWith('mcp_') && (
+                  <span className="shrink-0 rounded bg-surface-700 px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide text-surface-400">
+                    Custom
+                  </span>
                 )}
+                {(state === 'org-connected' || state === 'team-only') && (
+                  <span className="shrink-0 rounded bg-surface-800 px-1.5 py-0 text-[10px] font-medium text-surface-500">
+                    Team
+                  </span>
+                )}
+                {renderSharedWithTeamPill(integration, state)}
+                {(state === 'connected' || state === 'org-connected') &&
+                  integration.lastError &&
+                  !isSyncing && (
+                    <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" title={integration.lastError} />
+                  )}
+              </span>
+              {accountSubtitle ? (
+                <span className="truncate text-xs text-surface-500" title={accountSubtitle}>
+                  {accountSubtitle}
+                </span>
+              ) : null}
             </span>
           </button>
 
@@ -2078,6 +2130,20 @@ export function DataSources(): JSX.Element {
                       </button>
                     </>
                   )}
+                  {showAddAnotherAccount && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="w-full px-3 py-2 text-left text-sm text-surface-200 hover:bg-surface-800 disabled:opacity-50"
+                      disabled={isConnecting}
+                      onClick={() => {
+                        setRowMenuOpenForId(null);
+                        void handleConnect(integration.provider);
+                      }}
+                    >
+                      Add another account
+                    </button>
+                  )}
                   {canDisconnect && (
                     <button
                       type="button"
@@ -2086,7 +2152,7 @@ export function DataSources(): JSX.Element {
                       disabled={isDisconnecting}
                       onClick={() => {
                         setRowMenuOpenForId(null);
-                        void handleDisconnect(integration.provider);
+                        void handleDisconnect(integration);
                       }}
                     >
                       {isDisconnecting ? 'Disconnecting…' : 'Disconnect'}
@@ -2703,6 +2769,8 @@ export function DataSources(): JSX.Element {
           d.provider !== 'google_drive' &&
           hasSyncDrawer;
         const canDisconnectDrawer = (st === 'connected' && d.isOwner) || st === 'org-connected';
+        const showAddAnotherDrawer: boolean =
+          ((st === 'connected' && d.isOwner) || st === 'org-connected') && !d.provider.startsWith('mcp_');
 
         return (
           <>
@@ -2710,7 +2778,7 @@ export function DataSources(): JSX.Element {
               type="button"
               className="fixed inset-0 z-[44] bg-black/50"
               aria-label="Close details"
-              onClick={() => setDetailProvider(null)}
+              onClick={() => setDetailIntegrationId(null)}
             />
             <aside className="fixed inset-y-0 right-0 z-[45] flex w-full max-w-full flex-col border-l border-surface-800 bg-surface-950 shadow-2xl sm:max-w-md">
               <div className="flex items-start justify-between gap-3 border-b border-surface-800 px-4 py-4">
@@ -2728,12 +2796,20 @@ export function DataSources(): JSX.Element {
                   </div>
                   <div className="min-w-0">
                     <h2 className="text-lg font-semibold text-surface-100">{d.name}</h2>
+                    {(d.accountLabel ?? d.accountIdentifier) ? (
+                      <p
+                        className="mt-0.5 truncate text-xs text-surface-500"
+                        title={d.accountLabel ?? d.accountIdentifier ?? ''}
+                      >
+                        {d.accountLabel ?? d.accountIdentifier}
+                      </p>
+                    ) : null}
                     <p className="mt-1 text-sm text-surface-400">{d.description}</p>
                   </div>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setDetailProvider(null)}
+                  onClick={() => setDetailIntegrationId(null)}
                   className="rounded-lg p-2 text-surface-400 hover:bg-surface-800 hover:text-surface-200"
                   aria-label="Close"
                 >
@@ -2875,6 +2951,15 @@ export function DataSources(): JSX.Element {
                     Configure sharing
                   </button>
                 )}
+                {showAddAnotherDrawer && (
+                  <button
+                    type="button"
+                    onClick={() => void handleConnect(d.provider)}
+                    className="rounded-lg border border-primary-500/30 px-3 py-2 text-xs font-medium text-primary-400 hover:bg-primary-500/10"
+                  >
+                    Add another account
+                  </button>
+                )}
                 {hasSyncDrawer && (st === 'connected' || st === 'org-connected') && (
                   <button
                     type="button"
@@ -2925,7 +3010,7 @@ export function DataSources(): JSX.Element {
                 {canDisconnectDrawer && (
                   <button
                     type="button"
-                    onClick={() => void handleDisconnect(d.provider)}
+                    onClick={() => void handleDisconnect(d)}
                     className="rounded-lg px-3 py-2 text-xs font-medium text-red-400 hover:bg-red-500/10"
                   >
                     Disconnect
@@ -2961,7 +3046,10 @@ export function DataSources(): JSX.Element {
             <div className="p-6">
               {disconnectModal.step === 'confirm' ? (
                 <>
-                  <h2 className="text-lg font-semibold text-surface-100 mb-2">Disconnect {disconnectModal.provider}?</h2>
+                  <h2 className="text-lg font-semibold text-surface-100 mb-2">
+                    Disconnect {getConnectorDisplay(disconnectModal.provider).name}
+                    {disconnectModal.accountSummary ? ` (${disconnectModal.accountSummary})` : ''}?
+                  </h2>
                   <p className="text-sm text-surface-400 mb-6">
                     This will remove the connection. You can reconnect later.
                   </p>
@@ -2988,13 +3076,13 @@ export function DataSources(): JSX.Element {
                   </p>
                   <div className="flex justify-end gap-3">
                     <button
-                      onClick={() => void executeDisconnect(disconnectModal.provider, false)}
+                      onClick={() => void executeDisconnect(disconnectModal.provider, false, disconnectModal.integrationId)}
                       className="px-4 py-2 text-sm font-medium text-surface-300 hover:text-surface-100 transition-colors"
                     >
                       Keep Data
                     </button>
                     <button
-                      onClick={() => void executeDisconnect(disconnectModal.provider, true)}
+                      onClick={() => void executeDisconnect(disconnectModal.provider, true, disconnectModal.integrationId)}
                       className="px-4 py-2 text-sm font-medium bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors"
                     >
                       Delete Data

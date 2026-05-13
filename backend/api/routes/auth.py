@@ -22,6 +22,8 @@ import logging
 from typing import Any, Final, Optional
 from uuid import UUID
 
+import uuid as uuid_stdlib
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 
@@ -38,8 +40,10 @@ from config import (
     get_provider_sharing_defaults,
     PROVIDER_SHARING_DEFAULTS,
 )
-from models.database import get_admin_session, get_session
-from models.integration import Integration
+from connectors.account_metadata import AccountMetadata
+from connectors.base import BaseConnector
+from connectors.registry import resolve_connector
+from models.integration import Integration, merge_account_avatar_into_extra_data
 from models.user import User
 from models.organization import Organization
 from services.favicon import update_org_logo_from_website
@@ -125,7 +129,12 @@ def _enqueue_google_drive_login_sync(organization_id: UUID, user_id: UUID, integ
     try:
         from workers.tasks.sync import sync_integration
 
-        task = sync_integration.delay(str(organization_id), "google_drive", str(user_id))
+        task = sync_integration.delay(
+            str(organization_id),
+            "google_drive",
+            str(user_id),
+            integration_id=str(integration.id),
+        )
         logger.info(
             "Queued login-triggered Google Drive sync org=%s user=%s task_id=%s",
             organization_id,
@@ -491,6 +500,9 @@ class IntegrationResponse(BaseModel):
     sync_stats: Optional[dict[str, int | str]] = None
     # Optional display name override (e.g. user-provided name for MCP connectors)
     display_name: Optional[str] = None
+    account_identifier: Optional[str] = None
+    account_label: Optional[str] = None
+    account_avatar_url: Optional[str] = None
 
 
 class IntegrationsListResponse(BaseModel):
@@ -3103,8 +3115,8 @@ async def get_connect_session(
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
 
-    # All connections are user-scoped
-    connection_id = f"{org_id_str}:user:{user_id_str}"
+    # All connections are user-scoped; suffix keeps Nango connections distinct per account.
+    connection_id = f"{org_id_str}:user:{user_id_str}:{uuid_stdlib.uuid4().hex}"
 
     org_name: str | None = None
     async with get_session(organization_id=org_id_str) as db_session:
@@ -3227,6 +3239,29 @@ async def _notify_connector_connected_in_conversation(
         )
 
 
+async def _probe_account_metadata_for_confirm(
+    provider: str,
+    organization_id_str: str,
+    user_id_str: str,
+    nango_connection_id: str,
+) -> AccountMetadata:
+    """Resolve stable account identifier for a fresh Nango connection (pre-DB row)."""
+    connector_cls: type[BaseConnector] | None = resolve_connector(provider)
+    if connector_cls is None:
+        return AccountMetadata(identifier=nango_connection_id, label=None, avatar_url=None)
+    probe: BaseConnector = connector_cls(organization_id_str, user_id_str)
+    probe._nango_connection_override = nango_connection_id
+    try:
+        return await probe.fetch_account_metadata()
+    except Exception as exc:
+        logger.warning(
+            "[Confirm] fetch_account_metadata fallback provider=%s err=%s",
+            provider,
+            exc,
+        )
+        return AccountMetadata(identifier=nango_connection_id, label=None, avatar_url=None)
+
+
 @router.post("/integrations/confirm")
 async def confirm_integration(
     request: ConfirmConnectionRequest,
@@ -3338,54 +3373,6 @@ async def confirm_integration(
                     "[Confirm] Could not resolve Attio workspace_id for connection_id=%s",
                     nango_connection_id,
                 )
-        # Prevent an org from connecting two different Slack workspaces.
-        if request.provider == "slack":
-            _incoming_team_id: str | None = (connection_metadata or {}).get("team_id")
-            if _incoming_team_id:
-                async with get_session(organization_id=str(org_uuid)) as _check_session:
-                    _existing_slack_rows = await _check_session.execute(
-                        select(Integration.extra_data).where(
-                            Integration.organization_id == org_uuid,
-                            Integration.connector == "slack",
-                            Integration.is_active.is_(True),
-                        )
-                    )
-                    for (_extra_data_row,) in _existing_slack_rows:
-                        _existing_team: str | None = (_extra_data_row or {}).get("team_id")
-                        if _existing_team and _existing_team != _incoming_team_id:
-                            raise HTTPException(
-                                status_code=409,
-                                detail=(
-                                    "This organization is already connected to a different Slack workspace. "
-                                    "All team members must connect to the same workspace."
-                                ),
-                            )
-
-        # Prevent an org from connecting two different Attio workspaces.
-        if request.provider == "attio":
-            _incoming_attio_workspace: str | None = (connection_metadata or {}).get("workspace_id")
-            if isinstance(_incoming_attio_workspace, str):
-                _incoming_attio_workspace = _incoming_attio_workspace.strip() or None
-            if _incoming_attio_workspace:
-                async with get_session(organization_id=str(org_uuid)) as _attio_check_session:
-                    _existing_attio_rows = await _attio_check_session.execute(
-                        select(Integration.extra_data).where(
-                            Integration.organization_id == org_uuid,
-                            Integration.connector == "attio",
-                            Integration.is_active.is_(True),
-                        )
-                    )
-                    for (_attio_extra,) in _existing_attio_rows:
-                        _existing_attio_wid: str | None = (_attio_extra or {}).get("workspace_id")
-                        if _existing_attio_wid and _existing_attio_wid != _incoming_attio_workspace:
-                            raise HTTPException(
-                                status_code=409,
-                                detail=(
-                                    "This organization is already connected to a different Attio workspace. "
-                                    "All team members must connect to the same workspace."
-                                ),
-                            )
-
         # For Slack, extract the bot token from Nango and upsert into
         # messenger_bot_installs so event-handling paths can look it up by team_id.
         # With bot scopes configured in Nango, the top-level access_token is
@@ -3442,6 +3429,17 @@ async def confirm_integration(
     # Get default sharing settings for this provider
     sharing_defaults = get_provider_sharing_defaults(request.provider)
 
+    account_meta: AccountMetadata = await _probe_account_metadata_for_confirm(
+        request.provider,
+        str(org_uuid),
+        str(user_uuid),
+        nango_connection_id,
+    )
+    merged_extra: dict[str, Any] | None = merge_account_avatar_into_extra_data(
+        connection_metadata,
+        account_meta.avatar_url,
+    )
+
     integration_id: str = ""
     async with get_session(organization_id=str(org_uuid)) as session:
         await session.execute(
@@ -3449,29 +3447,44 @@ async def confirm_integration(
             {"org_id": str(org_uuid)}
         )
 
-        # Check for existing integration for this user
-        result = await session.execute(
+        match_result = await session.execute(
             select(Integration).where(
                 Integration.organization_id == org_uuid,
                 Integration.connector == request.provider,
                 Integration.user_id == user_uuid,
+                Integration.account_identifier == account_meta.identifier,
             )
         )
+        existing_row: Integration | None = match_result.scalar_one_or_none()
 
-        existing = result.scalar_one_or_none()
+        if existing_row is None:
+            legacy_match = await session.execute(
+                select(Integration)
+                .where(
+                    Integration.organization_id == org_uuid,
+                    Integration.connector == request.provider,
+                    Integration.user_id == user_uuid,
+                    Integration.account_identifier.is_(None),
+                )
+                .order_by(Integration.updated_at.desc().nullslast())
+                .limit(1)
+            )
+            existing_row = legacy_match.scalar_one_or_none()
 
-        if existing:
-            existing.nango_connection_id = nango_connection_id
-            existing.is_active = True
-            existing.last_error = None
-            existing.updated_at = datetime.utcnow()
-            existing.pending_sharing_config = False
-            existing.share_synced_data = sharing_defaults.share_synced_data
-            existing.share_query_access = sharing_defaults.share_query_access
-            existing.share_write_access = sharing_defaults.share_write_access
-            if connection_metadata:
-                existing.extra_data = connection_metadata
-            integration_id = str(existing.id)
+        if existing_row is not None:
+            existing_row.nango_connection_id = nango_connection_id
+            existing_row.is_active = True
+            existing_row.last_error = None
+            existing_row.updated_at = datetime.utcnow()
+            existing_row.pending_sharing_config = False
+            existing_row.share_synced_data = sharing_defaults.share_synced_data
+            existing_row.share_query_access = sharing_defaults.share_query_access
+            existing_row.share_write_access = sharing_defaults.share_write_access
+            existing_row.account_identifier = account_meta.identifier
+            existing_row.account_label = account_meta.label or account_meta.identifier
+            if merged_extra is not None:
+                existing_row.extra_data = merged_extra
+            integration_id = str(existing_row.id)
         else:
             new_integration = Integration(
                 organization_id=org_uuid,
@@ -3481,11 +3494,13 @@ async def confirm_integration(
                 nango_connection_id=nango_connection_id,
                 connected_by_user_id=user_uuid,
                 is_active=True,
-                extra_data=connection_metadata,
+                extra_data=merged_extra,
                 share_synced_data=sharing_defaults.share_synced_data,
                 share_query_access=sharing_defaults.share_query_access,
                 share_write_access=sharing_defaults.share_write_access,
                 pending_sharing_config=False,
+                account_identifier=account_meta.identifier,
+                account_label=account_meta.label or account_meta.identifier,
             )
             session.add(new_integration)
             await session.flush()
@@ -3502,6 +3517,7 @@ async def confirm_integration(
             str(org_uuid),
             request.provider,
             user_id_str,
+            integration_id,
         )
 
     if request.provider == "slack" and user_uuid:
@@ -4187,8 +4203,21 @@ async def nango_callback(
 
     sharing_defaults = get_provider_sharing_defaults(provider)
 
+    connection_metadata: dict[str, Any] | None = extract_connection_metadata(connection)
+
+    account_meta: AccountMetadata = await _probe_account_metadata_for_confirm(
+        provider,
+        str(org_uuid),
+        str(user_uuid),
+        connection_id,
+    )
+    merged_extra: dict[str, Any] | None = merge_account_avatar_into_extra_data(
+        connection_metadata,
+        account_meta.avatar_url,
+    )
+
     integration_id: str = ""
-    async with get_session() as session:
+    async with get_session(organization_id=str(org_uuid)) as session:
         await session.execute(
             text("SELECT set_config('app.current_org_id', :org_id, true)"),
             {"org_id": str(org_uuid)}
@@ -4201,21 +4230,40 @@ async def nango_callback(
             if await _get_org_membership(guard_cb, user_uuid, org_uuid) is None:
                 raise HTTPException(status_code=403, detail="User not authorized")
 
-        result = await session.execute(
+        match_result = await session.execute(
             select(Integration).where(
                 Integration.organization_id == org_uuid,
                 Integration.connector == provider,
                 Integration.user_id == user_uuid,
+                Integration.account_identifier == account_meta.identifier,
             )
         )
-        existing = result.scalar_one_or_none()
+        existing: Integration | None = match_result.scalar_one_or_none()
 
-        if existing:
+        if existing is None:
+            legacy_match = await session.execute(
+                select(Integration)
+                .where(
+                    Integration.organization_id == org_uuid,
+                    Integration.connector == provider,
+                    Integration.user_id == user_uuid,
+                    Integration.account_identifier.is_(None),
+                )
+                .order_by(Integration.updated_at.desc().nullslast())
+                .limit(1)
+            )
+            existing = legacy_match.scalar_one_or_none()
+
+        if existing is not None:
             existing.is_active = True
             existing.last_error = None
             existing.nango_connection_id = connection_id
             existing.updated_at = datetime.utcnow()
             existing.pending_sharing_config = True
+            existing.account_identifier = account_meta.identifier
+            existing.account_label = account_meta.label or account_meta.identifier
+            if merged_extra is not None:
+                existing.extra_data = merged_extra
             integration_id = str(existing.id)
         else:
             new_integration = Integration(
@@ -4226,11 +4274,13 @@ async def nango_callback(
                 nango_connection_id=connection_id,
                 connected_by_user_id=user_uuid,
                 is_active=True,
-                extra_data=connection.get("metadata"),
+                extra_data=merged_extra,
                 share_synced_data=sharing_defaults.share_synced_data,
                 share_query_access=sharing_defaults.share_query_access,
                 share_write_access=sharing_defaults.share_write_access,
                 pending_sharing_config=True,
+                account_identifier=account_meta.identifier,
+                account_label=account_meta.label or account_meta.identifier,
             )
             session.add(new_integration)
             await session.flush()
@@ -4256,10 +4306,11 @@ async def list_integrations(
     user_id: Optional[str] = None,
     organization_id: Optional[str] = None,
 ) -> IntegrationsListResponse:
-    """List all integrations for a user's organization.
+    """List integrations for the active organization.
 
-    Returns integrations grouped by provider, showing the current user's
-    integration (if any), team connections, and connector scope.
+    Returns one row per integration owned by the authenticated user (multi-account),
+    plus a placeholder row per registered provider when the user has not connected
+    that provider yet. Each row includes optional account display fields.
     """
     if user_id is not None and user_id != auth.user_id_str:
         raise HTTPException(
@@ -4313,21 +4364,20 @@ async def list_integrations(
         team_members: dict[UUID, User] = {u.id: u for u in team_result.scalars().all()}
         team_total = len(team_members)
 
+        from models.integration import read_account_avatar_url
+
         response_integrations: list[IntegrationResponse] = []
 
-        # Include all known providers (from PROVIDER_SHARING_DEFAULTS)
         all_providers = set(integrations_by_provider.keys()) | set(PROVIDER_SHARING_DEFAULTS.keys())
+
+        my_by_provider: dict[str, list[Integration]] = {}
+        for row in all_integrations:
+            if row.user_id == current_user_uuid:
+                my_by_provider.setdefault(row.connector, []).append(row)
 
         for provider in sorted(all_providers):
             integrations_for_provider = integrations_by_provider.get(provider, [])
 
-            # Find current user's integration
-            current_user_integration = next(
-                (i for i in integrations_for_provider if i.user_id == current_user_uuid),
-                None
-            )
-
-            # Build team connections list (excluding current user)
             team_connections: list[TeamConnection] = []
             for integration in integrations_for_provider:
                 if integration.user_id and integration.user_id in team_members:
@@ -4337,59 +4387,82 @@ async def list_integrations(
                         user_name=user_obj.name or user_obj.email,
                     ))
 
-            # Use current user's integration for display, or the one with most recent sync
-            # (sync may update a different integration when multiple exist)
-            if current_user_integration:
-                ref_integration = current_user_integration
-            elif integrations_for_provider:
-                ref_integration = max(
-                    integrations_for_provider,
-                    key=lambda i: (i.last_sync_at or datetime.min),
+            mine: list[Integration] = my_by_provider.get(provider, [])
+            if mine:
+                mine_sorted = sorted(
+                    mine,
+                    key=lambda row: (row.account_identifier or "", str(row.id)),
                 )
+                for ref_integration in mine_sorted:
+                    connected_by_name: str | None = None
+                    if ref_integration.user_id in team_members:
+                        owner = team_members[ref_integration.user_id]
+                        connected_by_name = owner.name or owner.email
+
+                    mcp_display_name: str | None = None
+                    if provider.startswith("mcp_") and ref_integration.extra_data:
+                        mcp_display_name = ref_integration.extra_data.get("display_name")
+
+                    avatar_url: str | None = read_account_avatar_url(ref_integration.extra_data)
+
+                    response_integrations.append(IntegrationResponse(
+                        id=str(ref_integration.id),
+                        provider=provider,
+                        is_active=ref_integration.is_active,
+                        last_sync_at=(
+                            f"{ref_integration.last_sync_at.isoformat()}Z"
+                            if ref_integration.last_sync_at else None
+                        ),
+                        last_error=ref_integration.last_error,
+                        connected_at=(
+                            f"{ref_integration.created_at.isoformat()}Z"
+                            if ref_integration.created_at else None
+                        ),
+                        scope=scope_by_provider.get(provider, ConnectorScope.USER.value),
+                        user_id=str(ref_integration.user_id) if ref_integration.user_id else None,
+                        connected_by=connected_by_name,
+                        share_synced_data=ref_integration.share_synced_data,
+                        share_query_access=ref_integration.share_query_access,
+                        share_write_access=ref_integration.share_write_access,
+                        pending_sharing_config=ref_integration.pending_sharing_config,
+                        is_owner=(
+                            current_user_uuid is not None
+                            and ref_integration.user_id == current_user_uuid
+                        ),
+                        current_user_connected=True,
+                        team_connections=team_connections,
+                        team_total=team_total,
+                        sync_stats=ref_integration.sync_stats,
+                        display_name=mcp_display_name,
+                        account_identifier=ref_integration.account_identifier,
+                        account_label=ref_integration.account_label,
+                        account_avatar_url=avatar_url,
+                    ))
             else:
-                ref_integration = None
-
-            # Get owner name
-            connected_by_name: str | None = None
-            if ref_integration and ref_integration.user_id in team_members:
-                owner = team_members[ref_integration.user_id]
-                connected_by_name = owner.name or owner.email
-
-            mcp_display_name: str | None = None
-            if provider.startswith("mcp_") and ref_integration and ref_integration.extra_data:
-                mcp_display_name = ref_integration.extra_data.get("display_name")
-
-            response_integrations.append(IntegrationResponse(
-                id=str(ref_integration.id) if ref_integration else f"pending-{provider}",
-                provider=provider,
-                is_active=ref_integration.is_active if ref_integration else False,
-                last_sync_at=(
-                    f"{ref_integration.last_sync_at.isoformat()}Z"
-                    if ref_integration and ref_integration.last_sync_at else None
-                ),
-                last_error=ref_integration.last_error if ref_integration else None,
-                connected_at=(
-                    f"{ref_integration.created_at.isoformat()}Z"
-                    if ref_integration and ref_integration.created_at else None
-                ),
-                scope=scope_by_provider.get(provider, ConnectorScope.USER.value),
-                user_id=str(ref_integration.user_id) if ref_integration else None,
-                connected_by=connected_by_name,
-                share_synced_data=ref_integration.share_synced_data if ref_integration else False,
-                share_query_access=ref_integration.share_query_access if ref_integration else False,
-                share_write_access=ref_integration.share_write_access if ref_integration else False,
-                pending_sharing_config=ref_integration.pending_sharing_config if ref_integration else False,
-                is_owner=(
-                    current_user_uuid is not None
-                    and ref_integration is not None
-                    and ref_integration.user_id == current_user_uuid
-                ),
-                current_user_connected=current_user_integration is not None,
-                team_connections=team_connections,
-                team_total=team_total,
-                sync_stats=ref_integration.sync_stats if ref_integration else None,
-                display_name=mcp_display_name,
-            ))
+                response_integrations.append(IntegrationResponse(
+                    id=f"pending-{provider}",
+                    provider=provider,
+                    is_active=False,
+                    last_sync_at=None,
+                    last_error=None,
+                    connected_at=None,
+                    scope=scope_by_provider.get(provider, ConnectorScope.USER.value),
+                    user_id=None,
+                    connected_by=None,
+                    share_synced_data=False,
+                    share_query_access=False,
+                    share_write_access=False,
+                    pending_sharing_config=False,
+                    is_owner=False,
+                    current_user_connected=False,
+                    team_connections=team_connections,
+                    team_total=team_total,
+                    sync_stats=None,
+                    display_name=None,
+                    account_identifier=None,
+                    account_label=None,
+                    account_avatar_url=None,
+                ))
 
         return IntegrationsListResponse(integrations=response_integrations)
 
@@ -4399,6 +4472,7 @@ async def disconnect_integration(
     provider: str,
     user_id: Optional[str] = None,
     organization_id: Optional[str] = None,
+    integration_id: Optional[str] = None,
     delete_data: bool = False,
 ) -> dict[str, Any]:
     """Disconnect an integration.
@@ -4410,6 +4484,7 @@ async def disconnect_integration(
         provider: The integration provider to disconnect
         user_id: User ID (required for user-scoped integrations)
         organization_id: Organization ID
+        integration_id: When set, disconnect only this integration row (multi-account)
         delete_data: If True, also deletes all synced data (activities, contacts, accounts, deals, pipelines, orphaned meetings)
     """
     org_uuid: Optional[UUID] = None
@@ -4462,17 +4537,37 @@ async def disconnect_integration(
             {"org_id": str(org_uuid)}
         )
 
-        # Find integration for this user
-        integration: Integration | None = None
+        # Find integration for this user (specific row when integration_id is set)
+        integration_id_uuid: UUID | None = None
+        if integration_id and integration_id.strip():
+            try:
+                integration_id_uuid = UUID(integration_id.strip())
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid integration_id")
 
-        result = await db_session.execute(
-            select(Integration).where(
-                Integration.organization_id == org_uuid,
-                Integration.connector == provider,
-                Integration.user_id == current_user_uuid,
+        integration = None
+        if integration_id_uuid is not None:
+            result = await db_session.execute(
+                select(Integration).where(
+                    Integration.organization_id == org_uuid,
+                    Integration.connector == provider,
+                    Integration.user_id == current_user_uuid,
+                    Integration.id == integration_id_uuid,
+                )
             )
-        )
-        integration = result.scalar_one_or_none()
+            integration = result.scalar_one_or_none()
+        else:
+            result = await db_session.execute(
+                select(Integration)
+                .where(
+                    Integration.organization_id == org_uuid,
+                    Integration.connector == provider,
+                    Integration.user_id == current_user_uuid,
+                )
+                .order_by(Integration.updated_at.desc().nullslast())
+                .limit(1)
+            )
+            integration = result.scalars().first()
 
         # Fallback: check by nango_connection_id for old records
         if not integration:
@@ -4927,6 +5022,7 @@ async def run_initial_sync(
     organization_id: str,
     provider: str,
     user_id: Optional[str] = None,
+    integration_id: Optional[str] = None,
 ) -> None:
     """
     Run initial data sync after OAuth connection.
@@ -4954,6 +5050,7 @@ async def run_initial_sync(
         provider,
         user_id=owner_user_id,
         sync_since_override_iso=None,
+        integration_id=integration_id.strip() if integration_id and integration_id.strip() else None,
     )
     status: str = str(result.get("status", "unknown"))
     if status == "completed":

@@ -17,6 +17,7 @@ from typing import Any, Optional
 import httpx
 from sqlalchemy import and_, or_, select
 
+from connectors.account_metadata import AccountMetadata
 from connectors.base import BaseConnector
 from connectors.registry import AuthType, Capability, ConnectorMeta, ConnectorScope
 from models.account import Account
@@ -53,10 +54,16 @@ class SalesforceConnector(BaseConnector):
         user_id: Optional[str] = None,
         *,
         sync_since_override: datetime | None = None,
+        integration_id: str | None = None,
+        account_identifier: str | None = None,
     ) -> None:
         """Initialize the connector."""
         super().__init__(
-            organization_id, user_id, sync_since_override=sync_since_override
+            organization_id,
+            user_id,
+            sync_since_override=sync_since_override,
+            integration_id=integration_id,
+            account_identifier=account_identifier,
         )
         self._instance_url: Optional[str] = None
 
@@ -73,6 +80,29 @@ class SalesforceConnector(BaseConnector):
 
         self._instance_url = instance_url.rstrip("/")
         return self._instance_url
+
+    async def fetch_account_metadata(self) -> AccountMetadata:
+        token, _ = await self.get_oauth_token()
+        instance_url: str = await self._get_instance_url()
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{instance_url}/services/oauth2/userinfo",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            response.raise_for_status()
+            payload: dict[str, Any] = response.json()
+        org_raw: Any = payload.get("organization_id") or payload.get("organizationId")
+        identifier: str = str(org_raw).strip() if org_raw else ""
+        if not identifier:
+            sub_raw: Any = payload.get("sub")
+            identifier = str(sub_raw).strip() if sub_raw else ""
+        if not identifier:
+            raise ValueError("Salesforce userinfo missing organization_id/sub")
+        name_raw: Any = payload.get("name") or payload.get("preferred_username")
+        label: str = (
+            str(name_raw).strip() if isinstance(name_raw, str) and name_raw.strip() else identifier
+        )
+        return AccountMetadata(identifier=identifier, label=label, avatar_url=None)
 
     async def _get_headers(self) -> dict[str, str]:
         """Get authorization headers for Salesforce API."""

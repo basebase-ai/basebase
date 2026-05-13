@@ -18,6 +18,7 @@ from typing import Any, Optional
 import httpx
 
 from api.websockets import broadcast_sync_progress
+from connectors.account_metadata import AccountMetadata
 from connectors.base import BaseConnector
 from connectors.registry import (
     AuthType, Capability, ConnectorAction, ConnectorMeta, ConnectorScope,
@@ -57,6 +58,12 @@ class GmailConnector(BaseConnector):
                     {"name": "body", "type": "string", "required": True, "description": "Email body (plain text)"},
                     {"name": "cc", "type": "array", "required": False, "description": "CC recipients"},
                     {"name": "bcc", "type": "array", "required": False, "description": "BCC recipients"},
+                    {
+                        "name": "account",
+                        "type": "string",
+                        "required": False,
+                        "description": "Connected Gmail address to send from (defaults to primary / most recent).",
+                    },
                 ],
             ),
         ],
@@ -687,8 +694,15 @@ Send an email via the user's connected Gmail account. Emails are sent from the a
                 bcc=params.get("bcc"),
                 reply_to=params.get("reply_to"),
                 thread_id=params.get("thread_id"),
+                account=params.get("account"),
             )
         raise ValueError(f"Unknown action: {action}")
+
+    async def fetch_account_metadata(self) -> AccountMetadata:
+        from connectors.google_userinfo import fetch_google_account_metadata
+
+        token, _ = await self.get_oauth_token()
+        return await fetch_google_account_metadata(token)
 
     async def send_email(
         self,
@@ -699,6 +713,7 @@ Send an email via the user's connected Gmail account. Emails are sent from the a
         bcc: Optional[list[str]] = None,
         reply_to: Optional[str] = None,
         thread_id: Optional[str] = None,
+        account: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         Send an email via the user's Gmail account.
@@ -711,71 +726,83 @@ Send an email via the user's connected Gmail account. Emails are sent from the a
             bcc: Optional BCC recipients
             reply_to: Optional reply-to address
             thread_id: Optional thread ID to reply in thread
+            account: Optional connected account email (lowercased) to send from
             
         Returns:
             Dict with id, threadId on success, or error on failure
         """
-        import email.mime.text
-        import email.mime.multipart
-        
-        # Build recipients list
-        to_list = [to] if isinstance(to, str) else to
-        body_with_footer: str = ensure_automated_agent_footer(body)
-        if body_with_footer != body:
-            print(f"[GmailConnector] Applied automated-agent footer before send to {to_list}")
-        
-        # Create message
-        message = email.mime.multipart.MIMEMultipart()
-        message["To"] = ", ".join(to_list)
-        message["Subject"] = subject
-        
-        if cc:
-            message["Cc"] = ", ".join(cc)
-        if bcc:
-            message["Bcc"] = ", ".join(bcc)
-        if reply_to:
-            message["Reply-To"] = reply_to
-        
-        # Attach body
-        message.attach(email.mime.text.MIMEText(body_with_footer, "plain"))
-        
-        # Encode to base64url
-        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
-        
-        # Build request body
-        request_body: dict[str, Any] = {"raw": raw_message}
-        if thread_id:
-            request_body["threadId"] = thread_id
-        
-        headers = await self._get_headers()
-        url = f"{GMAIL_API_BASE}/users/me/messages/send"
-        
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    url,
-                    headers=headers,
-                    json=request_body,
-                    timeout=30.0,
-                )
-                response.raise_for_status()
-                data = response.json()
-                
-                return {
-                    "success": True,
-                    "id": data.get("id"),
-                    "threadId": data.get("threadId"),
-                    "labelIds": data.get("labelIds", []),
-                }
-                
-            except httpx.HTTPStatusError as e:
-                error_msg = e.response.text if e.response else str(e)
-                return {
-                    "success": False,
-                    "error": f"Gmail API error: {error_msg}",
-                }
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": str(e),
-                }
+        prev_filter: str | None = self._account_identifier_filter
+        prev_token: str | None = self._token
+        try:
+            acct: str | None = account.strip().lower() if isinstance(account, str) and account.strip() else None
+            if acct:
+                self._account_identifier_filter = acct
+                self._token = None
+
+            import email.mime.text
+            import email.mime.multipart
+
+            # Build recipients list
+            to_list = [to] if isinstance(to, str) else to
+            body_with_footer: str = ensure_automated_agent_footer(body)
+            if body_with_footer != body:
+                print(f"[GmailConnector] Applied automated-agent footer before send to {to_list}")
+
+            # Create message
+            message = email.mime.multipart.MIMEMultipart()
+            message["To"] = ", ".join(to_list)
+            message["Subject"] = subject
+
+            if cc:
+                message["Cc"] = ", ".join(cc)
+            if bcc:
+                message["Bcc"] = ", ".join(bcc)
+            if reply_to:
+                message["Reply-To"] = reply_to
+
+            # Attach body
+            message.attach(email.mime.text.MIMEText(body_with_footer, "plain"))
+
+            # Encode to base64url
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+
+            # Build request body
+            request_body: dict[str, Any] = {"raw": raw_message}
+            if thread_id:
+                request_body["threadId"] = thread_id
+
+            headers = await self._get_headers()
+            url = f"{GMAIL_API_BASE}/users/me/messages/send"
+
+            async with httpx.AsyncClient() as client:
+                try:
+                    response = await client.post(
+                        url,
+                        headers=headers,
+                        json=request_body,
+                        timeout=30.0,
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+
+                    return {
+                        "success": True,
+                        "id": data.get("id"),
+                        "threadId": data.get("threadId"),
+                        "labelIds": data.get("labelIds", []),
+                    }
+
+                except httpx.HTTPStatusError as e:
+                    error_msg = e.response.text if e.response else str(e)
+                    return {
+                        "success": False,
+                        "error": f"Gmail API error: {error_msg}",
+                    }
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "error": str(e),
+                    }
+        finally:
+            self._account_identifier_filter = prev_filter
+            self._token = prev_token

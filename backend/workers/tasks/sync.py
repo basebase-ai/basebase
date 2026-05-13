@@ -166,6 +166,7 @@ async def _clear_last_errors_for_integration(
     organization_id: str,
     provider: str,
     user_id: str | None,
+    integration_id: str | None = None,
 ) -> None:
     """Clear integration.last_error for matching rows (matches API trigger_sync behavior)."""
     from sqlalchemy import select
@@ -184,6 +185,8 @@ async def _clear_last_errors_for_integration(
             stmt = stmt.where(Integration.user_id == UUID(user_id))
         else:
             stmt = stmt.where(Integration.user_id.is_(None))
+        if integration_id is not None and integration_id.strip():
+            stmt = stmt.where(Integration.id == UUID(integration_id.strip()))
         result = await session.execute(stmt)
         rows: list[Integration] = list(result.scalars().all())
         changed: bool = False
@@ -200,6 +203,7 @@ async def _sync_integration(
     provider: str,
     user_id: str | None = None,
     sync_since_override_iso: str | None = None,
+    integration_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Internal async function to sync a single integration.
@@ -242,11 +246,13 @@ async def _sync_integration(
 
     try:
         user_label: str = f" user={user_id}" if user_id else ""
-        logger.info(f"Starting sync for {provider} in org {organization_id}{user_label}")
+        integ_label: str = f" integration={integration_id}" if integration_id else ""
+        logger.info(f"Starting sync for {provider} in org {organization_id}{user_label}{integ_label}")
         connector = connector_class(
             organization_id,
             user_id=user_id,
             sync_since_override=sync_since_dt,
+            integration_id=integration_id.strip() if integration_id and integration_id.strip() else None,
         )
 
         from access_control import ConnectorContext, check_connector_call
@@ -266,7 +272,7 @@ async def _sync_integration(
                 "error": dp_result.deny_reason or "Connector sync not allowed",
             }
 
-        await _clear_last_errors_for_integration(organization_id, provider, user_id)
+        await _clear_last_errors_for_integration(organization_id, provider, user_id, integration_id)
 
         await connector.mark_sync_started()
         await _broadcast_worker_sync_progress(
@@ -449,6 +455,7 @@ async def _get_all_active_integrations() -> list[dict[str, str | None]]:
         
         return [
             {
+                "id": str(i.id),
                 "organization_id": str(i.organization_id),
                 "connector": i.connector,
                 "user_id": str(i.user_id) if i.user_id else None,
@@ -515,6 +522,7 @@ async def _get_org_integrations(organization_id: str) -> list[dict[str, str | No
         integrations = result.scalars().all()
         return [
             {
+                "id": str(i.id),
                 "connector": i.connector,
                 "user_id": str(i.user_id) if i.user_id else None,
             }
@@ -533,6 +541,7 @@ def sync_integration(
     provider: str,
     user_id: str | None = None,
     sync_since_override_iso: str | None = None,
+    integration_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Celery task to sync a single integration.
@@ -554,6 +563,7 @@ def sync_integration(
             provider,
             user_id=user_id,
             sync_since_override_iso=sync_since_override_iso,
+            integration_id=integration_id,
         )
     )
     if result.get("status") == "failed":
@@ -613,7 +623,8 @@ def sync_organization(self: Any, organization_id: str) -> dict[str, Any]:
                 skipped += 1
                 continue
             uid: str | None = entry["user_id"]
-            async_result = sync_integration.delay(organization_id, provider, uid)
+            integ_id: str | None = entry.get("id")  # type: ignore[assignment]
+            async_result = sync_integration.delay(organization_id, provider, uid, integration_id=integ_id)
             task_ids.append(str(async_result.id))
 
         return {
@@ -1283,7 +1294,8 @@ def sync_all_organizations(self: Any) -> dict[str, Any]:
                 total_skipped_cadence += 1
                 continue
             uid: str | None = entry["user_id"]
-            async_result = sync_integration.delay(org_id, provider, uid)
+            integ_id: str | None = entry.get("id")  # type: ignore[assignment]
+            async_result = sync_integration.delay(org_id, provider, uid, integration_id=integ_id)
             child_task_ids.append(str(async_result.id))
 
         total_elapsed: float = _time.monotonic() - run_start

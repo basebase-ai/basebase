@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from connectors.account_metadata import AccountMetadata
 from connectors.base import BaseConnector
 from connectors.registry import AuthType, Capability, ConnectorAction, ConnectorMeta, ConnectorScope
 from models.activity import Activity
@@ -137,6 +138,12 @@ class GoogleCalendarConnector(BaseConnector):
             "https://www.googleapis.com/auth/calendar.events",
         ],
     )
+
+    async def fetch_account_metadata(self) -> AccountMetadata:
+        from connectors.google_userinfo import fetch_google_account_metadata
+
+        token, _ = await self.get_oauth_token()
+        return await fetch_google_account_metadata(token)
 
     async def _get_headers(self) -> dict[str, str]:
         """Get authorization headers for Google Calendar API."""

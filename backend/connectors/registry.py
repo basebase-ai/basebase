@@ -135,7 +135,7 @@ class ConnectorMeta:
 # Discovery
 # ---------------------------------------------------------------------------
 
-_SKIP_MODULES = frozenset({"base", "resolution", "registry", "models", "persistence", "_template"})
+_SKIP_MODULES = frozenset({"base", "resolution", "registry", "models", "persistence", "_template", "account_metadata", "google_userinfo"})
 
 
 def discover_connectors() -> dict[str, type[BaseConnector]]:

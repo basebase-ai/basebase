@@ -16,6 +16,7 @@ from typing import Any, Optional
 
 import httpx
 
+from connectors.account_metadata import AccountMetadata
 from connectors.base import BaseConnector
 from connectors.registry import AuthType, Capability, ConnectorMeta, ConnectorScope
 from models.activity import Activity
@@ -56,6 +57,23 @@ class MicrosoftCalendarConnector(BaseConnector):
         nango_integration_id="microsoft-calendar",
         description="Microsoft Outlook Calendar – event sync",
     )
+
+    async def fetch_account_metadata(self) -> AccountMetadata:
+        token, _ = await self.get_oauth_token()
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{MICROSOFT_GRAPH_API_BASE}/me",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            response.raise_for_status()
+            data: dict[str, Any] = response.json()
+        mail_raw: Any = data.get("mail") or data.get("userPrincipalName")
+        ident: str = str(mail_raw).strip().lower() if mail_raw else ""
+        if not ident:
+            raise ValueError("Microsoft Graph /me missing mail")
+        name_raw: Any = data.get("displayName")
+        label: str = str(name_raw).strip() if isinstance(name_raw, str) and name_raw.strip() else ident
+        return AccountMetadata(identifier=ident, label=label, avatar_url=None)
 
     async def _get_headers(self) -> dict[str, str]:
         """Get authorization headers for Microsoft Graph API."""
