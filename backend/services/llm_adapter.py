@@ -43,9 +43,14 @@ DEEPSEEK_MODEL_PREFIXES: tuple[str, ...] = (
 )
 DEEPSEEK_V4_VISION_MODEL_PREFIX: str = "deepseek-v4-vision"
 DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE: str = (
-    "DeepSeek v4 does not accept image attachments. Please switch to "
-    "DeepSeek-V4-Vision or another vision-capable model, or resend your message without images."
+    "I can’t process image attachments with DeepSeek-V4-Pro. I haven’t analyzed "
+    "the image in this turn. Please switch to DeepSeek-V4-Vision or another "
+    "vision-capable model, or resend your message without images."
 )
+
+
+class DeepSeekImageUnsupportedError(ValueError):
+    """Raised when a text-only DeepSeek v4 model receives image inputs."""
 
 
 def _normalized_model_name(model: str) -> str:
@@ -416,7 +421,7 @@ class AnthropicAdapter:
             "Rejected image-bearing request for text-only DeepSeek v4 model",
             extra={"model": model},
         )
-        raise ValueError(DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE)
+        raise DeepSeekImageUnsupportedError(DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE)
 
     def format_tools(self, tools: list[ToolDef]) -> list[dict[str, Any]]:
         return [
@@ -772,7 +777,7 @@ class OpenAIAdapter:
             "Rejected image-bearing request for text-only DeepSeek v4 model",
             extra={"model": model},
         )
-        raise ValueError(DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE)
+        raise DeepSeekImageUnsupportedError(DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE)
 
     def format_tools(self, tools: list[ToolDef]) -> list[dict[str, Any]]:
         return [

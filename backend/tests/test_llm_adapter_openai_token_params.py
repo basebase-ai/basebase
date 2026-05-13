@@ -479,7 +479,7 @@ def _image_message():
 def test_deepseek_v4_text_model_rejects_image_messages_before_formatting():
     adapter = OpenAIAdapter(api_key="test-key")
 
-    with pytest.raises(ValueError, match="DeepSeek v4 does not accept image attachments"):
+    with pytest.raises(ValueError, match="can’t process image attachments"):
         adapter._guard_model_image_support(
             model="deepseek-v4-pro",
             messages=_image_message(),

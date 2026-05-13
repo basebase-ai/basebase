@@ -6,6 +6,10 @@ import httpx
 from anthropic import APIStatusError
 
 from services import anthropic_health
+from services.llm_adapter import (
+    DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE,
+    DeepSeekImageUnsupportedError,
+)
 
 
 def _api_status_error(message: str, status_code: int = 429, error_type: str = "rate_limit_error") -> APIStatusError:
@@ -51,6 +55,13 @@ def test_user_message_for_agent_stream_failure_rate_limit() -> None:
     exc = _api_status_error("Too many requests", status_code=429, error_type="rate_limit_error")
     assert anthropic_health.user_message_for_agent_stream_failure(exc) == (
         "\nAnthropic rate-limited this request. Please try again shortly."
+    )
+
+
+def test_user_message_for_agent_stream_failure_deepseek_image_error() -> None:
+    exc = DeepSeekImageUnsupportedError(DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE)
+    assert anthropic_health.user_message_for_agent_stream_failure(exc) == (
+        f"\n{DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE}"
     )
 
 
