@@ -140,6 +140,7 @@ async def _broadcast_worker_sync_progress(
     count: int = 0,
     status: str = "syncing",
     step: str | None = None,
+    integration_id: str | None = None,
 ) -> None:
     """Broadcast worker-level sync lifecycle events without failing the sync."""
     try:
@@ -151,12 +152,14 @@ async def _broadcast_worker_sync_progress(
             count=count,
             status=status,
             step=step,
+            integration_id=integration_id,
         )
     except Exception as exc:
         logger.debug(
-            "Failed to broadcast sync progress provider=%s org=%s status=%s: %s",
+            "Failed to broadcast sync progress provider=%s org=%s integration=%s status=%s: %s",
             provider,
             organization_id,
+            integration_id,
             status,
             exc,
         )
@@ -275,12 +278,21 @@ async def _sync_integration(
         await _clear_last_errors_for_integration(organization_id, provider, user_id, integration_id)
 
         await connector.mark_sync_started()
+        # After mark_sync_started, ``connector._integration`` is bound to the row
+        # actually being synced (multi-account safe). Prefer it over the caller-
+        # supplied ``integration_id`` so the UI scopes the spinner to one row.
+        resolved_integration_id: str | None = (
+            str(connector._integration.id)
+            if getattr(connector, "_integration", None) is not None
+            else (integration_id.strip() if integration_id and integration_id.strip() else None)
+        )
         await _broadcast_worker_sync_progress(
             organization_id,
             provider,
             count=0,
             status="syncing",
             step="starting",
+            integration_id=resolved_integration_id,
         )
         counts = await connector.sync_all()
         await connector.update_last_sync(counts)
@@ -290,6 +302,7 @@ async def _sync_integration(
             count=_sum_sync_counts(counts),
             status="completed",
             step="completed",
+            integration_id=resolved_integration_id,
         )
 
         # Generate embeddings for newly synced activities
@@ -328,12 +341,18 @@ async def _sync_integration(
                 await connector.clear_sync_started()
         except Exception:
             pass
+        cancelled_integration_id: str | None = (
+            str(connector._integration.id)
+            if connector is not None and getattr(connector, "_integration", None) is not None
+            else (integration_id.strip() if integration_id and integration_id.strip() else None)
+        )
         await _broadcast_worker_sync_progress(
             organization_id,
             provider,
             count=0,
             status="failed",
             step="cancelled",
+            integration_id=cancelled_integration_id,
         )
         try:
             await emit_event(
@@ -413,12 +432,18 @@ async def _sync_integration(
         except Exception:
             pass
 
+        failed_integration_id: str | None = (
+            str(connector._integration.id)
+            if connector is not None and getattr(connector, "_integration", None) is not None
+            else (integration_id.strip() if integration_id and integration_id.strip() else None)
+        )
         await _broadcast_worker_sync_progress(
             organization_id,
             provider,
             count=0,
             status="failed",
             step="failed",
+            integration_id=failed_integration_id,
         )
 
         # Emit sync failed event

@@ -630,6 +630,7 @@ Notes are activities attached to deals (or contacts/companies). Use HubSpot **so
             count=0,
             status="syncing",
             step="preparing",
+            integration_id=self.current_integration_id,
         )
 
         # Call parent sync_all
@@ -644,6 +645,7 @@ Notes are activities attached to deals (or contacts/companies). Use HubSpot **so
             provider=self.source_system,
             count=total,
             status="completed",
+            integration_id=self.current_integration_id,
         )
         
         return result
@@ -968,6 +970,7 @@ Notes are activities attached to deals (or contacts/companies). Use HubSpot **so
             count=0,
             status="syncing",
             step="fetching deals",
+            integration_id=self.current_integration_id,
         )
         properties = [
             "dealname",
@@ -1074,6 +1077,7 @@ Notes are activities attached to deals (or contacts/companies). Use HubSpot **so
                     count=count,
                     status="syncing",
                     step="deals",
+                    integration_id=self.current_integration_id,
                 )
                 print(f"[HubSpot] Deals: {count}/{len(rows)}")
         print(f"[HubSpot] Committed {len(rows)} deals")
@@ -1175,6 +1179,7 @@ Notes are activities attached to deals (or contacts/companies). Use HubSpot **so
             count=0,
             status="syncing",
             step="fetching accounts",
+            integration_id=self.current_integration_id,
         )
         properties = [
             "name",
@@ -1245,6 +1250,7 @@ Notes are activities attached to deals (or contacts/companies). Use HubSpot **so
                     count=count,
                     status="syncing",
                     step="accounts",
+                    integration_id=self.current_integration_id,
                 )
                 print(f"[HubSpot] Accounts: {count}/{len(rows)}")
         print(f"[HubSpot] Committed {len(rows)} accounts")
@@ -1302,6 +1308,7 @@ Notes are activities attached to deals (or contacts/companies). Use HubSpot **so
             count=0,
             status="syncing",
             step="fetching contacts",
+            integration_id=self.current_integration_id,
         )
         # Only request standard properties that exist in all HubSpot instances
         # Removed 'company' as it's a custom/optional text field
@@ -1410,6 +1417,7 @@ Notes are activities attached to deals (or contacts/companies). Use HubSpot **so
                     count=count,
                     status="syncing",
                     step="contacts",
+                    integration_id=self.current_integration_id,
                 )
                 print(f"[HubSpot] Contacts: {count}/{len(rows)}")
         print(f"[HubSpot] Committed {len(rows)} contacts")
@@ -1630,6 +1638,7 @@ Notes are activities attached to deals (or contacts/companies). Use HubSpot **so
                             count=count,
                             status="syncing",
                             step="activities",
+                            integration_id=self.current_integration_id,
                         )
                         print(f"[HubSpot] Activities ({engagement_type}): {count}/{len(rows)}")
                 total_count += len(rows)
@@ -1743,6 +1752,7 @@ Notes are activities attached to deals (or contacts/companies). Use HubSpot **so
             count=0,
             status="syncing",
             step="fetching goals",
+            integration_id=self.current_integration_id,
         )
 
         # Discover the correct owner/assignee property for goal_targets
@@ -1868,6 +1878,7 @@ Notes are activities attached to deals (or contacts/companies). Use HubSpot **so
                     count=count,
                     status="syncing",
                     step="goals",
+                    integration_id=self.current_integration_id,
                 )
                 print(f"[HubSpot] Goals: {count}/{len(rows)}")
         print(f"[HubSpot] Committed {len(rows)} goals")

@@ -661,7 +661,7 @@ Call via `run_on_connector(connector='google_drive', action='edit_file', params=
         from connectors.google_userinfo import fetch_google_account_metadata
 
         token, _ = await self.get_oauth_token()
-        return await fetch_google_account_metadata(token)
+        return await fetch_google_account_metadata(token, sources=("drive", "userinfo"))
 
     def _get_headers(self) -> dict[str, str]:
         """Build request headers with OAuth token."""

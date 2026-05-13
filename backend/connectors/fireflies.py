@@ -231,8 +231,9 @@ class FirefliesConnector(BaseConnector):
             provider=self.source_system,
             count=0,
             status="syncing",
+            integration_id=self.current_integration_id,
         )
-        
+
         transcripts: list[dict[str, Any]] = await self.get_transcripts(limit=50)
         logger.info("Fetched %d transcripts for org %s", len(transcripts), self.organization_id)
 
@@ -314,6 +315,7 @@ class FirefliesConnector(BaseConnector):
                         provider=self.source_system,
                         count=count,
                         status="syncing",
+                        integration_id=self.current_integration_id,
                     )
 
                     logger.debug(
@@ -444,6 +446,7 @@ class FirefliesConnector(BaseConnector):
                 provider=self.source_system,
                 count=0,
                 status="failed",
+                integration_id=self.current_integration_id,
             )
             raise
 
@@ -452,6 +455,7 @@ class FirefliesConnector(BaseConnector):
             provider=self.source_system,
             count=activities_count,
             status="completed",
+            integration_id=self.current_integration_id,
         )
 
         return {

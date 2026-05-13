@@ -916,12 +916,20 @@ async def trigger_sync(
         default=None,
         description="ISO8601 UTC start time for manual resync (overrides last_sync_at for this run)",
     ),
+    integration_id: str | None = Query(
+        default=None,
+        description=(
+            "Specific integration row UUID to sync. When omitted, syncs every "
+            "active row of this provider for the org (multi-account fan-out)."
+        ),
+    ),
 ) -> SyncTriggerResponse:
     """Trigger a sync for a specific integration.
 
     Per-user integrations (Gmail, Calendar, etc.) may have multiple rows per
-    provider.  We sync each one individually so every connected user gets
-    updated.
+    provider.  When ``integration_id`` is supplied we sync only that row;
+    otherwise we sync each active row for this provider in the org (legacy
+    "Sync all of provider" behavior).
 
     Optional ``since`` (ISO8601) temporarily overrides the incremental window
     for this run only (e.g. resync last 7 days).
@@ -931,6 +939,13 @@ async def trigger_sync(
         customer_uuid = UUID(organization_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid customer ID")
+
+    integration_uuid: UUID | None = None
+    if integration_id is not None and integration_id.strip():
+        try:
+            integration_uuid = UUID(integration_id.strip())
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid integration_id")
 
     connector_cls = CONNECTORS.get(provider)
     if not connector_cls:
@@ -944,31 +959,34 @@ async def trigger_sync(
             detail=f"Provider {provider} does not support sync (query-only connector).",
         )
 
-    # Fetch *all* active integrations for this provider (may be per-user) and
-    # synchronously mark them as syncing. Doing the mark in the API process
-    # before enqueuing the Celery task closes a race with the immediate
-    # ``/status`` poll the frontend issues right after this trigger: without
-    # this, the worker hasn't yet called ``mark_sync_started``, so the status
-    # endpoint sees ``last_sync_at`` from the previous run and replies
-    # "completed" — which causes the UI to clear its spinner and stop polling
-    # before the actual sync finishes.
+    # Fetch *all* matching active integrations and synchronously mark them as
+    # syncing. Doing the mark in the API process before enqueuing the Celery
+    # task closes a race with the immediate ``/status`` poll the frontend issues
+    # right after this trigger: without this, the worker hasn't yet called
+    # ``mark_sync_started``, so the status endpoint sees ``last_sync_at`` from
+    # the previous run and replies "completed" — which causes the UI to clear
+    # its spinner and stop polling before the actual sync finishes.
     from sqlalchemy.orm.attributes import flag_modified
 
     sync_started_iso: str = datetime.utcnow().isoformat()
     async with get_session(organization_id=organization_id) as session:
-        result = await session.execute(
-            select(Integration).where(
-                Integration.organization_id == customer_uuid,
-                Integration.connector == provider,
-                Integration.is_active == True,  # noqa: E712
-            )
+        stmt = select(Integration).where(
+            Integration.organization_id == customer_uuid,
+            Integration.connector == provider,
+            Integration.is_active == True,  # noqa: E712
         )
+        if integration_uuid is not None:
+            stmt = stmt.where(Integration.id == integration_uuid)
+        result = await session.execute(stmt)
         integrations: list[Integration] = list(result.scalars().all())
 
         if not integrations:
+            detail_suffix: str = (
+                f" with id={integration_uuid}" if integration_uuid is not None else ""
+            )
             raise HTTPException(
                 status_code=404,
-                detail=f"No active {provider} integration found",
+                detail=f"No active {provider} integration found{detail_suffix}",
             )
 
         sync_pairs: list[tuple[UUID | None, UUID]] = []

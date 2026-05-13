@@ -970,6 +970,7 @@ Returns normalized messages for one channel since a cutoff (does not write to th
             provider=self.source_system,
             count=0,
             status="syncing",
+            integration_id=self.current_integration_id,
         )
 
         all_channels: list[dict[str, Any]] = await self.get_channels()
@@ -1287,6 +1288,7 @@ Returns normalized messages for one channel since a cutoff (does not write to th
             provider=self.source_system,
             count=joined_count,
             status="completed",
+            integration_id=self.current_integration_id,
         )
 
         return {

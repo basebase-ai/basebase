@@ -175,6 +175,7 @@ Send an email via the user's connected Gmail account. Emails are sent from the a
             provider=self.source_system,
             count=0,
             status="syncing",
+            integration_id=self.current_integration_id,
         )
 
         while len(messages) < max_results:
@@ -209,6 +210,7 @@ Send an email via the user's connected Gmail account. Emails are sent from the a
                                 provider=self.source_system,
                                 count=len(messages),
                                 status="syncing",
+                                integration_id=self.current_integration_id,
                             )
                     except Exception as e:
                         print(f"Failed to fetch message {msg_id}: {e}")
@@ -670,6 +672,7 @@ Send an email via the user's connected Gmail account. Emails are sent from the a
             provider=self.source_system,
             count=activities_count,
             status="completed",
+            integration_id=self.current_integration_id,
         )
 
         return {
@@ -702,7 +705,9 @@ Send an email via the user's connected Gmail account. Emails are sent from the a
         from connectors.google_userinfo import fetch_google_account_metadata
 
         token, _ = await self.get_oauth_token()
-        return await fetch_google_account_metadata(token)
+        # Gmail scope is always granted here; userinfo is a best-effort fallback
+        # in case the integration is also configured with email/profile scopes.
+        return await fetch_google_account_metadata(token, sources=("gmail", "userinfo"))
 
     async def send_email(
         self,
