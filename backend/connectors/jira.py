@@ -93,9 +93,15 @@ class JiraConnector(BaseConnector):
         user_id: Optional[str] = None,
         *,
         sync_since_override: datetime | None = None,
+        integration_id: str | None = None,
+        account_identifier: str | None = None,
     ) -> None:
         super().__init__(
-            organization_id, user_id, sync_since_override=sync_since_override
+            organization_id,
+            user_id,
+            sync_since_override=sync_since_override,
+            integration_id=integration_id,
+            account_identifier=account_identifier,
         )
         self._cloud_id: Optional[str] = None
         self._base_url: Optional[str] = None
