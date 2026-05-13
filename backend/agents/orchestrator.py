@@ -15,7 +15,8 @@ import json
 import logging
 import re
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Any, AsyncGenerator, Sequence
 from uuid import UUID, uuid4
 
@@ -279,6 +280,8 @@ async def update_tool_result(
                 logger.warning(f"[update_tool_result] No message found for conversation {conversation_id}")
                 return False
             
+            result = ChatOrchestrator._json_safe(result)
+
             # Find and update the tool_use block
             # IMPORTANT: Deep-copy blocks to avoid in-place mutation of the original
             # dicts. SQLAlchemy JSONB columns compare old vs new by value; if we mutate
@@ -307,7 +310,7 @@ async def update_tool_result(
                 return False
             
             # Save updated blocks — new list with new dicts ensures SQLAlchemy detects the change
-            message.content_blocks = new_blocks
+            message.content_blocks = ChatOrchestrator._json_safe(new_blocks)
             await session.commit()
             
             logger.info(f"[update_tool_result] SUCCESS: Updated tool {tool_id[:8]} with status={status}")
@@ -2272,7 +2275,7 @@ class ChatOrchestrator:
                         user_id=user_uuid,
                         organization_id=org_uuid,
                         role="assistant",
-                        content_blocks=blocks,
+                        content_blocks=self._json_safe(blocks),
                     )
                 )
                 await session.commit()
@@ -2534,6 +2537,7 @@ class ChatOrchestrator:
         if attachment_meta:
             blocks.extend(attachment_meta)
         blocks.append({"type": "text", "text": user_msg})
+        blocks = self._json_safe(blocks)
 
         message_id: UUID = pre_generated_message_id if pre_generated_message_id is not None else uuid4()
         async with get_session(organization_id=self.organization_id, user_id=self.user_id) as session:
@@ -2590,19 +2594,43 @@ class ChatOrchestrator:
                 )
 
     @staticmethod
-    def _strip_null_bytes(obj: Any) -> Any:
-        """Recursively strip null bytes from strings in a JSON-serialisable structure.
+    def _json_safe(obj: Any) -> Any:
+        """Recursively coerce arbitrary tool payloads into JSONB-safe values.
 
-        PostgreSQL JSONB columns cannot store \\x00; Exa and other web-search
-        providers occasionally return content containing them, which causes
-        asyncpg.UntranslatableCharacterError and silently breaks message saves.
+        Tool outputs can include database-native values such as ``Decimal`` or
+        ``UUID`` objects. asyncpg serializes JSONB parameters with ``json.dumps``,
+        which raises ``TypeError`` for those objects and prevents assistant
+        messages from being saved. This helper keeps the existing null-byte
+        protection while normalizing common non-JSON primitives before every
+        chat message JSONB write.
         """
         if isinstance(obj, str):
             return obj.replace("\x00", "")
+        if isinstance(obj, Decimal):
+            if obj.is_finite():
+                integral = obj.to_integral_value()
+                if obj == integral:
+                    return int(integral)
+                return float(obj)
+            return str(obj)
+        if isinstance(obj, datetime):
+            if obj.tzinfo is not None:
+                return obj.isoformat()
+            return f"{obj.isoformat()}Z"
+        if isinstance(obj, date):
+            return obj.isoformat()
+        if isinstance(obj, UUID):
+            return str(obj)
+        if isinstance(obj, bytes):
+            return obj.decode("utf-8", errors="replace").replace("\x00", "")
         if isinstance(obj, list):
-            return [ChatOrchestrator._strip_null_bytes(item) for item in obj]
+            return [ChatOrchestrator._json_safe(item) for item in obj]
+        if isinstance(obj, tuple):
+            return [ChatOrchestrator._json_safe(item) for item in obj]
+        if isinstance(obj, set):
+            return [ChatOrchestrator._json_safe(item) for item in sorted(obj, key=str)]
         if isinstance(obj, dict):
-            return {k: ChatOrchestrator._strip_null_bytes(v) for k, v in obj.items()}
+            return {str(k): ChatOrchestrator._json_safe(v) for k, v in obj.items()}
         return obj
 
     async def _run_post_completion(self) -> None:
@@ -2622,7 +2650,7 @@ class ChatOrchestrator:
 
     async def _save_assistant_message(self, assistant_blocks: list[dict[str, Any]]) -> None:
         """Save or update assistant message in database."""
-        assistant_blocks = self._strip_null_bytes(assistant_blocks)
+        assistant_blocks = self._json_safe(assistant_blocks)
 
         conv_uuid: UUID | None = UUID(self.conversation_id) if self.conversation_id else None
         user_uuid: UUID | None = UUID(self.user_id) if self.user_id else None
