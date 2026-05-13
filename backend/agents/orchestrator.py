@@ -1806,16 +1806,16 @@ class ChatOrchestrator:
                     await report_anthropic_call_success(source="agents.orchestrator._stream_with_tools")
                     break
                     
-                except DeepSeekImageUnsupportedError:
+                except DeepSeekImageUnsupportedError as exc:
                     # This is a local capability guard, not a provider outage.
                     # Stream a normal assistant response so users see a helpful,
                     # persisted message instead of a raw task failure.
                     logger.info(
-                        "[Orchestrator] Friendly DeepSeek image rejection conversation_id=%s model=%s",
+                        "[Orchestrator] Friendly image rejection conversation_id=%s model=%s",
                         self.conversation_id,
                         model_name,
                     )
-                    friendly_message = DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE
+                    friendly_message = str(exc) or DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE
                     current_text = friendly_message
                     yield friendly_message
                     final_message_received = True

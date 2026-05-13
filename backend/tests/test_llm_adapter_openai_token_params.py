@@ -5,7 +5,14 @@ import httpx
 import pytest
 from openai import APIStatusError
 
-from services.llm_adapter import LLMConfig, OpenAIAdapter, PROVIDER_BASE_URLS, get_adapter
+from services.llm_adapter import (
+    LLMConfig,
+    MINIMAX_IMAGE_UNSUPPORTED_MESSAGE,
+    AnthropicAdapter,
+    OpenAIAdapter,
+    PROVIDER_BASE_URLS,
+    get_adapter,
+)
 
 
 class _EmptyAsyncIterator:
@@ -499,6 +506,37 @@ def test_deepseek_v4_vision_model_allows_image_messages():
         "type": "image_url",
         "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
     }
+
+
+def test_minimax_model_rejects_image_messages_before_formatting():
+    adapter = AnthropicAdapter(api_key="test-key", supports_document_blocks=False)
+
+    with pytest.raises(ValueError, match="MiniMax"):
+        adapter._guard_model_image_support(
+            model="MiniMax-M2.7",
+            messages=_image_message(),
+        )
+
+
+def test_minimax_provider_prefix_rejects_image_messages_before_formatting():
+    adapter = AnthropicAdapter(api_key="test-key", supports_document_blocks=False)
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter._guard_model_image_support(
+            model="minimax/MiniMax-M2.7-highspeed",
+            messages=_image_message(),
+        )
+
+    assert str(exc_info.value) == MINIMAX_IMAGE_UNSUPPORTED_MESSAGE
+
+
+def test_anthropic_model_allows_image_messages():
+    adapter = AnthropicAdapter(api_key="test-key")
+
+    adapter._guard_model_image_support(
+        model="claude-opus-4-6",
+        messages=_image_message(),
+    )
 
 
 @pytest.mark.asyncio
