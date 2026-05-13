@@ -28,6 +28,8 @@ from agents.tools import execute_tool, get_tools, get_tool_defs_for_context
 from config import settings
 from services.llm_adapter import (
     AnthropicAdapter,
+    DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE,
+    DeepSeekImageUnsupportedError,
     LLMConfig,
     OpenAIAdapter,
     StreamEvent,
@@ -1804,6 +1806,21 @@ class ChatOrchestrator:
                     await report_anthropic_call_success(source="agents.orchestrator._stream_with_tools")
                     break
                     
+                except DeepSeekImageUnsupportedError:
+                    # This is a local capability guard, not a provider outage.
+                    # Stream a normal assistant response so users see a helpful,
+                    # persisted message instead of a raw task failure.
+                    logger.info(
+                        "[Orchestrator] Friendly DeepSeek image rejection conversation_id=%s model=%s",
+                        self.conversation_id,
+                        model_name,
+                    )
+                    friendly_message = DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE
+                    current_text = friendly_message
+                    yield friendly_message
+                    final_message_received = True
+                    break
+
                 except (AnthropicAPIStatusError, OpenAIAPIStatusError) as e:
                     await report_anthropic_call_failure(
                         exc=e,
