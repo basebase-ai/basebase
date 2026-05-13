@@ -24,6 +24,7 @@ from models.database import get_admin_session, get_session
 from models.user import User
 from services.app_query_runner import AppQueryResponse as QueryResponse, run_named_app_query
 from services.public_previews import build_preview_html, decode_data_url_image, render_card_png
+from utils.text_encoding import decode_escaped_unicode_text
 
 router = APIRouter()
 share_router = APIRouter()
@@ -99,7 +100,7 @@ async def get_public_app(app_id: str) -> dict[str, Any]:
 
     return {
         "id": str(app.id),
-        "title": app.title,
+        "title": decode_escaped_unicode_text(app.title),
         "description": app.description,
         "frontend_code": app.frontend_code,
         "frontend_code_compiled": app.frontend_code_compiled,
@@ -251,7 +252,7 @@ def _public_preview_description(
     if conversation and conversation.title:
         return f"{conversation.title} — {owner_label}"
     if app and app.title:
-        return f"{app.title} — {owner_label}"
+        return f"{decode_escaped_unicode_text(app.title)} — {owner_label}"
     if artifact:
         return f"Document — {owner_label}"
     return f"Application — {owner_label}"
@@ -260,7 +261,7 @@ def _public_preview_description(
 def _public_preview_title(*, app: App | None = None, artifact: Artifact | None = None) -> str:
     """Build a specific page title so social previews never look generic."""
     if app and app.title:
-        return f"{app.title} · Basebase"
+        return f"{decode_escaped_unicode_text(app.title)} · Basebase"
     if artifact and artifact.title:
         return f"{artifact.title} · Basebase"
     if app:
@@ -391,7 +392,7 @@ async def get_public_app_share_snapshot(app_id: str) -> Response:
     logger.info("[public_preview] app screenshot missing; serving generated card app_id=%s", app_id)
     image_bytes = render_card_png(
         heading="Basebase App",
-        title=app.title or "Untitled App",
+        title=decode_escaped_unicode_text(app.title) or "Untitled App",
         description=app.description or "Interactive app shared from Basebase.",
         footer=f"App ID: {app_id}",
     )

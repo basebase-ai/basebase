@@ -37,10 +37,16 @@ from services.app_query_runner import (
 )
 from services.org_admin import user_is_org_admin
 from services.workflow_pause import get_workflow_execution_pause_until
+from utils.text_encoding import decode_escaped_unicode_text
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _display_app_title(title: str | None) -> str | None:
+    return decode_escaped_unicode_text(title)
+
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -442,7 +448,7 @@ async def list_apps(
             items.append(
                 AppListItem(
                     id=str(a.id),
-                    title=a.title,
+                    title=_display_app_title(a.title),
                     description=a.description,
                     created_at=f"{a.created_at.isoformat()}Z" if a.created_at else None,
                     creator_name=creator.name if creator else None,
@@ -566,7 +572,7 @@ async def get_home_app(
         return {
             "app": {
                 "id": str(app.id),
-                "title": app.title,
+                "title": _display_app_title(app.title),
                 "description": app.description,
                 "frontendCode": app.frontend_code,
                 "frontendCodeCompiled": app.frontend_code_compiled,
@@ -643,7 +649,7 @@ async def list_widgets(
         widgets = [
             {
                 "id": str(a.id),
-                "title": a.title,
+                "title": _display_app_title(a.title),
                 "widget_config": _strip_screenshot(a.widget_config),
             }
             for a in apps
@@ -824,7 +830,7 @@ async def get_app(
 
         return {
             "id": str(app.id),
-            "title": app.title,
+            "title": _display_app_title(app.title),
             "description": app.description,
             "frontend_code": app.frontend_code,
             "frontend_code_compiled": app.frontend_code_compiled,
@@ -921,7 +927,7 @@ async def get_app_embed_data(
 
         return {
             "id": str(app.id),
-            "title": app.title,
+            "title": _display_app_title(app.title),
             "frontend_code": app.frontend_code,
             "frontend_code_compiled": app.frontend_code_compiled,
         }
