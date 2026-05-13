@@ -41,12 +41,47 @@ DEEPSEEK_MODEL_PREFIXES: tuple[str, ...] = (
     "deepseek-chat",
     "deepseek-reasoner",
 )
+DEEPSEEK_V4_VISION_MODEL_PREFIX: str = "deepseek-v4-vision"
+DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE: str = (
+    "DeepSeek v4 does not accept image attachments. Please switch to "
+    "DeepSeek-V4-Vision or another vision-capable model, or resend your message without images."
+)
+
+
+def _normalized_model_name(model: str) -> str:
+    """Normalize provider-prefixed model names for local capability checks."""
+    return model.strip().lower().split("/")[-1]
 
 
 def is_deepseek_model(model: str) -> bool:
     """Return whether a model name targets DeepSeek's OpenAI-compatible API."""
-    normalized_model: str = model.strip().lower().split("/")[-1]
-    return normalized_model.startswith(DEEPSEEK_MODEL_PREFIXES)
+    return _normalized_model_name(model).startswith(DEEPSEEK_MODEL_PREFIXES)
+
+
+def is_deepseek_v4_vision_model(model: str) -> bool:
+    """Return whether a DeepSeek v4 model explicitly supports image inputs."""
+    return _normalized_model_name(model).startswith(DEEPSEEK_V4_VISION_MODEL_PREFIX)
+
+
+def deepseek_v4_rejects_images(model: str) -> bool:
+    """Return whether a DeepSeek v4 model is text-only for image inputs."""
+    normalized_model: str = _normalized_model_name(model)
+    return normalized_model.startswith("deepseek-v4") and not is_deepseek_v4_vision_model(model)
+
+
+def messages_contain_images(messages: list[dict[str, Any]]) -> bool:
+    """Detect image content blocks before dispatching to a provider API."""
+    for msg in messages:
+        content: Any = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_type: str = str(block.get("type", "")).lower()
+            if block_type in {"image", "image_url"}:
+                return True
+    return False
 
 
 def _get_attr_or_item(value: Any, name: str, default: Any = None) -> Any:
@@ -370,6 +405,19 @@ class AnthropicAdapter:
 
     # -- formatting helpers -------------------------------------------------
 
+    def _guard_model_image_support(
+        self, *, model: str, messages: list[dict[str, Any]]
+    ) -> None:
+        """Fail locally before sending images to text-only model variants."""
+        if not deepseek_v4_rejects_images(model) or not messages_contain_images(messages):
+            return
+
+        logger.info(
+            "Rejected image-bearing request for text-only DeepSeek v4 model",
+            extra={"model": model},
+        )
+        raise ValueError(DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE)
+
     def format_tools(self, tools: list[ToolDef]) -> list[dict[str, Any]]:
         return [
             {"name": t.name, "description": t.description, "input_schema": t.input_schema}
@@ -522,6 +570,7 @@ class OpenAIAdapter:
         thinking: bool = False,
         max_tokens: int = 32768,
     ) -> AsyncIterator[StreamEvent]:
+        self._guard_model_image_support(model=model, messages=messages)
         api_messages: list[dict[str, Any]] = [
             {"role": "system", "content": system}
         ] + self.format_messages_for_api(messages)
@@ -667,6 +716,7 @@ class OpenAIAdapter:
         messages: list[dict[str, Any]],
         max_tokens: int = 1024,
     ) -> CompletedMessage:
+        self._guard_model_image_support(model=model, messages=messages)
         api_messages: list[dict[str, Any]] = [
             {"role": "system", "content": system}
         ] + self.format_messages_for_api(messages)
@@ -710,6 +760,19 @@ class OpenAIAdapter:
         )
 
     # -- formatting helpers -------------------------------------------------
+
+    def _guard_model_image_support(
+        self, *, model: str, messages: list[dict[str, Any]]
+    ) -> None:
+        """Fail locally before sending images to text-only model variants."""
+        if not deepseek_v4_rejects_images(model) or not messages_contain_images(messages):
+            return
+
+        logger.info(
+            "Rejected image-bearing request for text-only DeepSeek v4 model",
+            extra={"model": model},
+        )
+        raise ValueError(DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE)
 
     def format_tools(self, tools: list[ToolDef]) -> list[dict[str, Any]]:
         return [
