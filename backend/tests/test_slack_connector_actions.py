@@ -573,7 +573,13 @@ def test_execute_action_send_message_accepts_legacy_message_param(monkeypatch) -
     connector = SlackConnector(organization_id="00000000-0000-0000-0000-000000000001")
     captured: dict[str, str] = {}
 
-    async def _fake_post_message(channel: str, text: str, thread_ts: str | None = None):
+    async def _fake_post_message(
+        channel: str,
+        text: str,
+        thread_ts: str | None = None,
+        blocks: object | None = None,
+        account: str | None = None,
+    ):
         captured["channel"] = channel
         captured["text"] = text
         captured["thread_ts"] = thread_ts or ""
@@ -626,7 +632,13 @@ def test_send_direct_message_falls_back_to_user_channel_on_missing_scope(monkeyp
 
     captured: dict[str, str] = {}
 
-    async def _fake_post_message(channel: str, text: str, thread_ts: str | None = None):
+    async def _fake_post_message(
+        channel: str,
+        text: str,
+        thread_ts: str | None = None,
+        blocks: object | None = None,
+        account: str | None = None,
+    ):
         captured["channel"] = channel
         captured["text"] = text
         captured["thread_ts"] = thread_ts or ""

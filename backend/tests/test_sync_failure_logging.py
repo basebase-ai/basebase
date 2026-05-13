@@ -13,6 +13,8 @@ class FailingConnector:
         user_id: Optional[str] = None,
         *,
         sync_since_override: datetime | None = None,
+        integration_id: str | None = None,
+        **_: Any,
     ) -> None:
         self.organization_id = organization_id
         self.user_id = user_id
@@ -99,6 +101,8 @@ class EmptyTimeoutConnector:
         user_id: Optional[str] = None,
         *,
         sync_since_override: datetime | None = None,
+        integration_id: str | None = None,
+        **_: Any,
     ) -> None:
         self.organization_id = organization_id
         self.user_id = user_id
