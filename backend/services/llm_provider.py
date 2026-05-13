@@ -321,6 +321,7 @@ def get_model_max_tokens_map(default_max_tokens: int = 200_000) -> dict[str, int
         "qwen3.6-plus": 1_000_000,
         "deepseek-v4-flash": DEEPSEEK_CONTEXT_WINDOW_TOKENS,
         "deepseek-v4-pro": DEEPSEEK_CONTEXT_WINDOW_TOKENS,
+        "deepseek-v4-vision": DEEPSEEK_CONTEXT_WINDOW_TOKENS,
         "deepseek-chat": DEEPSEEK_CONTEXT_WINDOW_TOKENS,
         "deepseek-reasoner": DEEPSEEK_CONTEXT_WINDOW_TOKENS,
     }
@@ -336,6 +337,7 @@ def get_model_output_token_limit(model: str, default_max_tokens: int = 32_768) -
     explicit_output_limits: dict[str, int] = {
         "deepseek-v4-flash": DEEPSEEK_MAX_OUTPUT_TOKENS,
         "deepseek-v4-pro": DEEPSEEK_MAX_OUTPUT_TOKENS,
+        "deepseek-v4-vision": DEEPSEEK_MAX_OUTPUT_TOKENS,
         "deepseek-chat": DEEPSEEK_MAX_OUTPUT_TOKENS,
         "deepseek-reasoner": DEEPSEEK_MAX_OUTPUT_TOKENS,
     }

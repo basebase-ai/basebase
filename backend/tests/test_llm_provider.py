@@ -145,7 +145,7 @@ def test_get_model_max_tokens_map_uses_explicit_windows_and_defaults(monkeypatch
     monkeypatch.setattr(
         llm_provider.settings,
         "ALL_MODEL_STRINGS",
-        "claude-opus-4-6:anthropic,gpt-5.5:openai,qwen3.6-plus:alibaba,deepseek-v4-flash:deepseek,deepseek-v4-pro:deepseek,deepseek-chat:deepseek,deepseek-reasoner:deepseek,random-model:openai",
+        "claude-opus-4-6:anthropic,gpt-5.5:openai,qwen3.6-plus:alibaba,deepseek-v4-flash:deepseek,deepseek-v4-pro:deepseek,deepseek-v4-vision:deepseek,deepseek-chat:deepseek,deepseek-reasoner:deepseek,random-model:openai",
     )
 
     max_tokens_map = llm_provider.get_model_max_tokens_map(default_max_tokens=200_000)
@@ -155,6 +155,7 @@ def test_get_model_max_tokens_map_uses_explicit_windows_and_defaults(monkeypatch
     assert max_tokens_map["qwen3.6-plus"] == 1_000_000
     assert max_tokens_map["deepseek-v4-flash"] == 1_000_000
     assert max_tokens_map["deepseek-v4-pro"] == 1_000_000
+    assert max_tokens_map["deepseek-v4-vision"] == 1_000_000
     assert max_tokens_map["deepseek-chat"] == 1_000_000
     assert max_tokens_map["deepseek-reasoner"] == 1_000_000
     assert max_tokens_map["random-model"] == 200_000
@@ -163,6 +164,7 @@ def test_get_model_max_tokens_map_uses_explicit_windows_and_defaults(monkeypatch
 def test_deepseek_output_token_limit_matches_provider_max_output() -> None:
     assert get_model_output_token_limit("deepseek-v4-pro") == 393_216
     assert get_model_output_token_limit("deepseek-v4-flash") == 393_216
+    assert get_model_output_token_limit("deepseek-v4-vision") == 393_216
     assert get_model_output_token_limit("deepseek-chat") == 393_216
     assert get_model_output_token_limit("deepseek-reasoner") == 393_216
     assert get_model_output_token_limit("gpt-5.5") == 32_768

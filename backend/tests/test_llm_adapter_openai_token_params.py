@@ -456,3 +456,94 @@ async def test_non_deepseek_stream_ignores_reasoning_content_delta():
         ("text_stop", None),
     ]
     assert "extra_body" not in create_mock.await_args.kwargs
+
+
+def _image_message():
+    return [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "What is in this image?"},
+                {
+                    "type": "image",
+                    "source": {
+                        "media_type": "image/png",
+                        "data": "iVBORw0KGgo=",
+                    },
+                },
+            ],
+        }
+    ]
+
+
+def test_deepseek_v4_text_model_rejects_image_messages_before_formatting():
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    with pytest.raises(ValueError, match="DeepSeek v4 does not accept image attachments"):
+        adapter._guard_model_image_support(
+            model="deepseek-v4-pro",
+            messages=_image_message(),
+        )
+
+
+def test_deepseek_v4_vision_model_allows_image_messages():
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    adapter._guard_model_image_support(
+        model="deepseek-v4-vision",
+        messages=_image_message(),
+    )
+
+    formatted = adapter.format_messages_for_api(_image_message())
+    assert formatted[0]["content"][1] == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
+    }
+
+
+@pytest.mark.asyncio
+async def test_deepseek_v4_stream_rejects_images_without_api_call():
+    adapter = OpenAIAdapter(api_key="test-key")
+    create_mock = AsyncMock(return_value=_EmptyAsyncIterator())
+    adapter._client = SimpleNamespace(  # type: ignore[assignment]
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock))
+    )
+
+    with pytest.raises(ValueError, match="DeepSeek-V4-Vision"):
+        _ = [
+            event
+            async for event in adapter.stream(
+                model="deepseek-v4-pro",
+                system="sys",
+                messages=_image_message(),
+                max_tokens=42,
+            )
+        ]
+
+    create_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_deepseek_v4_vision_stream_sends_images_to_api():
+    adapter = OpenAIAdapter(api_key="test-key")
+    create_mock = AsyncMock(return_value=_EmptyAsyncIterator())
+    adapter._client = SimpleNamespace(  # type: ignore[assignment]
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock))
+    )
+
+    events = [
+        event
+        async for event in adapter.stream(
+            model="deepseek-v4-vision",
+            system="sys",
+            messages=_image_message(),
+            max_tokens=42,
+        )
+    ]
+
+    assert events == []
+    assert create_mock.await_count == 1
+    assert create_mock.await_args.kwargs["messages"][1]["content"][1] == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
+    }
