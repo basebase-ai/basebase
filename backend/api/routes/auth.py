@@ -4664,22 +4664,31 @@ async def disconnect_integration(
         all_to_delete: list[Integration] = [integration] + extra_integrations
         print(f"Disconnect: Found {len(all_to_delete)} integration(s) to delete: {[str(i.id) for i in all_to_delete]}")
 
-        # Delete from Nango for every integration
-        nango = get_nango_client()
-        nango_integration_id = get_nango_integration_id(provider)
-        for integ in all_to_delete:
-            if integ.nango_connection_id:
-                try:
-                    print(f"Disconnect: Deleting from Nango: integration={nango_integration_id}, conn_id={integ.nango_connection_id}")
-                    await nango.delete_connection(
-                        nango_integration_id,
-                        integ.nango_connection_id,
-                    )
-                    print("Disconnect: Nango deletion successful")
-                except Exception as e:
-                    print(f"Disconnect: Failed to delete Nango connection {integ.nango_connection_id}: {e}")
-            else:
-                print(f"Disconnect: No nango_connection_id for {integ.id}, skipping Nango deletion")
+        # Delete from Nango for OAuth integrations only. Built-ins (airtop, mcp, …) use
+        # nango_connection_id="builtin" and are not registered in NANGO_INTEGRATION_IDS.
+        if provider not in BUILTIN_CONNECTORS:
+            nango = get_nango_client()
+            try:
+                nango_integration_id: str = get_nango_integration_id(provider)
+            except ValueError:
+                nango_integration_id = ""
+            if nango_integration_id:
+                for integ in all_to_delete:
+                    ncid: str = (integ.nango_connection_id or "").strip()
+                    if not ncid or ncid == "builtin":
+                        print(f"Disconnect: Skipping Nango for integration {integ.id} (no OAuth connection id)")
+                        continue
+                    try:
+                        print(
+                            f"Disconnect: Deleting from Nango: integration={nango_integration_id}, conn_id={ncid}"
+                        )
+                        await nango.delete_connection(
+                            nango_integration_id,
+                            ncid,
+                        )
+                        print("Disconnect: Nango deletion successful")
+                    except Exception as e:
+                        print(f"Disconnect: Failed to delete Nango connection {ncid}: {e}")
 
         # Always delete rows that reference this integration so we can delete the integration row.
         # 1) Tracker tables (Linear/Jira/Asana): tracker_teams.integration_id -> integrations.id

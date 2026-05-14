@@ -4,7 +4,7 @@ from datetime import date, datetime
 import logging
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -166,6 +166,9 @@ class Settings(BaseSettings):
     # E2B (sandboxed code execution for execute_command tool)
     E2B_API_KEY: Optional[str] = None
 
+    # Airtop cloud browser — optional org-wide API key (overrides per-integration extra_data.api_key)
+    AIRTOP_KEY: Optional[str] = None
+
     # Stripe (subscription billing)
     STRIPE_SECRET_KEY: Optional[str] = None
     STRIPE_WEBHOOK_SECRET: Optional[str] = None
@@ -222,6 +225,23 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def resolve_airtop_api_key(extra_data: dict[str, Any] | None) -> str:
+    """Return the Airtop API key to use for SDK calls.
+
+    Prefer ``AIRTOP_KEY`` from the environment when set, so deployments can use a single
+    server secret; otherwise use ``extra_data["api_key"]`` from the integration row.
+    """
+    env_key: str = (settings.AIRTOP_KEY or "").strip()
+    if env_key:
+        return env_key
+    row_key: str = str((extra_data or {}).get("api_key") or "").strip()
+    if row_key:
+        return row_key
+    raise ValueError(
+        "Airtop API key is not configured: set AIRTOP_KEY in the environment (or legacy api_key on the integration row)."
+    )
 
 
 def get_redis_connection_kwargs(
