@@ -63,20 +63,29 @@ USAGE_GUIDE: str = """# Apps Connector Usage Guide
 ## Available packages in frontend_code
 - react, react-dom (hooks: useState, useEffect, useCallback, useMemo, useRef)
 - react-plotly.js (import Plot from "react-plotly.js")
-- @revtops/app-sdk (useAppQuery, useDateRange, Spinner, ErrorBanner)
+- @revtops/app-sdk (useAppQuery, useAppSQL, useAppConnector, useDateRange, Spinner, ErrorBanner)
 
 ## CRITICAL — Data access
-The App component receives NO props. Data is NOT passed in. You MUST call `useAppQuery(queryName, params)` inside the component to fetch data from your server-side queries. The returned `data` is an array of rows (objects). Example: `const { data, loading, error } = useAppQuery('my_query', {}); const firstRow = data?.[0];`
+The App component receives NO props. Data is NOT passed in. Prefer `useAppQuery(queryName, params)` with named server-side queries in `queries` (SQL never ships to the browser). Alternatively use `useAppSQL(sql, options)` for arbitrary SELECT/WITH reads or call `mutate(sql)` for INSERT/UPDATE/DELETE — same table allowlists and RLS as the chat agent. Example named query: `const { data, loading, error } = useAppQuery('my_query', {}); const firstRow = data?.[0];`
 
 ## SDK API
 - useAppQuery(queryName, params) → { data, columns, loading, error, refetch }
+- useAppSQL(sql, options) → { data, columns, loading, error, refetch, mutate }
+  - For SELECT/WITH: auto-fetches like useAppQuery unless `options.autoFetch === false`. Response rows in `data`, column names in `columns`.
+  - For writes: call `await mutate('UPDATE deals SET ...')` or any whitelisted DML (same rules as agent `run_sql_write`). CRM tables (contacts, deals, accounts) still go through pending-review flow.
+  - Not available in public/embed-without-login mode.
+- useAppConnector() → { execute, loading, error }
+  - `await execute({ type: 'query', connector: 'web_search', query: '...' })` — same as agent `query_on_connector`
+  - `await execute({ type: 'write', connector: 'hubspot', operation: 'update_deal', data: { ... } })` — same as `write_on_connector`
+  - `await execute({ type: 'action', connector: 'slack', action: 'send_message', params: { ... } })` — same as `run_on_connector`
+  - Runs as the app owner's connector credentials. Not available in public mode.
 - useDateRange(period) → { start, end } (ISO date strings)
   - period: "last_7d", "last_30d", "last_90d", "last_quarter", "this_quarter", "ytd", "last_year", "this_year"
 - Spinner — loading spinner component
 - ErrorBanner({ message }) — error display component
 
 ## Rules
-- All SQL must be SELECT-only. No INSERT/UPDATE/DELETE.
+- Named `queries` entries must be SELECT-only. If you use `useAppSQL` for writes, only INSERT/UPDATE/DELETE on whitelisted tables (same as agent); no DDL.
 - Do NOT add organization_id to WHERE clauses (RLS handles it).
 - frontend_code must export a default React component.
 

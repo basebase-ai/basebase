@@ -84,6 +84,13 @@ const INTEGRATION_CONFIG_FALLBACK: Record<string, IntegrationConfigEntry> = {
   apps: { name: 'App Builder', description: 'Create and update interactive mini-apps with React + SQL', icon: 'apps', color: 'from-violet-500 to-purple-600', scope: 'organization' },
   mcp: { name: 'MCP Server', description: 'Connect any MCP-compatible server by URL', icon: 'plug', color: 'from-cyan-500 to-blue-600', scope: 'user' },
   ispot_tv: { name: 'iSpot.tv', description: 'TV ad analytics — airings, spend, impressions, and conversions', icon: 'globe', color: 'from-emerald-500 to-teal-600', scope: 'organization' },
+  airtop: {
+    name: 'Airtop',
+    description: 'Cloud browser with saved logins — run natural-language tasks on authenticated websites',
+    icon: 'globe',
+    color: 'from-cyan-500 to-blue-600',
+    scope: 'user',
+  },
 };
 
 const CALENDAR_SHARING_WARNING_PROVIDERS = new Set(['google_calendar', 'microsoft_calendar']);
@@ -413,6 +420,15 @@ export function DataSources(): JSX.Element {
   const [ispotClientSecret, setIspotClientSecret] = useState('');
   const [ispotConnecting, setIspotConnecting] = useState(false);
   const [ispotError, setIspotError] = useState<string | null>(null);
+  const [showAirtopSiteForm, setShowAirtopSiteForm] = useState(false);
+  const [airtopSiteStep, setAirtopSiteStep] = useState<'credentials' | 'live'>('credentials');
+  const [airtopSiteLabel, setAirtopSiteLabel] = useState('');
+  const [airtopSiteUrl, setAirtopSiteUrl] = useState('');
+  const [airtopSiteApiKey, setAirtopSiteApiKey] = useState('');
+  const [airtopSiteLoading, setAirtopSiteLoading] = useState(false);
+  const [airtopSiteError, setAirtopSiteError] = useState<string | null>(null);
+  const [airtopPendingIntegrationId, setAirtopPendingIntegrationId] = useState<string | null>(null);
+  const [airtopLiveViewUrl, setAirtopLiveViewUrl] = useState<string | null>(null);
 
   // Connectors from API (source of truth for Connect modal and display)
   const [connectorsFromApi, setConnectorsFromApi] = useState<ConnectorMetaFromApi[]>([]);
@@ -1035,9 +1051,27 @@ export function DataSources(): JSX.Element {
           setIspotClientSecret('');
           setIspotError(null);
           setShowIspotForm(true);
+        } else if (provider === 'airtop') {
+          setAirtopSiteLabel('');
+          setAirtopSiteUrl('');
+          setAirtopSiteStep('credentials');
+          setAirtopPendingIntegrationId(null);
+          setAirtopLiveViewUrl(null);
+          setAirtopSiteError(null);
+          setAirtopSiteApiKey('');
+          void (async () => {
+            const { data, error } = await apiRequest<{ api_key: string | null }>(
+              '/connectors/airtop/suggest-api-key',
+              { method: 'GET' },
+            );
+            if (!error && data?.api_key) {
+              setAirtopSiteApiKey(data.api_key);
+            }
+          })();
+          setShowAirtopSiteForm(true);
         } else {
           // Unknown custom_credentials provider — the classifier should only
-          // route mcp/ispot_tv here. Surface loudly instead of silently no-op'ing.
+          // route known providers here. Surface loudly instead of silently no-op'ing.
           console.error(`[DataSources] No custom_credentials form registered for provider "${provider}"`);
           throw new Error(`Connector "${provider}" is mis-configured: no credential form is registered.`);
         }
@@ -1205,6 +1239,90 @@ export function DataSources(): JSX.Element {
       setIspotConnecting(false);
     }
   }, [connectBuiltinConnector, fetchIntegrations, ispotClientId, ispotClientSecret, ispotConnecting, organizationId, userId]);
+
+  const handleAirtopSiteStart = useCallback(async (): Promise<void> => {
+    if (!organizationId || !userId || airtopSiteLoading) return;
+    const label = airtopSiteLabel.trim();
+    const url = airtopSiteUrl.trim();
+    const apiKey = airtopSiteApiKey.trim();
+    if (!label) {
+      setAirtopSiteError('Site label is required');
+      return;
+    }
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      setAirtopSiteError('URL must start with http:// or https://');
+      return;
+    }
+    if (!apiKey) {
+      setAirtopSiteError('Airtop API key is required');
+      return;
+    }
+    setAirtopSiteLoading(true);
+    setAirtopSiteError(null);
+    try {
+      const { data, error } = await apiRequest<{
+        integration_id: string;
+        live_view_url: string;
+      }>('/connectors/airtop/connect', {
+        method: 'POST',
+        body: JSON.stringify({ label, url, api_key: apiKey }),
+      });
+      if (error || !data?.integration_id || !data?.live_view_url) {
+        throw new Error(error ?? 'Failed to start Airtop login');
+      }
+      setAirtopPendingIntegrationId(data.integration_id);
+      setAirtopLiveViewUrl(data.live_view_url);
+      setAirtopSiteStep('live');
+    } catch (e) {
+      setAirtopSiteError(e instanceof Error ? e.message : 'Failed to start Airtop login');
+    } finally {
+      setAirtopSiteLoading(false);
+    }
+  }, [airtopSiteApiKey, airtopSiteLabel, airtopSiteLoading, airtopSiteUrl, organizationId, userId]);
+
+  const handleAirtopSiteFinish = useCallback(async (): Promise<void> => {
+    if (!airtopPendingIntegrationId || airtopSiteLoading) return;
+    setAirtopSiteLoading(true);
+    setAirtopSiteError(null);
+    try {
+      const { error } = await apiRequest<{ status: string }>(
+        `/connectors/airtop/${airtopPendingIntegrationId}/finish`,
+        { method: 'POST' },
+      );
+      if (error) throw new Error(error);
+      setShowAirtopSiteForm(false);
+      setAirtopSiteStep('credentials');
+      setAirtopPendingIntegrationId(null);
+      setAirtopLiveViewUrl(null);
+      void fetchIntegrations();
+    } catch (e) {
+      setAirtopSiteError(e instanceof Error ? e.message : 'Failed to finish');
+    } finally {
+      setAirtopSiteLoading(false);
+    }
+  }, [airtopPendingIntegrationId, airtopSiteLoading, fetchIntegrations]);
+
+  const handleAirtopSiteCancel = useCallback(async (): Promise<void> => {
+    if (!airtopPendingIntegrationId || airtopSiteLoading) return;
+    setAirtopSiteLoading(true);
+    setAirtopSiteError(null);
+    try {
+      const { error } = await apiRequest<{ status: string }>(
+        `/connectors/airtop/${airtopPendingIntegrationId}/cancel`,
+        { method: 'POST' },
+      );
+      if (error) throw new Error(error);
+      setShowAirtopSiteForm(false);
+      setAirtopSiteStep('credentials');
+      setAirtopPendingIntegrationId(null);
+      setAirtopLiveViewUrl(null);
+      void fetchIntegrations();
+    } catch (e) {
+      setAirtopSiteError(e instanceof Error ? e.message : 'Failed to cancel');
+    } finally {
+      setAirtopSiteLoading(false);
+    }
+  }, [airtopPendingIntegrationId, airtopSiteLoading, fetchIntegrations]);
 
   const handleDisconnect = (integration: DisplayIntegration): void => {
     if (!organizationId || !userId || disconnectingIntegrationIds.has(integration.id)) return;
@@ -2786,6 +2904,199 @@ export function DataSources(): JSX.Element {
         </div>
       )}
 
+      {showAirtopSiteForm && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[6vh] pb-6 overflow-y-auto">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => {
+              if (airtopSiteLoading) return;
+              if (airtopSiteStep === 'live' && airtopPendingIntegrationId) {
+                void handleAirtopSiteCancel();
+              } else {
+                setShowAirtopSiteForm(false);
+              }
+            }}
+          />
+          <div
+            className={`relative bg-surface-900 border border-surface-700 rounded-2xl shadow-2xl w-full mx-4 overflow-hidden ${
+              airtopSiteStep === 'live' ? 'max-w-4xl' : 'max-w-md'
+            }`}
+          >
+            <div className="p-5 border-b border-surface-700/50">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="bg-gradient-to-br from-cyan-500 to-blue-600 p-2 rounded-lg text-white">
+                    <HiGlobeAlt className="w-5 h-5" />
+                  </div>
+                  <h2 className="text-lg font-semibold text-surface-100">
+                    {airtopSiteStep === 'live' ? 'Log in to your site' : 'Add Airtop site'}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (airtopSiteLoading) return;
+                    if (airtopSiteStep === 'live' && airtopPendingIntegrationId) {
+                      void handleAirtopSiteCancel();
+                    } else {
+                      setShowAirtopSiteForm(false);
+                    }
+                  }}
+                  className="text-surface-400 hover:text-surface-200 transition-colors"
+                >
+                  <HiX className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            {airtopSiteStep === 'credentials' ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void handleAirtopSiteStart();
+                }}
+                className="p-5 space-y-4"
+              >
+                <p className="text-sm text-surface-400">
+                  Each saved site is a separate connector card. Enter a label, the URL to open for login, and your Airtop API key. After you sign in in the browser preview, click the button below the preview to save the profile.
+                </p>
+                <div>
+                  <label htmlFor="airtop-site-label" className="block text-sm font-medium text-surface-300 mb-1.5">
+                    Site label <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    id="airtop-site-label"
+                    type="text"
+                    value={airtopSiteLabel}
+                    onChange={(e) => setAirtopSiteLabel(e.target.value)}
+                    placeholder="e.g. LinkedIn"
+                    required
+                    disabled={airtopSiteLoading}
+                    autoFocus
+                    className="w-full rounded-lg bg-surface-800 border border-surface-600 px-4 py-2.5 text-sm text-surface-100 placeholder:text-surface-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/30 disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="airtop-site-url" className="block text-sm font-medium text-surface-300 mb-1.5">
+                    Login URL <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    id="airtop-site-url"
+                    type="url"
+                    value={airtopSiteUrl}
+                    onChange={(e) => setAirtopSiteUrl(e.target.value)}
+                    placeholder="https://..."
+                    required
+                    disabled={airtopSiteLoading}
+                    className="w-full rounded-lg bg-surface-800 border border-surface-600 px-4 py-2.5 text-sm text-surface-100 placeholder:text-surface-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/30 disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="airtop-site-api-key" className="block text-sm font-medium text-surface-300 mb-1.5">
+                    Airtop API key <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    id="airtop-site-api-key"
+                    type="password"
+                    value={airtopSiteApiKey}
+                    onChange={(e) => setAirtopSiteApiKey(e.target.value)}
+                    placeholder="Bearer token from Airtop portal"
+                    required
+                    disabled={airtopSiteLoading}
+                    className="w-full rounded-lg bg-surface-800 border border-surface-600 px-4 py-2.5 text-sm text-surface-100 placeholder:text-surface-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/30 disabled:opacity-50"
+                  />
+                </div>
+                {airtopSiteError && (
+                  <div className="text-sm text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">
+                    {airtopSiteError}
+                  </div>
+                )}
+                <div className="flex gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowAirtopSiteForm(false)}
+                    disabled={airtopSiteLoading}
+                    className="flex-1 px-4 py-2.5 text-sm font-medium text-surface-300 bg-surface-800 hover:bg-surface-700 border border-surface-600 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={
+                      airtopSiteLoading ||
+                      !airtopSiteLabel.trim() ||
+                      !airtopSiteUrl.trim() ||
+                      !airtopSiteApiKey.trim()
+                    }
+                    className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-primary-600 hover:bg-primary-500 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {airtopSiteLoading ? (
+                      <>
+                        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Starting…
+                      </>
+                    ) : (
+                      'Continue'
+                    )}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="p-5 space-y-4">
+                <p className="text-sm text-surface-400">
+                  Complete sign-in (password, MFA, captcha) in the embedded browser. When the site shows you as logged in, save the profile.
+                </p>
+                {airtopLiveViewUrl ? (
+                  <div className="rounded-lg border border-surface-700 overflow-hidden bg-black aspect-video min-h-[320px]">
+                    <iframe
+                      title="Airtop live view"
+                      src={airtopLiveViewUrl}
+                      className="w-full h-full min-h-[320px] border-0"
+                      allow="clipboard-read; clipboard-write"
+                    />
+                  </div>
+                ) : null}
+                {airtopSiteError && (
+                  <div className="text-sm text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">
+                    {airtopSiteError}
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => void handleAirtopSiteCancel()}
+                    disabled={airtopSiteLoading}
+                    className="flex-1 min-w-[120px] px-4 py-2.5 text-sm font-medium text-surface-300 bg-surface-800 hover:bg-surface-700 border border-surface-600 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleAirtopSiteFinish()}
+                    disabled={airtopSiteLoading}
+                    className="flex-1 min-w-[120px] px-4 py-2.5 text-sm font-semibold text-white bg-primary-600 hover:bg-primary-500 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {airtopSiteLoading ? (
+                      <>
+                        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Saving…
+                      </>
+                    ) : (
+                      "I'm logged in"
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="mx-auto max-w-4xl space-y-8 px-4 py-6 md:space-y-10 md:px-8 md:py-6">
         {connectedIntegrationPool.length === 0 ? (
           <div className="rounded-lg border border-surface-800 bg-surface-900/30 px-6 py-10 text-center">
@@ -3034,6 +3345,36 @@ export function DataSources(): JSX.Element {
                       className="rounded-lg border border-surface-600 px-3 py-2 text-sm font-medium text-surface-200 hover:bg-surface-800"
                     >
                       Manage credentials
+                    </button>
+                  </div>
+                )}
+
+                {d.provider === 'airtop' && (
+                  <div className="mt-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAirtopSiteLabel('');
+                        setAirtopSiteUrl('');
+                        setAirtopSiteStep('credentials');
+                        setAirtopPendingIntegrationId(null);
+                        setAirtopLiveViewUrl(null);
+                        setAirtopSiteError(null);
+                        setAirtopSiteApiKey('');
+                        void (async () => {
+                          const { data, error } = await apiRequest<{ api_key: string | null }>(
+                            '/connectors/airtop/suggest-api-key',
+                            { method: 'GET' },
+                          );
+                          if (!error && data?.api_key) {
+                            setAirtopSiteApiKey(data.api_key);
+                          }
+                        })();
+                        setShowAirtopSiteForm(true);
+                      }}
+                      className="rounded-lg border border-surface-600 px-3 py-2 text-sm font-medium text-surface-200 hover:bg-surface-800"
+                    >
+                      Add another site
                     </button>
                   </div>
                 )}

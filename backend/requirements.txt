@@ -18,6 +18,9 @@ aioredis==2.0.1
 # HTTP Client
 httpx==0.27.0
 
+# Airtop cloud browser SDK (connector + /api/connectors/airtop/* routes)
+airtop>=0.0.40
+
 # Salesforce
 simple-salesforce==1.12.5
 

@@ -1,5 +1,6 @@
 """Data connectors package."""
 from connectors.attio import AttioConnector
+from connectors.airtop import AirtopConnector
 from connectors.apollo import ApolloConnector
 from connectors.asana import AsanaConnector
 from connectors.base import BaseConnector
@@ -16,6 +17,7 @@ from connectors.slack import SlackConnector
 from connectors.zoom import ZoomConnector
 
 __all__ = [
+    "AirtopConnector",
     "AttioConnector",
     "ApolloConnector",
     "AsanaConnector",

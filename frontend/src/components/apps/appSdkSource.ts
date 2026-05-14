@@ -190,6 +190,154 @@ export function triggerWorkflow(workflowId, triggerData, options) {
 }
 
 // ---------------------------------------------------------------------------
+// useAppSQL – arbitrary SELECT / DML (same guards as agent run_sql_* tools)
+// ---------------------------------------------------------------------------
+
+export function useAppSQL(sql, options) {
+  const trimmed = (sql || "").trim();
+  const isSelect = /^\\s*(select|with)\\b/i.test(trimmed);
+  const [data, setData] = useState(null);
+  const [columns, setColumns] = useState([]);
+  const [loading, setLoading] = useState(Boolean(isSelect && options?.autoFetch !== false && !PUBLIC_MODE));
+  const [error, setError] = useState(null);
+  const abortRef = useRef(null);
+
+  const postSql = useCallback(async (queryText) => {
+    if (PUBLIC_MODE) {
+      throw new Error("useAppSQL is not available in public mode");
+    }
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    const res = await fetch(API_BASE + "/apps/" + APP_ID + "/sql", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + APP_TOKEN,
+      },
+      body: JSON.stringify({ query: queryText }),
+      signal: controller.signal,
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (res.status === 401) {
+        try { window.parent.postMessage({ type: "app-token-expired" }, "*"); } catch (_) {}
+      }
+      throw new Error(json.detail || json.error || "SQL failed (" + res.status + ")");
+    }
+    if (json.rows !== undefined) {
+      return { kind: "select", rows: json.rows, columns: json.columns || [] };
+    }
+    return { kind: "write", result: json };
+  }, []);
+
+  const refetch = useCallback(async () => {
+    if (!trimmed || PUBLIC_MODE) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const out = await postSql(trimmed);
+      if (out.kind === "select") {
+        setData(out.rows);
+        setColumns(out.columns);
+      }
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        setError(err instanceof Error ? err : new Error(err.message || "Unknown error"));
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [trimmed, postSql]);
+
+  useEffect(() => {
+    if (!isSelect || options?.autoFetch === false || PUBLIC_MODE) {
+      if (!isSelect || PUBLIC_MODE) setLoading(false);
+      return;
+    }
+    void refetch();
+    return () => {
+      if (abortRef.current) abortRef.current.abort();
+    };
+  }, [isSelect, options?.autoFetch, refetch]);
+
+  const mutate = useCallback(
+    async (overrideQuery) => {
+      const q = (overrideQuery != null ? String(overrideQuery) : trimmed).trim();
+      if (!q) throw new Error("No SQL to execute");
+      setLoading(true);
+      setError(null);
+      try {
+        const out = await postSql(q);
+        if (out.kind === "select") {
+          setData(out.rows);
+          setColumns(out.columns);
+        }
+        return out;
+      } catch (err) {
+        const e = err instanceof Error ? err : new Error(String(err));
+        setError(e);
+        throw e;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [trimmed, postSql]
+  );
+
+  return { data, columns, loading, error, refetch, mutate };
+}
+
+// ---------------------------------------------------------------------------
+// useAppConnector – query / write / action on a connected connector
+// ---------------------------------------------------------------------------
+
+export function useAppConnector() {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const execute = useCallback(async (config) => {
+    if (PUBLIC_MODE) {
+      const e = new Error("useAppConnector is not available in public mode");
+      setError(e);
+      throw e;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(API_BASE + "/apps/" + APP_ID + "/connector", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + APP_TOKEN,
+        },
+        body: JSON.stringify(config),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 401) {
+          try { window.parent.postMessage({ type: "app-token-expired" }, "*"); } catch (_) {}
+        }
+        throw new Error(json.detail || json.error || "Connector failed (" + res.status + ")");
+      }
+      if (json.error) {
+        throw new Error(String(json.error));
+      }
+      return json;
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      setError(e);
+      throw e;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  return { execute, loading, error };
+}
+
+// ---------------------------------------------------------------------------
 // useDateRange – convert named periods to { start, end } ISO date strings
 // ---------------------------------------------------------------------------
 export function useDateRange(period) {
