@@ -115,3 +115,35 @@ def test_stream_and_post_responses_posts_deepseek_image_error_copy() -> None:
     assert failure_reason == DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE
     assert total > 0
     assert messenger.posted_messages[-1]["text"] == DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE
+
+
+class _SayNothingOrchestrator:
+    async def process_message(self, *_args, **_kwargs):
+        yield "SAY_NOTHING"
+
+
+def test_stream_and_post_responses_suppresses_say_nothing_sentinel() -> None:
+    messenger = _TestWorkspaceMessenger()
+    message = InboundMessage(
+        external_user_id="U123",
+        text="thanks",
+        message_type=MessageType.DIRECT,
+        messenger_context={"channel_id": "C123", "thread_ts": "t-1", "workspace_id": "W123"},
+        message_id="m-1",
+    )
+
+    async def _run() -> tuple[int, bool, str | None]:
+        return await messenger.stream_and_post_responses(
+            orchestrator=_SayNothingOrchestrator(),
+            message=message,
+            message_text="thanks",
+            attachment_ids=None,
+            organization_id="org-1",
+        )
+
+    total, query_failed, failure_reason = asyncio.run(_run())
+
+    assert total == 0
+    assert query_failed is False
+    assert failure_reason is None
+    assert messenger.posted_messages == []

@@ -906,6 +906,16 @@ class WorkspaceMessenger(BaseMessenger):
                 text_to_send = current_text[:break_idx].strip()
                 current_text = current_text[break_idx:]
 
+            if text_to_send == "SAY_NOTHING":
+                logger.info(
+                    "[%s] Suppressing SAY_NOTHING sentinel response channel=%s thread_id=%s reason=%s",
+                    self.meta.slug,
+                    channel_id,
+                    thread_id,
+                    reason,
+                )
+                return
+
             if not text_to_send:
                 return
 

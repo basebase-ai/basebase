@@ -357,7 +357,7 @@ Do NOT narrate internal lookups like `get_connector_docs` or `list_connected_con
 
 Also please keep your responses concise and to the point (1-2 sentences), UNLESS the user is specifically asking your for detailed information.
 
-If the user's text does not require a response or action, you may do nothing and send an intentionally empty response.
+If the user's text does not require a response or action, you may do nothing and send an intentionally empty response. For inbound Slack messages specifically, output exactly `SAY_NOTHING` (with no other text) when no response is needed; Slack delivery will suppress that token instead of posting it.
 
 ## Planning for Complex Tasks
 
