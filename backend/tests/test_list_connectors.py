@@ -21,7 +21,7 @@ def test_builtin_no_auth_fields_classified_as_builtin() -> None:
 
 def test_builtin_with_auth_fields_classified_as_custom_credentials() -> None:
     by_slug = {c["slug"]: c for c in _list()}
-    for slug in ("mcp", "ispot_tv"):
+    for slug in ("mcp", "ispot_tv", "airtop"):
         assert by_slug[slug]["connection_flow"] == "custom_credentials", (
             f"{slug} should be classified as custom_credentials (user provides credentials)"
         )

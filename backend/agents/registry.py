@@ -329,6 +329,13 @@ Check the Connected Connectors manifest for available actions and their required
                 "type": "object",
                 "description": "Action parameters — fields depend on connector and action (see Connected Connectors manifest)",
             },
+            "account": {
+                "type": "string",
+                "description": (
+                    "Which connected account or site to use when multiple exist (match account_label or "
+                    "account_identifier from Connectors). Required when several accounts are connected for that connector."
+                ),
+            },
         },
         "required": ["connector", "action", "params"],
     },

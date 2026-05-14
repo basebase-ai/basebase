@@ -3868,7 +3868,7 @@ async def connect_builtin(
     auth: AuthContext = Depends(get_current_auth),
 ) -> dict[str, Any]:
     """
-    Create an Integration row for a built-in connector (Web Search, Code Sandbox, Twilio).
+    Create an Integration row for a built-in connector (Web Search, Code Sandbox, Twilio, Airtop, etc.).
 
     These connectors use platform credentials and do not go through Nango.
     The user must explicitly "connect" them in the Connectors tab before the agent can use them.

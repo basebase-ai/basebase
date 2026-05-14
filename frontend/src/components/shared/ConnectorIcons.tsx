@@ -138,6 +138,7 @@ export const CONNECTOR_DISPLAY: Record<string, ConnectorDisplay> = {
   apps: { icon: "apps", color: "from-violet-500 to-purple-600", label: "Apps" },
   mcp: { icon: "plug", color: "from-cyan-500 to-blue-600", label: "MCP" },
   ispot_tv: { icon: "globe", color: "from-emerald-500 to-teal-600", label: "iSpot.tv" },
+  airtop: { icon: "globe", color: "from-cyan-500 to-blue-600", label: "Airtop" },
   meetings: { icon: "fireflies", color: "from-violet-500 to-violet-600", label: "Meeting Notes" },
 };
 

@@ -1259,6 +1259,67 @@ async def _resolve_conversation_owner_user_id(
         return str(owner_user_id)
 
 
+def _account_matches_integration_row(row: Integration, account: str) -> bool:
+    ap: str = account.strip().lower()
+    if not ap:
+        return False
+    if (row.account_identifier or "").strip().lower() == ap:
+        return True
+    if (row.account_label or "").strip().lower() == ap:
+        return True
+    return False
+
+
+async def _resolve_connector_action_integration_id(
+    *,
+    connector: str,
+    organization_id: str,
+    user_id: str | None,
+    account_param: str,
+) -> tuple[str | None, str | None]:
+    """When multiple integration rows exist, pick one for ACTION. Returns (integration_id, error_message)."""
+    if not user_id:
+        return None, None
+    try:
+        user_uuid: UUID = UUID(user_id)
+        org_uuid: UUID = UUID(organization_id)
+    except ValueError:
+        return None, None
+    async with get_session(organization_id=organization_id) as session:
+        result = await session.execute(
+            select(Integration)
+            .where(
+                Integration.organization_id == org_uuid,
+                Integration.connector == connector,
+                Integration.user_id == user_uuid,
+                Integration.is_active == True,  # noqa: E712
+            )
+            .order_by(Integration.updated_at.desc().nullslast())
+        )
+        rows: list[Integration] = list(result.scalars().all())
+    if not rows:
+        return None, None
+    ap: str = account_param.strip()
+    if len(rows) == 1:
+        only: Integration = rows[0]
+        if ap and not _account_matches_integration_row(only, ap):
+            return None, f"No connected account matches {ap!r} for connector {connector!r}."
+        return str(only.id), None
+    if not ap:
+        lines: list[str] = [
+            f"- {r.account_label or r.account_identifier or str(r.id)}"
+            for r in rows[:25]
+        ]
+        return None, (
+            f"Multiple {connector} sites/accounts are connected; pass `account` with the site label "
+            f"(or account id). Options:\n" + "\n".join(lines)
+        )
+    matched: list[Integration] = [r for r in rows if _account_matches_integration_row(r, ap)]
+    if len(matched) != 1:
+        return None, f"No unique match for account={ap!r} on connector {connector!r}."
+    return str(matched[0].id), None
+
+
 async def _run_on_connector(
     params: dict[str, Any],
     organization_id: str,
@@ -1283,6 +1344,16 @@ async def _run_on_connector(
         return {"error": "connector is required"}
     if not action:
         return {"error": "action is required"}
+
+    account_pick: str = str(params.get("account") or params.get("account_identifier") or "").strip()
+    integration_id_for_action, acct_err = await _resolve_connector_action_integration_id(
+        connector=connector,
+        organization_id=organization_id,
+        user_id=user_id,
+        account_param=account_pick,
+    )
+    if acct_err:
+        return {"error": acct_err}
 
     # Inject code_sandbox context requirements
     if connector == "code_sandbox" and action == "execute_command":
@@ -1311,7 +1382,13 @@ async def _run_on_connector(
     if not dp_result.allowed:
         return {"error": dp_result.deny_reason or "Connector action not allowed"}
 
-    instance, error = await _get_connector_instance(connector, organization_id, user_id, required_capability="action")
+    instance, error = await _get_connector_instance(
+        connector,
+        organization_id,
+        user_id,
+        required_capability="action",
+        integration_id=integration_id_for_action,
+    )
     if error:
         return {"error": error}
     assert instance is not None
@@ -1361,7 +1438,11 @@ async def _think(tool_input: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _run_sql_query(
-    params: dict[str, Any], organization_id: str, user_id: str | None
+    params: dict[str, Any],
+    organization_id: str,
+    user_id: str | None,
+    *,
+    default_limit: int = 100,
 ) -> dict[str, Any]:
     """
     Execute a read-only SQL query with Row-Level Security (RLS).
@@ -1388,7 +1469,7 @@ async def _run_sql_query(
 
     # Add LIMIT if not present to prevent huge result sets
     if not re.search(r'\bLIMIT\b', final_query, re.IGNORECASE):
-        final_query = final_query.rstrip(';') + " LIMIT 100"
+        final_query = final_query.rstrip(';') + f" LIMIT {int(default_limit)}"
 
     safe_query, safety_error = await prepare_safe_sql_query(
         query=final_query,

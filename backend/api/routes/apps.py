@@ -60,6 +60,25 @@ class AppTokenResponse(BaseModel):
     api_base: str
 
 
+class AppSqlRequest(BaseModel):
+    """Generic SQL from an embedded app (SELECT or whitelisted DML)."""
+
+    query: str
+
+
+class AppConnectorRequest(BaseModel):
+    """Generic connector call from an embedded app (same semantics as agent tools)."""
+
+    connector: str
+    type: str
+    query: Optional[str] = None
+    operation: Optional[str] = None
+    data: Optional[dict[str, Any]] = None
+    action: Optional[str] = None
+    params: Optional[dict[str, Any]] = None
+    info: Optional[dict[str, Any]] = None
+
+
 class AppListItem(BaseModel):
     id: str
     title: str | None
@@ -144,6 +163,26 @@ def _cleanup_expired_tokens() -> None:
     expired: list[str] = [k for k, v in _app_tokens.items() if now > v["expires"]]
     for k in expired:
         _app_tokens.pop(k, None)
+
+
+async def _resolve_app_acting_user_id(app_id: str, organization_id: str) -> str:
+    """
+    Embedded apps run SQL and connector calls as the app creator for RLS,
+    CRM pending operations, and integration resolution.
+    """
+    try:
+        app_uuid: UUID = UUID(app_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid app ID")
+
+    async with get_session(organization_id=organization_id) as session:
+        result = await session.execute(select(App).where(App.id == app_uuid))
+        app: App | None = result.scalar_one_or_none()
+        if app is None:
+            raise HTTPException(status_code=404, detail="App not found")
+        if str(app.organization_id) != organization_id:
+            raise HTTPException(status_code=403, detail="App not in this organization")
+        return str(app.user_id)
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +437,152 @@ async def trigger_app_workflow(
         triggered_by_user_id=auth.user_id_str or "",
         request_id=request_id,
     )
+
+
+@router.post("/{app_id}/sql")
+async def execute_app_sql(
+    app_id: str,
+    body: AppSqlRequest,
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+) -> dict[str, Any]:
+    """
+    Execute arbitrary SQL from an embedded app using the same guards as the agent
+    (SELECT vs DML validation, ALLOWED_TABLES / WRITABLE_TABLES, RLS).
+    """
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing app token")
+    token: str = authorization.split(" ", 1)[1]
+
+    organization_id: str = _verify_app_token(token, app_id)
+
+    if len(_app_tokens) > 500:
+        _cleanup_expired_tokens()
+
+    query: str = body.query.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="query must be non-empty")
+
+    from agents.tools import (
+        _run_sql_query,
+        _run_sql_write,
+        _validate_sql_query,
+        _validate_sql_write,
+    )
+
+    acting_user_id: str = await _resolve_app_acting_user_id(app_id, organization_id)
+
+    is_select: bool
+    select_err: str | None
+    is_select, select_err = _validate_sql_query(query)
+
+    app_context: dict[str, Any] = {"source": "embedded_app", "app_id": app_id}
+    result: dict[str, Any]
+
+    if is_select:
+        result = await _run_sql_query(
+            {"query": query},
+            organization_id,
+            acting_user_id,
+            default_limit=5000,
+        )
+    else:
+        is_write: bool
+        write_err: str | None
+        _op: str | None
+        is_write, write_err, _op = _validate_sql_write(query)
+        if not is_write:
+            raise HTTPException(
+                status_code=400,
+                detail=write_err or select_err or "Invalid SQL",
+            )
+        result = await _run_sql_write(
+            {"query": query},
+            organization_id,
+            acting_user_id,
+            app_context,
+        )
+
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=str(result["error"]))
+    return result
+
+
+@router.post("/{app_id}/connector")
+async def execute_app_connector(
+    app_id: str,
+    body: AppConnectorRequest,
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+) -> dict[str, Any]:
+    """Dispatch connector query / write / action for an embedded app (app token auth)."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing app token")
+    token: str = authorization.split(" ", 1)[1]
+
+    organization_id: str = _verify_app_token(token, app_id)
+
+    if len(_app_tokens) > 500:
+        _cleanup_expired_tokens()
+
+    call_type: str = (body.type or "").strip().lower()
+    if call_type not in ("query", "write", "action"):
+        raise HTTPException(
+            status_code=400,
+            detail="type must be one of: query, write, action",
+        )
+
+    connector_slug: str = (body.connector or "").strip()
+    if not connector_slug:
+        raise HTTPException(status_code=400, detail="connector is required")
+
+    from agents.tools import _query_on_connector, _run_on_connector, _write_on_connector
+
+    acting_user_id: str = await _resolve_app_acting_user_id(app_id, organization_id)
+    app_context: dict[str, Any] = {"source": "embedded_app", "app_id": app_id}
+    skip_approval: bool = True
+
+    result: dict[str, Any]
+    if call_type == "query":
+        if not (body.query or "").strip():
+            raise HTTPException(status_code=400, detail="query is required when type is query")
+        q_params: dict[str, Any] = {
+            "connector": connector_slug,
+            "query": body.query.strip(),
+        }
+        if body.info:
+            q_params["info"] = body.info
+        result = await _query_on_connector(q_params, organization_id, acting_user_id)
+    elif call_type == "write":
+        if not (body.operation or "").strip():
+            raise HTTPException(status_code=400, detail="operation is required when type is write")
+        result = await _write_on_connector(
+            {
+                "connector": connector_slug,
+                "operation": body.operation.strip(),
+                "data": body.data or {},
+            },
+            organization_id,
+            acting_user_id,
+            skip_approval,
+            app_context,
+        )
+    else:
+        if not (body.action or "").strip():
+            raise HTTPException(status_code=400, detail="action is required when type is action")
+        result = await _run_on_connector(
+            {
+                "connector": connector_slug,
+                "action": body.action.strip(),
+                "params": body.params or {},
+            },
+            organization_id,
+            acting_user_id,
+            skip_approval,
+            app_context,
+        )
+
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=str(result["error"]))
+    return result
 
 
 # ---------------------------------------------------------------------------

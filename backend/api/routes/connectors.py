@@ -11,17 +11,23 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 from starlette.responses import Response
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.orm.attributes import flag_modified
 
+from api.auth_middleware import AuthContext, get_current_auth, require_organization
 from config import BUILTIN_CONNECTORS, get_provider_sharing_defaults
+from connectors.airtop_ops import create_session_window_live_view, save_profile_and_terminate, terminate_session
 from connectors.registry import Capability, ConnectorMeta, discover_connectors
-from models.database import get_session
+from models.database import get_admin_session, get_session
 from models.integration import Integration
+from models.user import User
 from workers.events import emit_event
 
 router = APIRouter()
@@ -37,6 +43,8 @@ def _connection_flow(meta: ConnectorMeta) -> str:
     """
     if meta.slug not in BUILTIN_CONNECTORS:
         return "oauth"
+    if meta.slug == "airtop":
+        return "custom_credentials"
     if meta.auth_fields:
         return "custom_credentials"
     return "builtin"
@@ -206,3 +214,215 @@ async def handle_connector_webhook_head(
             detail="Connector does not accept webhooks",
         )
     return Response(status_code=200)
+
+
+# ---------------------------------------------------------------------------
+# Airtop — one Integration row per saved site (multi-account)
+# ---------------------------------------------------------------------------
+
+PROFILE_PENDING: str = "pending"
+PROFILE_SAVED: str = "saved"
+PROFILE_PENDING_REAUTH: str = "pending_reauth"
+
+
+class AirtopConnectBody(BaseModel):
+    label: str = Field(..., min_length=1, max_length=200)
+    url: str = Field(..., min_length=8, max_length=2048)
+    api_key: str = Field(..., min_length=8)
+
+
+async def _airtop_reject_guest(user_id: UUID) -> None:
+    async with get_admin_session() as session:
+        user: User | None = await session.get(User, user_id)
+        if user is None or bool(getattr(user, "is_guest", False)):
+            raise HTTPException(status_code=403, detail="Guest users cannot connect integrations")
+
+
+def _airtop_extra(row: Integration) -> dict[str, Any]:
+    return dict(row.extra_data or {})
+
+
+@router.get("/airtop/suggest-api-key")
+async def airtop_suggest_api_key(auth: AuthContext = Depends(require_organization)) -> dict[str, str | None]:
+    """Return an API key from another Airtop site row for the same user (convenience pre-fill)."""
+    org_id: UUID = auth.organization_id  # type: ignore[assignment]
+    async with get_session(organization_id=str(org_id)) as session:
+        await session.execute(text("SELECT set_config('app.current_org_id', :org_id, true)"), {"org_id": str(org_id)})
+        result = await session.execute(
+            select(Integration)
+            .where(
+                Integration.organization_id == org_id,
+                Integration.connector == "airtop",
+                Integration.user_id == auth.user_id,
+                Integration.is_active == True,  # noqa: E712
+            )
+            .order_by(Integration.updated_at.desc().nullslast())
+            .limit(1)
+        )
+        row: Integration | None = result.scalars().first()
+    if not row:
+        return {"api_key": None}
+    key: str | None = (_airtop_extra(row).get("api_key") or "").strip() or None
+    return {"api_key": key}
+
+
+@router.post("/airtop/connect")
+async def airtop_connect(
+    body: AirtopConnectBody,
+    auth: AuthContext = Depends(require_organization),
+) -> dict[str, Any]:
+    """Start interactive login: create pending Integration + Airtop session; returns live_view_url."""
+    await _airtop_reject_guest(auth.user_id)
+    org_uuid: UUID = auth.organization_id  # type: ignore[assignment]
+    url: str = body.url.strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="url must start with http:// or https://")
+
+    api_key: str = body.api_key.strip()
+    profile_name: str = f"bb{uuid4().hex[:24]}"
+    account_identifier: str = f"airtop_{uuid4().hex[:12]}"
+
+    try:
+        session_id, _wid, live_view_url = await create_session_window_live_view(
+            api_key,
+            initial_url=url,
+            profile_name=None,
+            timeout_minutes=30,
+            client_timeout=180.0,
+        )
+    except Exception as exc:
+        logger.warning("Airtop connect session failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Airtop error: {exc}") from exc
+
+    sharing = get_provider_sharing_defaults("airtop")
+    extra_data: dict[str, Any] = {
+        "api_key": api_key,
+        "profile_name": profile_name,
+        "target_url": url,
+        "profile_status": PROFILE_PENDING,
+        "airtop_session_id": session_id,
+    }
+
+    async with get_session(organization_id=str(org_uuid)) as session:
+        await session.execute(text("SELECT set_config('app.current_org_id', :org_id, true)"), {"org_id": str(org_uuid)})
+        row = Integration(
+            organization_id=org_uuid,
+            connector="airtop",
+            provider="airtop",
+            user_id=auth.user_id,
+            scope="user",
+            nango_connection_id="builtin",
+            connected_by_user_id=auth.user_id,
+            is_active=False,
+            account_identifier=account_identifier,
+            account_label=body.label.strip(),
+            extra_data=extra_data,
+            share_synced_data=sharing.share_synced_data,
+            share_query_access=sharing.share_query_access,
+            share_write_access=sharing.share_write_access,
+            pending_sharing_config=False,
+        )
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+
+    return {
+        "integration_id": str(row.id),
+        "live_view_url": live_view_url,
+        "profile_name": profile_name,
+        "account_identifier": account_identifier,
+    }
+
+
+@router.post("/airtop/{integration_id}/finish")
+async def airtop_finish(
+    integration_id: UUID,
+    auth: AuthContext = Depends(require_organization),
+) -> dict[str, str]:
+    await _airtop_reject_guest(auth.user_id)
+    org_uuid: UUID = auth.organization_id  # type: ignore[assignment]
+
+    async with get_session(organization_id=str(org_uuid)) as session:
+        await session.execute(text("SELECT set_config('app.current_org_id', :org_id, true)"), {"org_id": str(org_uuid)})
+        row: Integration | None = await session.get(Integration, integration_id)
+        if (
+            row is None
+            or row.organization_id != org_uuid
+            or row.user_id != auth.user_id
+            or row.connector != "airtop"
+        ):
+            raise HTTPException(status_code=404, detail="Integration not found")
+        extra = _airtop_extra(row)
+        status: str = str(extra.get("profile_status") or "").strip()
+        if status not in (PROFILE_PENDING, PROFILE_PENDING_REAUTH):
+            raise HTTPException(status_code=400, detail="Integration is not awaiting finish")
+        sid: str | None = (extra.get("airtop_session_id") or "").strip() or None
+        profile_name: str = (extra.get("profile_name") or "").strip()
+        key: str = (extra.get("api_key") or "").strip()
+        if not sid or not profile_name or not key:
+            raise HTTPException(status_code=400, detail="Integration is missing session or profile data")
+
+        try:
+            await save_profile_and_terminate(key, sid, profile_name)
+        except Exception as exc:
+            logger.warning("Airtop finish failed integration=%s: %s", integration_id, exc, exc_info=True)
+            raise HTTPException(status_code=400, detail=f"Airtop error: {exc}") from exc
+
+        extra2 = dict(extra)
+        extra2["profile_status"] = PROFILE_SAVED
+        extra2.pop("airtop_session_id", None)
+        row.extra_data = extra2
+        flag_modified(row, "extra_data")
+        row.is_active = True
+        row.last_error = None
+        row.updated_at = datetime.utcnow()
+        await session.commit()
+
+    return {"status": "saved", "integration_id": str(integration_id)}
+
+
+@router.post("/airtop/{integration_id}/cancel")
+async def airtop_cancel(
+    integration_id: UUID,
+    auth: AuthContext = Depends(require_organization),
+) -> dict[str, str]:
+    await _airtop_reject_guest(auth.user_id)
+    org_uuid: UUID = auth.organization_id  # type: ignore[assignment]
+
+    async with get_session(organization_id=str(org_uuid)) as session:
+        await session.execute(text("SELECT set_config('app.current_org_id', :org_id, true)"), {"org_id": str(org_uuid)})
+        row: Integration | None = await session.get(Integration, integration_id)
+        if (
+            row is None
+            or row.organization_id != org_uuid
+            or row.user_id != auth.user_id
+            or row.connector != "airtop"
+        ):
+            raise HTTPException(status_code=404, detail="Integration not found")
+        extra = _airtop_extra(row)
+        status: str = str(extra.get("profile_status") or "").strip()
+        sid: str | None = (extra.get("airtop_session_id") or "").strip() or None
+        key: str = (extra.get("api_key") or "").strip()
+
+        if sid and key:
+            try:
+                await terminate_session(key, sid)
+            except Exception as exc:
+                logger.warning("Airtop cancel terminate failed: %s", exc)
+
+        if status == PROFILE_PENDING:
+            await session.delete(row)
+            await session.commit()
+            return {"status": "deleted"}
+
+        if status == PROFILE_PENDING_REAUTH:
+            extra2 = dict(extra)
+            extra2["profile_status"] = PROFILE_SAVED
+            extra2.pop("airtop_session_id", None)
+            row.extra_data = extra2
+            flag_modified(row, "extra_data")
+            row.updated_at = datetime.utcnow()
+            await session.commit()
+            return {"status": "reauth_cancelled"}
+
+    raise HTTPException(status_code=400, detail="Nothing to cancel for this integration")
