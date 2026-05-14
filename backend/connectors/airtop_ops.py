@@ -32,7 +32,6 @@ async def create_session_window_live_view(
     client: AsyncAirtop = airtop_client(api_key, timeout_seconds=client_timeout)
     cfg_kwargs: dict[str, Any] = {
         "timeout_minutes": max(5, min(timeout_minutes, 120)),
-        "skip_wait_session_ready": True,
     }
     if profile_name and profile_name.strip():
         cfg = SessionConfig(profile_name=profile_name.strip(), **cfg_kwargs)
@@ -65,6 +64,56 @@ async def terminate_session(api_key: str, session_id: str) -> None:
     await client.sessions.terminate(session_id)
 
 
+async def load_window_url(
+    api_key: str,
+    *,
+    session_id: str,
+    window_id: str,
+    url: str,
+    client_timeout: float = 120.0,
+) -> None:
+    """Navigate an existing window (same Airtop session)."""
+    client: AsyncAirtop = airtop_client(api_key, timeout_seconds=client_timeout)
+    await client.windows.load_url(session_id, window_id, url=url.strip())
+
+
+async def page_query_on_window(
+    api_key: str,
+    *,
+    session_id: str,
+    window_id: str,
+    prompt: str,
+    output_schema: str | dict[str, Any] | None,
+    time_threshold_seconds: int | None,
+    request_timeout_seconds: float,
+) -> dict[str, Any]:
+    """Run page_query on an existing session/window without creating or terminating the session."""
+    client: AsyncAirtop = airtop_client(api_key, timeout_seconds=max(request_timeout_seconds, 120.0))
+    pq_cfg: PageQueryConfig | None = None
+    if output_schema is not None:
+        if isinstance(output_schema, str) and output_schema.strip():
+            pq_cfg = PageQueryConfig(output_schema=output_schema.strip())
+        elif isinstance(output_schema, dict) and output_schema:
+            pq_cfg = PageQueryConfig(output_schema=output_schema)
+        if pq_cfg is not None:
+            pq_cfg = convert_page_query_output_schema_to_str(pq_cfg)  # type: ignore[assignment]
+
+    pq_kwargs: dict[str, Any] = {"prompt": prompt.strip()}
+    if pq_cfg is not None:
+        pq_kwargs["configuration"] = pq_cfg
+    if time_threshold_seconds is not None:
+        pq_kwargs["time_threshold_seconds"] = int(time_threshold_seconds)
+
+    result = await client.windows.page_query(session_id, window_id, **pq_kwargs)
+    meta_dump: dict[str, Any] | None = None
+    if result.meta is not None and hasattr(result.meta, "model_dump"):
+        meta_dump = result.meta.model_dump()
+    return {
+        "model_response": result.data.model_response if result.data else None,
+        "meta": meta_dump,
+    }
+
+
 async def run_page_query(
     api_key: str,
     *,
@@ -81,7 +130,6 @@ async def run_page_query(
     cfg = SessionConfig(
         profile_name=profile_name.strip(),
         timeout_minutes=max(5, min(session_timeout_minutes, 120)),
-        skip_wait_session_ready=True,
     )
     session_res = await client.sessions.create(configuration=cfg)
     session_id: str = session_res.data.id
@@ -89,30 +137,15 @@ async def run_page_query(
         win_res = await client.windows.create(session_id=session_id, url=url.strip())
         window_id: str = win_res.data.window_id
 
-        pq_cfg: PageQueryConfig | None = None
-        if output_schema is not None:
-            if isinstance(output_schema, str) and output_schema.strip():
-                pq_cfg = PageQueryConfig(output_schema=output_schema.strip())
-            elif isinstance(output_schema, dict) and output_schema:
-                pq_cfg = PageQueryConfig(output_schema=output_schema)
-            if pq_cfg is not None:
-                pq_cfg = convert_page_query_output_schema_to_str(pq_cfg)  # type: ignore[assignment]
-
-        pq_kwargs: dict[str, Any] = {"prompt": prompt.strip()}
-        if pq_cfg is not None:
-            pq_kwargs["configuration"] = pq_cfg
-        if time_threshold_seconds is not None:
-            pq_kwargs["time_threshold_seconds"] = int(time_threshold_seconds)
-
-        result = await client.windows.page_query(session_id, window_id, **pq_kwargs)
-        meta_dump: dict[str, Any] | None = None
-        if result.meta is not None and hasattr(result.meta, "model_dump"):
-            meta_dump = result.meta.model_dump()
-        out: dict[str, Any] = {
-            "model_response": result.data.model_response if result.data else None,
-            "meta": meta_dump,
-        }
-        return out
+        return await page_query_on_window(
+            api_key,
+            session_id=session_id,
+            window_id=window_id,
+            prompt=prompt,
+            output_schema=output_schema,
+            time_threshold_seconds=time_threshold_seconds,
+            request_timeout_seconds=request_timeout_seconds,
+        )
     finally:
         try:
             await client.sessions.terminate(session_id)

@@ -22,7 +22,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm.attributes import flag_modified
 
 from api.auth_middleware import AuthContext, get_current_auth, require_organization
-from config import BUILTIN_CONNECTORS, get_provider_sharing_defaults
+from config import BUILTIN_CONNECTORS, get_provider_sharing_defaults, resolve_airtop_api_key, settings
 from connectors.airtop_ops import create_session_window_live_view, save_profile_and_terminate, terminate_session
 from connectors.registry import Capability, ConnectorMeta, discover_connectors
 from models.database import get_admin_session, get_session
@@ -228,7 +228,6 @@ PROFILE_PENDING_REAUTH: str = "pending_reauth"
 class AirtopConnectBody(BaseModel):
     label: str = Field(..., min_length=1, max_length=200)
     url: str = Field(..., min_length=8, max_length=2048)
-    api_key: str = Field(..., min_length=8)
 
 
 async def _airtop_reject_guest(user_id: UUID) -> None:
@@ -240,30 +239,6 @@ async def _airtop_reject_guest(user_id: UUID) -> None:
 
 def _airtop_extra(row: Integration) -> dict[str, Any]:
     return dict(row.extra_data or {})
-
-
-@router.get("/airtop/suggest-api-key")
-async def airtop_suggest_api_key(auth: AuthContext = Depends(require_organization)) -> dict[str, str | None]:
-    """Return an API key from another Airtop site row for the same user (convenience pre-fill)."""
-    org_id: UUID = auth.organization_id  # type: ignore[assignment]
-    async with get_session(organization_id=str(org_id)) as session:
-        await session.execute(text("SELECT set_config('app.current_org_id', :org_id, true)"), {"org_id": str(org_id)})
-        result = await session.execute(
-            select(Integration)
-            .where(
-                Integration.organization_id == org_id,
-                Integration.connector == "airtop",
-                Integration.user_id == auth.user_id,
-                Integration.is_active == True,  # noqa: E712
-            )
-            .order_by(Integration.updated_at.desc().nullslast())
-            .limit(1)
-        )
-        row: Integration | None = result.scalars().first()
-    if not row:
-        return {"api_key": None}
-    key: str | None = (_airtop_extra(row).get("api_key") or "").strip() or None
-    return {"api_key": key}
 
 
 @router.post("/airtop/connect")
@@ -278,13 +253,19 @@ async def airtop_connect(
     if not url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="url must start with http:// or https://")
 
-    api_key: str = body.api_key.strip()
+    env_key: str = (settings.AIRTOP_KEY or "").strip()
+    if len(env_key) < 8:
+        raise HTTPException(
+            status_code=400,
+            detail="Set AIRTOP_KEY in the server environment (minimum 8 characters) to add Airtop sites.",
+        )
+
     profile_name: str = f"bb{uuid4().hex[:24]}"
     account_identifier: str = f"airtop_{uuid4().hex[:12]}"
 
     try:
         session_id, _wid, live_view_url = await create_session_window_live_view(
-            api_key,
+            env_key,
             initial_url=url,
             profile_name=None,
             timeout_minutes=30,
@@ -296,7 +277,6 @@ async def airtop_connect(
 
     sharing = get_provider_sharing_defaults("airtop")
     extra_data: dict[str, Any] = {
-        "api_key": api_key,
         "profile_name": profile_name,
         "target_url": url,
         "profile_status": PROFILE_PENDING,
@@ -325,9 +305,10 @@ async def airtop_connect(
         session.add(row)
         await session.commit()
         await session.refresh(row)
+        new_integration_id: str = str(row.id)
 
     return {
-        "integration_id": str(row.id),
+        "integration_id": new_integration_id,
         "live_view_url": live_view_url,
         "profile_name": profile_name,
         "account_identifier": account_identifier,
@@ -358,7 +339,10 @@ async def airtop_finish(
             raise HTTPException(status_code=400, detail="Integration is not awaiting finish")
         sid: str | None = (extra.get("airtop_session_id") or "").strip() or None
         profile_name: str = (extra.get("profile_name") or "").strip()
-        key: str = (extra.get("api_key") or "").strip()
+        try:
+            key: str = resolve_airtop_api_key(extra)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not sid or not profile_name or not key:
             raise HTTPException(status_code=400, detail="Integration is missing session or profile data")
 
@@ -402,7 +386,10 @@ async def airtop_cancel(
         extra = _airtop_extra(row)
         status: str = str(extra.get("profile_status") or "").strip()
         sid: str | None = (extra.get("airtop_session_id") or "").strip() or None
-        key: str = (extra.get("api_key") or "").strip()
+        try:
+            key: str = resolve_airtop_api_key(extra)
+        except ValueError:
+            key = ""
 
         if sid and key:
             try:

@@ -1,8 +1,8 @@
 """
 Airtop connector — one Integration row per saved authenticated site.
 
-Use the Connectors UI (or POST /api/connectors/airtop/connect) to start a login session; finish saves
-the Airtop profile. Agent actions: run_task, extract_structured, re_authenticate.
+Use the Connectors UI (or POST /api/connectors/airtop/connect) to start a login session; the server must have
+AIRTOP_KEY set. Finish saves the Airtop profile. Actions include run_task, session reuse (open_browser / run_in_session / close_browser), extract_structured, re_authenticate.
 """
 
 from __future__ import annotations
@@ -14,9 +14,12 @@ from uuid import UUID
 
 from sqlalchemy.orm.attributes import flag_modified
 
+from config import resolve_airtop_api_key
 from connectors.account_metadata import AccountMetadata
 from connectors.airtop_ops import (
     create_session_window_live_view,
+    load_window_url,
+    page_query_on_window,
     run_page_query,
     save_profile_and_terminate,
     terminate_session,
@@ -31,6 +34,14 @@ from connectors.registry import (
 )
 from models.database import get_session
 from models.integration import Integration
+from services.airtop_session_cache import (
+    AirtopBrowserReuseRecord,
+    delete_record_and_active,
+    get_active_handle,
+    get_record,
+    new_reuse_handle,
+    save_record,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +102,58 @@ class AirtopConnector(BaseConnector):
                 ),
                 parameters=[],
             ),
+            ConnectorAction(
+                name="open_browser",
+                description=(
+                    "Start a reusable Airtop browser for this saved site (one session per site until close or expiry). "
+                    "Returns session_handle and live_view_url. Prefer this over multiple run_task calls for multi-step flows."
+                ),
+                parameters=[
+                    {
+                        "name": "url",
+                        "type": "string",
+                        "required": False,
+                        "description": "Initial https URL (defaults to the site's saved target_url)",
+                    },
+                    {
+                        "name": "session_timeout_minutes",
+                        "type": "integer",
+                        "required": False,
+                        "description": "Airtop session lifetime 5–120; default 20",
+                    },
+                ],
+            ),
+            ConnectorAction(
+                name="run_in_session",
+                description=(
+                    "Run a natural-language step in an existing browser session opened with open_browser. "
+                    "Optional url navigates the same window before the step. Optional output_schema for JSON extraction."
+                ),
+                parameters=[
+                    {"name": "session_handle", "type": "string", "required": True},
+                    {"name": "instructions", "type": "string", "required": True},
+                    {"name": "url", "type": "string", "required": False, "description": "If set, navigate this window first"},
+                    {"name": "timeout_seconds", "type": "integer", "required": False},
+                    {
+                        "name": "output_schema",
+                        "type": "object",
+                        "required": False,
+                        "description": "If set, structured JSON output (JSON Schema object or string)",
+                    },
+                ],
+            ),
+            ConnectorAction(
+                name="close_browser",
+                description="End a reusable browser session started with open_browser. Always call when done to free resources.",
+                parameters=[{"name": "session_handle", "type": "string", "required": True}],
+            ),
         ],
         usage_guide=(
-            "Each Airtop site is a separate connector card. Use run_on_connector(connector='airtop', account='<account_label>', "
-            "action='run_task', params={url, instructions}). For JSON, use action extract_structured with output_schema. "
-            "If cookies expire, action re_authenticate then complete login in the live view and call the finish endpoint."
+            "Each Airtop site is a separate connector card. One-shot: run_on_connector(connector='airtop', account='<label>', "
+            "action='run_task', params={url, instructions}). Multi-step on the same site: action open_browser (params optional url), "
+            "then run_in_session with session_handle + instructions (optional url between steps), then close_browser with session_handle. "
+            "Structured JSON in a reuse flow: run_in_session with output_schema. Single-shot JSON: action extract_structured. "
+            "If cookies expire: re_authenticate then POST /api/connectors/airtop/{integration_id}/finish."
         ),
     )
 
@@ -116,11 +174,10 @@ class AirtopConnector(BaseConnector):
         if not self._integration:
             raise ValueError("No Airtop integration row loaded")
         extra: dict[str, Any] = self._integration.extra_data or {}
-        raw: Any = extra.get("api_key")
-        key: str = (str(raw).strip() if raw is not None else "") or ""
-        if not key:
-            raise ValueError("Airtop integration missing api_key in extra_data")
-        return key
+        try:
+            return resolve_airtop_api_key(extra)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
     def _profile_payload(self) -> dict[str, Any]:
         if not self._integration:
@@ -129,6 +186,12 @@ class AirtopConnector(BaseConnector):
 
     async def _require_saved_site(self) -> tuple[str, str, str]:
         """Return (api_key, profile_name, target_url) when profile is saved."""
+        if not self._integration:
+            await self._load_integration()
+        if not self._integration:
+            raise ValueError(
+                "No Airtop integration found for this user. Add a site from Connectors first."
+            )
         extra = self._profile_payload()
         status: str = str(extra.get("profile_status") or "").strip()
         if status not in (PROFILE_STATUS_SAVED,):
@@ -184,6 +247,12 @@ class AirtopConnector(BaseConnector):
             return await self._run_task(params, structured=True)
         if action == "re_authenticate":
             return await self._re_authenticate()
+        if action == "open_browser":
+            return await self._open_browser(params)
+        if action == "run_in_session":
+            return await self._run_in_session(params)
+        if action == "close_browser":
+            return await self._close_browser(params)
         raise ValueError(f"Unknown action: {action}")
 
     async def _run_task(self, params: dict[str, Any], *, structured: bool) -> dict[str, Any]:
@@ -241,7 +310,203 @@ class AirtopConnector(BaseConnector):
             logger.warning("Airtop run_task failed: %s", exc, exc_info=True)
             return {"error": str(exc)}
 
+    def _redis_ttl_seconds(self, session_timeout_minutes: int) -> int:
+        mins: int = max(5, min(session_timeout_minutes, 120))
+        return max(120, mins * 60 - 30)
+
+    async def _open_browser(self, params: dict[str, Any]) -> dict[str, Any]:
+        try:
+            api_key: str
+            profile_name: str
+            target_url: str
+            api_key, profile_name, target_url = await self._require_saved_site()
+        except ValueError as exc:
+            return {"error": str(exc)}
+        if not self._integration or not self._integration.id:
+            return {"error": "No integration row"}
+        org_id: str = self.organization_id
+        owner_user_id: str = self.user_id or ""
+        int_id: str = str(self._integration.id)
+        raw_tm: Any = params.get("session_timeout_minutes")
+        session_timeout_minutes: int = 20
+        if raw_tm is not None:
+            try:
+                session_timeout_minutes = int(raw_tm)
+            except (TypeError, ValueError):
+                session_timeout_minutes = 20
+        session_timeout_minutes = max(5, min(session_timeout_minutes, 120))
+
+        initial_url: str = (params.get("url") or "").strip() or target_url
+        if not initial_url.startswith(("http://", "https://")):
+            return {"error": "url must be an http(s) URL or set a valid target_url on the integration"}
+
+        old_handle: str | None = await get_active_handle(org_id, owner_user_id, int_id)
+        if old_handle:
+            old_rec: AirtopBrowserReuseRecord | None = await get_record(old_handle)
+            if old_rec:
+                try:
+                    await terminate_session(api_key, old_rec.session_id)
+                except Exception as exc:
+                    logger.warning("Airtop reuse: terminate previous session failed: %s", exc)
+            await delete_record_and_active(old_handle, org_id, owner_user_id, int_id)
+
+        try:
+            session_id, window_id, live_url = await create_session_window_live_view(
+                api_key,
+                initial_url=initial_url,
+                profile_name=profile_name,
+                timeout_minutes=session_timeout_minutes,
+                client_timeout=180.0,
+            )
+        except Exception as exc:
+            logger.warning("Airtop open_browser failed: %s", exc, exc_info=True)
+            return {"error": str(exc)}
+
+        handle: str = new_reuse_handle()
+        record = AirtopBrowserReuseRecord(
+            organization_id=org_id,
+            owner_user_id=owner_user_id,
+            integration_id=int_id,
+            session_id=session_id,
+            window_id=window_id,
+        )
+        ttl_sec: int = self._redis_ttl_seconds(session_timeout_minutes)
+        try:
+            await save_record(handle, record, ttl_seconds=ttl_sec)
+        except Exception as exc:
+            logger.warning("Airtop reuse: Redis save failed, terminating session: %s", exc)
+            try:
+                await terminate_session(api_key, session_id)
+            except Exception:
+                pass
+            return {"error": f"Could not store session handle (Redis): {exc}"}
+
+        return {
+            "status": "opened",
+            "session_handle": handle,
+            "live_view_url": live_url,
+            "expires_in_seconds": ttl_sec,
+            "message": "Use run_in_session with this session_handle for further steps, then close_browser.",
+        }
+
+    async def _validate_reuse_record(self, record: AirtopBrowserReuseRecord | None) -> str | None:
+        if record is None:
+            return "Unknown or expired session_handle. Call open_browser again."
+        if not self._integration:
+            await self._load_integration()
+        if not self._integration:
+            return "No Airtop integration loaded"
+        if record.organization_id != self.organization_id:
+            return "session_handle does not belong to this organization"
+        if record.owner_user_id != (self.user_id or ""):
+            return "session_handle does not belong to this user"
+        if record.integration_id != str(self._integration.id):
+            return "session_handle does not match this connector site"
+        return None
+
+    async def _run_in_session(self, params: dict[str, Any]) -> dict[str, Any]:
+        handle: str = (params.get("session_handle") or "").strip()
+        if not handle:
+            return {"error": "session_handle is required"}
+        instructions: str = (params.get("instructions") or "").strip()
+        if not instructions:
+            return {"error": "instructions is required"}
+
+        record: AirtopBrowserReuseRecord | None = await get_record(handle)
+        err: str | None = await self._validate_reuse_record(record)
+        if err or record is None:
+            return {"error": err or "Invalid session"}
+
+        api_key: str
+        try:
+            api_key = await self._get_api_key()
+        except ValueError as exc:
+            return {"error": str(exc)}
+
+        nav_url: str = (params.get("url") or "").strip()
+        if nav_url:
+            if not nav_url.startswith(("http://", "https://")):
+                return {"error": "url must be http(s)"}
+            try:
+                await load_window_url(
+                    api_key,
+                    session_id=record.session_id,
+                    window_id=record.window_id,
+                    url=nav_url,
+                )
+            except Exception as exc:
+                logger.warning("Airtop run_in_session load_url failed: %s", exc, exc_info=True)
+                return {"error": f"Navigation failed: {exc}"}
+
+        output_schema: str | dict[str, Any] | None = None
+        raw_schema: Any = params.get("output_schema")
+        if raw_schema is not None:
+            if isinstance(raw_schema, str):
+                output_schema = raw_schema.strip() or None
+            elif isinstance(raw_schema, dict):
+                output_schema = raw_schema if raw_schema else None
+            else:
+                return {"error": "output_schema must be a string or object"}
+
+        tts: int | None = None
+        raw_to: Any = params.get("timeout_seconds")
+        if raw_to is not None:
+            try:
+                tts = int(raw_to)
+            except (TypeError, ValueError):
+                tts = None
+
+        req_timeout: float = 300.0
+        try:
+            out = await page_query_on_window(
+                api_key,
+                session_id=record.session_id,
+                window_id=record.window_id,
+                prompt=instructions,
+                output_schema=output_schema,
+                time_threshold_seconds=tts,
+                request_timeout_seconds=req_timeout,
+            )
+            return {"status": "completed", "session_handle": handle, **out}
+        except Exception as exc:
+            logger.warning("Airtop run_in_session page_query failed: %s", exc, exc_info=True)
+            return {"error": str(exc)}
+
+    async def _close_browser(self, params: dict[str, Any]) -> dict[str, Any]:
+        handle: str = (params.get("session_handle") or "").strip()
+        if not handle:
+            return {"error": "session_handle is required"}
+        record: AirtopBrowserReuseRecord | None = await get_record(handle)
+        err: str | None = await self._validate_reuse_record(record)
+        if err or record is None:
+            return {"error": err or "Invalid session"}
+
+        api_key: str
+        try:
+            api_key = await self._get_api_key()
+        except ValueError as exc:
+            return {"error": str(exc)}
+
+        try:
+            await terminate_session(api_key, record.session_id)
+        except Exception as exc:
+            logger.warning("Airtop close_browser terminate failed: %s", exc)
+        try:
+            await delete_record_and_active(
+                handle,
+                record.organization_id,
+                record.owner_user_id,
+                record.integration_id,
+            )
+        except Exception as exc:
+            logger.warning("Airtop close_browser Redis cleanup failed: %s", exc)
+        return {"status": "closed", "session_handle": handle}
+
     async def _re_authenticate(self) -> dict[str, Any]:
+        if not self._integration:
+            await self._load_integration()
+        if not self._integration:
+            return {"error": "No Airtop integration found for this user."}
         extra = self._profile_payload()
         status: str = str(extra.get("profile_status") or "").strip()
         if status != PROFILE_STATUS_SAVED:

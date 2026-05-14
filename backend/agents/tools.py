@@ -952,6 +952,17 @@ class _IntegrationOptionLite:
     def display_label(self) -> str:
         return self.account_label or self.account_identifier or self.id
 
+    def matches_account_needle(self, needle: str) -> bool:
+        """True if ``needle`` matches this row's account identifier or label (case-insensitive)."""
+        ap: str = needle.strip().lower()
+        if not ap:
+            return False
+        if (self.account_identifier or "").strip().lower() == ap:
+            return True
+        if (self.account_label or "").strip().lower() == ap:
+            return True
+        return False
+
 
 async def _query_on_connector(
     params: dict[str, Any], organization_id: str, user_id: str | None
@@ -1259,17 +1270,6 @@ async def _resolve_conversation_owner_user_id(
         return str(owner_user_id)
 
 
-def _account_matches_integration_row(row: Integration, account: str) -> bool:
-    ap: str = account.strip().lower()
-    if not ap:
-        return False
-    if (row.account_identifier or "").strip().lower() == ap:
-        return True
-    if (row.account_label or "").strip().lower() == ap:
-        return True
-    return False
-
-
 async def _resolve_connector_action_integration_id(
     *,
     connector: str,
@@ -1296,28 +1296,36 @@ async def _resolve_connector_action_integration_id(
             )
             .order_by(Integration.updated_at.desc().nullslast())
         )
-        rows: list[Integration] = list(result.scalars().all())
-    if not rows:
+        orm_rows: list[Integration] = list(result.scalars().all())
+        options: list[_IntegrationOptionLite] = [
+            _IntegrationOptionLite(
+                id=str(r.id),
+                account_identifier=r.account_identifier,
+                account_label=r.account_label,
+            )
+            for r in orm_rows
+        ]
+    if not options:
         return None, None
     ap: str = account_param.strip()
-    if len(rows) == 1:
-        only: Integration = rows[0]
-        if ap and not _account_matches_integration_row(only, ap):
+    if len(options) == 1:
+        only: _IntegrationOptionLite = options[0]
+        if ap and not only.matches_account_needle(ap):
             return None, f"No connected account matches {ap!r} for connector {connector!r}."
-        return str(only.id), None
+        return only.id, None
     if not ap:
         lines: list[str] = [
-            f"- {r.account_label or r.account_identifier or str(r.id)}"
-            for r in rows[:25]
+            f"- {o.display_label}"
+            for o in options[:25]
         ]
         return None, (
             f"Multiple {connector} sites/accounts are connected; pass `account` with the site label "
             f"(or account id). Options:\n" + "\n".join(lines)
         )
-    matched: list[Integration] = [r for r in rows if _account_matches_integration_row(r, ap)]
+    matched: list[_IntegrationOptionLite] = [o for o in options if o.matches_account_needle(ap)]
     if len(matched) != 1:
         return None, f"No unique match for account={ap!r} on connector {connector!r}."
-    return str(matched[0].id), None
+    return matched[0].id, None
 
 
 async def _run_on_connector(

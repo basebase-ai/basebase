@@ -424,7 +424,6 @@ export function DataSources(): JSX.Element {
   const [airtopSiteStep, setAirtopSiteStep] = useState<'credentials' | 'live'>('credentials');
   const [airtopSiteLabel, setAirtopSiteLabel] = useState('');
   const [airtopSiteUrl, setAirtopSiteUrl] = useState('');
-  const [airtopSiteApiKey, setAirtopSiteApiKey] = useState('');
   const [airtopSiteLoading, setAirtopSiteLoading] = useState(false);
   const [airtopSiteError, setAirtopSiteError] = useState<string | null>(null);
   const [airtopPendingIntegrationId, setAirtopPendingIntegrationId] = useState<string | null>(null);
@@ -1058,16 +1057,6 @@ export function DataSources(): JSX.Element {
           setAirtopPendingIntegrationId(null);
           setAirtopLiveViewUrl(null);
           setAirtopSiteError(null);
-          setAirtopSiteApiKey('');
-          void (async () => {
-            const { data, error } = await apiRequest<{ api_key: string | null }>(
-              '/connectors/airtop/suggest-api-key',
-              { method: 'GET' },
-            );
-            if (!error && data?.api_key) {
-              setAirtopSiteApiKey(data.api_key);
-            }
-          })();
           setShowAirtopSiteForm(true);
         } else {
           // Unknown custom_credentials provider — the classifier should only
@@ -1244,17 +1233,12 @@ export function DataSources(): JSX.Element {
     if (!organizationId || !userId || airtopSiteLoading) return;
     const label = airtopSiteLabel.trim();
     const url = airtopSiteUrl.trim();
-    const apiKey = airtopSiteApiKey.trim();
     if (!label) {
       setAirtopSiteError('Site label is required');
       return;
     }
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       setAirtopSiteError('URL must start with http:// or https://');
-      return;
-    }
-    if (!apiKey) {
-      setAirtopSiteError('Airtop API key is required');
       return;
     }
     setAirtopSiteLoading(true);
@@ -1265,7 +1249,7 @@ export function DataSources(): JSX.Element {
         live_view_url: string;
       }>('/connectors/airtop/connect', {
         method: 'POST',
-        body: JSON.stringify({ label, url, api_key: apiKey }),
+        body: JSON.stringify({ label, url }),
       });
       if (error || !data?.integration_id || !data?.live_view_url) {
         throw new Error(error ?? 'Failed to start Airtop login');
@@ -1278,7 +1262,7 @@ export function DataSources(): JSX.Element {
     } finally {
       setAirtopSiteLoading(false);
     }
-  }, [airtopSiteApiKey, airtopSiteLabel, airtopSiteLoading, airtopSiteUrl, organizationId, userId]);
+  }, [airtopSiteLabel, airtopSiteLoading, airtopSiteUrl, organizationId, userId]);
 
   const handleAirtopSiteFinish = useCallback(async (): Promise<void> => {
     if (!airtopPendingIntegrationId || airtopSiteLoading) return;
@@ -2957,7 +2941,8 @@ export function DataSources(): JSX.Element {
                 className="p-5 space-y-4"
               >
                 <p className="text-sm text-surface-400">
-                  Each saved site is a separate connector card. Enter a label, the URL to open for login, and your Airtop API key. After you sign in in the browser preview, click the button below the preview to save the profile.
+                  Each saved site is a separate connector card. Enter a label and the login URL. The server uses{' '}
+                  <span className="font-mono text-surface-300">AIRTOP_KEY</span> from its environment for Airtop. After you sign in in the browser preview, click the button below the preview to save the profile.
                 </p>
                 <div>
                   <label htmlFor="airtop-site-label" className="block text-sm font-medium text-surface-300 mb-1.5">
@@ -2990,21 +2975,6 @@ export function DataSources(): JSX.Element {
                     className="w-full rounded-lg bg-surface-800 border border-surface-600 px-4 py-2.5 text-sm text-surface-100 placeholder:text-surface-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/30 disabled:opacity-50"
                   />
                 </div>
-                <div>
-                  <label htmlFor="airtop-site-api-key" className="block text-sm font-medium text-surface-300 mb-1.5">
-                    Airtop API key <span className="text-red-400">*</span>
-                  </label>
-                  <input
-                    id="airtop-site-api-key"
-                    type="password"
-                    value={airtopSiteApiKey}
-                    onChange={(e) => setAirtopSiteApiKey(e.target.value)}
-                    placeholder="Bearer token from Airtop portal"
-                    required
-                    disabled={airtopSiteLoading}
-                    className="w-full rounded-lg bg-surface-800 border border-surface-600 px-4 py-2.5 text-sm text-surface-100 placeholder:text-surface-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/30 disabled:opacity-50"
-                  />
-                </div>
                 {airtopSiteError && (
                   <div className="text-sm text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">
                     {airtopSiteError}
@@ -3024,8 +2994,7 @@ export function DataSources(): JSX.Element {
                     disabled={
                       airtopSiteLoading ||
                       !airtopSiteLabel.trim() ||
-                      !airtopSiteUrl.trim() ||
-                      !airtopSiteApiKey.trim()
+                      !airtopSiteUrl.trim()
                     }
                     className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-primary-600 hover:bg-primary-500 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                   >
@@ -3360,16 +3329,6 @@ export function DataSources(): JSX.Element {
                         setAirtopPendingIntegrationId(null);
                         setAirtopLiveViewUrl(null);
                         setAirtopSiteError(null);
-                        setAirtopSiteApiKey('');
-                        void (async () => {
-                          const { data, error } = await apiRequest<{ api_key: string | null }>(
-                            '/connectors/airtop/suggest-api-key',
-                            { method: 'GET' },
-                          );
-                          if (!error && data?.api_key) {
-                            setAirtopSiteApiKey(data.api_key);
-                          }
-                        })();
                         setShowAirtopSiteForm(true);
                       }}
                       className="rounded-lg border border-surface-600 px-3 py-2 text-sm font-medium text-surface-200 hover:bg-surface-800"
