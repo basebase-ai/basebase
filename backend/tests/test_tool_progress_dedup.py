@@ -141,3 +141,81 @@ def test_update_tool_result_allows_status_change_with_same_result(monkeypatch) -
             "status": "complete",
         }
     ]
+
+
+def test_json_safe_coerces_decimal_uuid_dates_and_null_bytes() -> None:
+    import json
+    from datetime import date, datetime, timezone
+    from decimal import Decimal
+
+    value_id = uuid4()
+    payload = {
+        "amount": Decimal("123.45"),
+        "whole": Decimal("42.00"),
+        "id": value_id,
+        "created_at": datetime(2026, 5, 13, 12, 30, tzinfo=timezone.utc),
+        "day": date(2026, 5, 13),
+        "bad_text": "hello\x00world",
+    }
+
+    safe = orchestrator.ChatOrchestrator._json_safe(payload)
+
+    json.dumps(safe)
+    assert safe["amount"] == 123.45
+    assert safe["whole"] == 42
+    assert safe["id"] == str(value_id)
+    assert safe["created_at"] == "2026-05-13T12:30:00+00:00"
+    assert safe["day"] == "2026-05-13"
+    assert safe["bad_text"] == "helloworld"
+
+
+def test_update_tool_result_sanitizes_decimal_result_before_save_and_publish(monkeypatch) -> None:
+    from decimal import Decimal
+
+    conversation_id = str(uuid4())
+    tool_id = "tool-decimal"
+    organization_id = str(uuid4())
+    message = SimpleNamespace(
+        content_blocks=[
+            {
+                "type": "tool_use",
+                "id": tool_id,
+                "name": "query_on_connector",
+                "status": "running",
+                "result": None,
+            }
+        ]
+    )
+    fake_session = _FakeSession(message)
+    broadcasts: list[dict[str, object]] = []
+
+    async def _fake_publish_tool_progress(**kwargs: object) -> bool:
+        broadcasts.append(kwargs)
+        return True
+
+    monkeypatch.setattr(
+        orchestrator,
+        "get_session",
+        lambda **_kwargs: _FakeSessionContext(fake_session),
+    )
+    monkeypatch.setattr(
+        tool_progress_pubsub,
+        "publish_tool_progress",
+        _fake_publish_tool_progress,
+    )
+
+    updated = asyncio.run(
+        orchestrator.update_tool_result(
+            conversation_id=conversation_id,
+            tool_id=tool_id,
+            result={"rows": [{"amount": Decimal("10.50"), "count": Decimal("3")}]},
+            status="complete",
+            organization_id=organization_id,
+        )
+    )
+
+    expected_result = {"rows": [{"amount": 10.5, "count": 3}]}
+    assert updated is True
+    assert fake_session.commit_calls == 1
+    assert message.content_blocks[0]["result"] == expected_result
+    assert broadcasts[0]["result"] == expected_result
