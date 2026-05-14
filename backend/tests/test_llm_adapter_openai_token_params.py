@@ -9,6 +9,7 @@ from services.llm_adapter import (
     LLMConfig,
     MINIMAX_IMAGE_UNSUPPORTED_MESSAGE,
     AnthropicAdapter,
+    supports_anthropic_adaptive_thinking,
     OpenAIAdapter,
     PROVIDER_BASE_URLS,
     get_adapter,
@@ -45,6 +46,37 @@ def _openai_api_status_error(message: str, status_code: int = 404) -> APIStatusE
         response=response,
         body={"error": {"type": "not_found_error", "message": message}},
     )
+
+
+def test_anthropic_adaptive_thinking_supported_models_send_adaptive():
+    adapter = AnthropicAdapter(api_key="test-key")
+
+    assert supports_anthropic_adaptive_thinking("claude-opus-4-6")
+    assert supports_anthropic_adaptive_thinking("claude-opus-4-6-20260401")
+    assert supports_anthropic_adaptive_thinking("claude-sonnet-4-6")
+    assert adapter._build_thinking_kwargs(
+        model="claude-opus-4-6",
+        thinking=True,
+    ) == {"thinking": {"type": "adaptive"}}
+
+
+def test_anthropic_adaptive_thinking_omitted_for_haiku():
+    adapter = AnthropicAdapter(api_key="test-key")
+
+    assert not supports_anthropic_adaptive_thinking("claude-haiku-4-5-20251001")
+    assert adapter._build_thinking_kwargs(
+        model="claude-haiku-4-5-20251001",
+        thinking=True,
+    ) == {}
+
+
+def test_anthropic_adaptive_thinking_omitted_when_not_requested():
+    adapter = AnthropicAdapter(api_key="test-key")
+
+    assert adapter._build_thinking_kwargs(
+        model="claude-opus-4-6",
+        thinking=False,
+    ) == {}
 
 
 def test_openai_gpt5_uses_max_completion_tokens():
@@ -528,7 +560,6 @@ def test_minimax_provider_prefix_rejects_image_messages_before_formatting():
         )
 
     assert str(exc_info.value) == MINIMAX_IMAGE_UNSUPPORTED_MESSAGE
-
 
 def test_anthropic_model_allows_image_messages():
     adapter = AnthropicAdapter(api_key="test-key")
