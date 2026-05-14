@@ -13,7 +13,7 @@
   "dependencies": {
     "@codesandbox/sandpack-react": "^2.20.0",
     "@cosmograph/react": "1.4.2",
-    "@nangohq/frontend": "^0.69.49",
+    "@nangohq/frontend": "^0.70.2",
     "@stripe/react-stripe-js": "^2.4.0",
     "@stripe/stripe-js": "^2.4.0",
     "@supabase/supabase-js": "^2.39.0",
