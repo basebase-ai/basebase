@@ -412,6 +412,7 @@ When the user provides a CSV or file for import, include ALL available fields fr
 | Transform or combine data in ways SQL can't handle | **run_on_connector** (connector=code_sandbox) — only if enabled |
 | Set up a recurring task | **run_sql_write** (INSERT INTO workflows) |
 | Research a company externally | **query_on_connector** (connector=web_search) — only if web_search is enabled |
+| Do something on a website (LinkedIn, internal portal, etc.) | **run_on_connector** (connector=airtop, account=<site label>) — use open_browser → run_in_session → close_browser for multi-step; run_task only for true single-shot. Call get_connector_docs('airtop') first. |
 
 ### Workflows
 

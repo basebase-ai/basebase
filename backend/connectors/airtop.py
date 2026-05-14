@@ -70,8 +70,9 @@ class AirtopConnector(BaseConnector):
             ConnectorAction(
                 name="run_task",
                 description=(
-                    "Open a URL using this site's saved Airtop profile and run a natural-language task. "
-                    "Returns the model's text answer."
+                    "Single-shot: open a URL, run one query, terminate. Use ONLY when you are certain one page load "
+                    "and one query is enough. For anything requiring navigation, clicking, or multiple steps, "
+                    "use open_browser + run_in_session + close_browser instead."
                 ),
                 parameters=[
                     {"name": "url", "type": "string", "required": True, "description": "https URL to open"},
@@ -105,8 +106,9 @@ class AirtopConnector(BaseConnector):
             ConnectorAction(
                 name="open_browser",
                 description=(
-                    "Start a reusable Airtop browser for this saved site (one session per site until close or expiry). "
-                    "Returns session_handle and live_view_url. Prefer this over multiple run_task calls for multi-step flows."
+                    "Start a reusable Airtop browser for this saved site. Returns session_handle and live_view_url. "
+                    "DEFAULT for any task that requires navigating pages, clicking, or more than one query — "
+                    "cheaper and faster than repeated run_task calls because the session stays alive."
                 ),
                 parameters=[
                     {
@@ -149,10 +151,20 @@ class AirtopConnector(BaseConnector):
             ),
         ],
         usage_guide=(
-            "Each Airtop site is a separate connector card. One-shot: run_on_connector(connector='airtop', account='<label>', "
-            "action='run_task', params={url, instructions}). Multi-step on the same site: action open_browser (params optional url), "
-            "then run_in_session with session_handle + instructions (optional url between steps), then close_browser with session_handle. "
-            "Structured JSON in a reuse flow: run_in_session with output_schema. Single-shot JSON: action extract_structured. "
+            "Each Airtop site is a separate connector card. "
+            "IMPORTANT: When the task involves more than one page load or step (e.g. search then click a result, "
+            "navigate then extract, or any sequence of actions), ALWAYS use the session-reuse flow: "
+            "open_browser first, then run_in_session for each step (pass url to navigate between pages), "
+            "then close_browser when done. This is faster, cheaper, and keeps the login cookie alive across steps.\n\n"
+            "Session-reuse flow:\n"
+            "1. run_on_connector(connector='airtop', account='<label>', action='open_browser')\n"
+            "2. run_on_connector(connector='airtop', account='<label>', action='run_in_session', "
+            "params={session_handle, instructions, url (optional — navigates before querying)})\n"
+            "3. Repeat step 2 as needed for additional steps\n"
+            "4. run_on_connector(connector='airtop', account='<label>', action='close_browser', params={session_handle})\n\n"
+            "Only use run_task for truly single-shot queries where you are certain one page load + one query is enough. "
+            "When in doubt, prefer open_browser.\n\n"
+            "Structured JSON: pass output_schema in run_in_session (reuse) or use extract_structured (single-shot). "
             "If cookies expire: re_authenticate then POST /api/connectors/airtop/{integration_id}/finish."
         ),
     )
