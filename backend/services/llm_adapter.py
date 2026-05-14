@@ -52,6 +52,12 @@ MINIMAX_IMAGE_UNSUPPORTED_MESSAGE: str = (
     "the image in this turn. Please switch to a vision-capable model, or "
     "resend your message without images."
 )
+ANTHROPIC_ADAPTIVE_THINKING_MODEL_PREFIXES: tuple[str, ...] = (
+    "claude-mythos-preview",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+)
 
 
 class DeepSeekImageUnsupportedError(ValueError):
@@ -71,6 +77,13 @@ def is_deepseek_model(model: str) -> bool:
 def is_minimax_model(model: str) -> bool:
     """Return whether a model name targets MiniMax's Anthropic-compatible API."""
     return _normalized_model_name(model).startswith("minimax")
+
+
+def supports_anthropic_adaptive_thinking(model: str) -> bool:
+    """Return whether an Anthropic-family model accepts adaptive thinking."""
+    return _normalized_model_name(model).startswith(
+        ANTHROPIC_ADAPTIVE_THINKING_MODEL_PREFIXES
+    )
 
 
 def is_deepseek_v4_vision_model(model: str) -> bool:
@@ -342,8 +355,7 @@ class AnthropicAdapter:
         }
         if tools:
             api_kwargs["tools"] = self.format_tools(tools)
-        if thinking:
-            api_kwargs["thinking"] = {"type": "adaptive"}
+        api_kwargs.update(self._build_thinking_kwargs(model=model, thinking=thinking))
 
         self._current_block_type = "text"
         async with self._client.messages.stream(**api_kwargs) as stream:
@@ -360,6 +372,23 @@ class AnthropicAdapter:
                 )
 
     _current_block_type: str = "text"
+
+    def _build_thinking_kwargs(self, *, model: str, thinking: bool) -> dict[str, Any]:
+        """Return Anthropic Messages API thinking options supported by the model."""
+        if not thinking:
+            return {}
+        if supports_anthropic_adaptive_thinking(model):
+            logger.debug(
+                "Anthropic adaptive thinking controls selected",
+                extra={"model": model, "thinking_type": "adaptive"},
+            )
+            return {"thinking": {"type": "adaptive"}}
+
+        logger.info(
+            "Skipping Anthropic adaptive thinking for unsupported model",
+            extra={"model": model, "thinking_requested": thinking},
+        )
+        return {}
 
     def _translate_event(self, event: Any) -> list[StreamEvent]:
         """Translate a single Anthropic stream event into common StreamEvents."""
