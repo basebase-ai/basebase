@@ -313,14 +313,12 @@ class AnthropicAdapter:
         api_key: str,
         base_url: str | None = None,
         supports_document_blocks: bool = True,
-        supports_adaptive_thinking: bool = True,
     ) -> None:
         kwargs: dict[str, Any] = {"api_key": api_key}
         if base_url is not None:
             kwargs["base_url"] = base_url
         self._client: AsyncAnthropic = AsyncAnthropic(**kwargs)
         self._supports_document_blocks: bool = supports_document_blocks
-        self._supports_adaptive_thinking: bool = supports_adaptive_thinking
 
     # -- streaming ----------------------------------------------------------
 
@@ -344,7 +342,8 @@ class AnthropicAdapter:
         }
         if tools:
             api_kwargs["tools"] = self.format_tools(tools)
-        api_kwargs.update(self._build_thinking_kwargs(model=model, thinking=thinking))
+        if thinking:
+            api_kwargs["thinking"] = {"type": "adaptive"}
 
         self._current_block_type = "text"
         async with self._client.messages.stream(**api_kwargs) as stream:
@@ -431,19 +430,6 @@ class AnthropicAdapter:
         )
 
     # -- formatting helpers -------------------------------------------------
-
-    def _build_thinking_kwargs(self, *, model: str, thinking: bool) -> dict[str, Any]:
-        """Return Anthropic-compatible thinking controls supported by this adapter."""
-        if not thinking:
-            return {}
-        if self._supports_adaptive_thinking:
-            return {"thinking": {"type": "adaptive"}}
-
-        logger.info(
-            "Skipping adaptive thinking for Anthropic-compatible provider without support",
-            extra={"model": model, "adapter": self.__class__.__name__},
-        )
-        return {}
 
     def _guard_model_image_support(
         self, *, model: str, messages: list[dict[str, Any]]
@@ -1021,7 +1007,6 @@ def get_adapter(config: LLMConfig) -> AnthropicAdapter | OpenAIAdapter:
             api_key=config.api_key,
             base_url=base_url,
             supports_document_blocks=supports_docs,
-            supports_adaptive_thinking=provider == "anthropic",
         )
 
     if provider in ("openai", "gemini", "qwen", "deepseek"):
