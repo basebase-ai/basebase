@@ -37,6 +37,17 @@ MCP_PROTOCOL_VERSION: str = "2025-03-26"
 MCP_CLIENT_INFO: dict[str, str] = {"name": "basebase", "version": "1.0.0"}
 DEFAULT_TIMEOUT: float = 60.0
 
+# Common aliases the LLM may use when calling the `call_tool` action.
+# The canonical names are the first entry of each tuple.
+_TOOL_NAME_ALIASES: tuple[str, ...] = ("tool", "tool_name", "name")
+_ARGUMENTS_ALIASES: tuple[str, ...] = (
+    "arguments",
+    "args",
+    "tool_args",
+    "parameters",
+    "input",
+)
+
 
 # ---------------------------------------------------------------------------
 # Generic MCP client (Streamable HTTP transport, JSON-RPC 2.0)
@@ -221,12 +232,19 @@ class McpConnector(BaseConnector):
         actions=[
             ConnectorAction(
                 name="call_tool",
-                description="Call a tool on the connected MCP server",
+                description=(
+                    "Call a tool on the connected MCP server. "
+                    "Pass params={'tool': '<tool_name>', 'arguments': {…}} where "
+                    "<tool_name> is one of the MCP tools discovered via list_tools, "
+                    "and 'arguments' is an object matching that tool's inputSchema "
+                    "(use {} if the tool takes no arguments). "
+                    "Example: params={'tool': 'search_docs', 'arguments': {'query': 'hello'}}."
+                ),
                 parameters=[
                     {"name": "tool", "type": "string", "required": True,
-                     "description": "Name of the MCP tool to call"},
+                     "description": "Name of the MCP tool to call (from list_tools)"},
                     {"name": "arguments", "type": "object", "required": False,
-                     "description": "Arguments to pass to the tool"},
+                     "description": "Object matching the tool's inputSchema. Pass {} if the tool takes no arguments. Do NOT inline the inner tool's fields at the top level of params."},
                 ],
             ),
         ],
@@ -249,9 +267,17 @@ class McpConnector(BaseConnector):
         ],
         usage_guide=(
             "This connector lets you interact with a remote MCP server.\n\n"
-            "1. Use query_on_connector(connector='<SLUG>', query='list_tools') to see available tools.\n"
+            "1. Use query_on_connector(connector='<SLUG>', query='list_tools') to "
+            "see available tools and their inputSchemas.\n"
             "2. Use run_on_connector(connector='<SLUG>', action='call_tool', "
             "params={'tool': '<tool_name>', 'arguments': {…}}) to invoke a tool.\n\n"
+            "IMPORTANT: there are two parameter layers — do not conflate them.\n"
+            "  - OUTER (the wrapper): params must be exactly {'tool': ..., 'arguments': ...}.\n"
+            "  - INNER (passed to the MCP tool): the 'arguments' object must match the\n"
+            "    tool's own inputSchema (e.g. {'type': 'X (Twitter) Trending', 'limit': 15}).\n"
+            "Do NOT inline the inner tool's fields (like 'type', 'limit') at the top level of params.\n"
+            "Do NOT use 'tool_name' / 'tool_args' / 'args' — the canonical wrapper keys are\n"
+            "'tool' and 'arguments' (other variants are accepted for robustness but discouraged).\n\n"
             "Replace <SLUG> with the actual connector slug (e.g. mcp_deepwiki).\n"
             "The available tools depend on which MCP server the user has connected."
         ),
@@ -317,16 +343,65 @@ class McpConnector(BaseConnector):
     # ACTION capability
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _resolve_tool_and_arguments(
+        params: dict[str, Any],
+    ) -> tuple[str | None, dict[str, Any], list[str]]:
+        """Pull the tool name + arguments out of ``params``, accepting common aliases.
+
+        Returns ``(tool_name, arguments, alias_warnings)``. ``tool_name`` is None
+        when no canonical or alias key holds a non-empty string. ``alias_warnings``
+        is a list of human-readable notes about non-canonical keys the caller used.
+        """
+        tool_name: str | None = None
+        tool_alias_used: str | None = None
+        for key in _TOOL_NAME_ALIASES:
+            candidate: Any = params.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                tool_name = candidate.strip()
+                tool_alias_used = key
+                break
+
+        arguments: dict[str, Any] = {}
+        arg_alias_used: str | None = None
+        for key in _ARGUMENTS_ALIASES:
+            candidate = params.get(key)
+            if isinstance(candidate, dict):
+                arguments = candidate
+                arg_alias_used = key
+                break
+
+        warnings: list[str] = []
+        if tool_alias_used and tool_alias_used != _TOOL_NAME_ALIASES[0]:
+            warnings.append(
+                f"Used non-canonical key '{tool_alias_used}' for the tool name; "
+                f"prefer '{_TOOL_NAME_ALIASES[0]}'."
+            )
+        if arg_alias_used and arg_alias_used != _ARGUMENTS_ALIASES[0]:
+            warnings.append(
+                f"Used non-canonical key '{arg_alias_used}' for the tool arguments; "
+                f"prefer '{_ARGUMENTS_ALIASES[0]}'."
+            )
+        return tool_name, arguments, warnings
+
     async def execute_action(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
         """Call a tool on the MCP server."""
         if action != "call_tool":
             raise ValueError(f"Unknown action: {action}. Use 'call_tool'.")
 
-        tool_name: str | None = params.get("tool")
+        tool_name, arguments, alias_warnings = self._resolve_tool_and_arguments(params)
         if not tool_name:
-            return {"error": "Missing required parameter 'tool' (name of the MCP tool to call)"}
+            return {
+                "error": (
+                    "Missing required parameter 'tool' (the name of the MCP tool to call). "
+                    "Call run_on_connector with params={'tool': '<tool_name>', 'arguments': {…}}. "
+                    "Use query_on_connector(query='list_tools') first to see the available tool names."
+                ),
+                "received_keys": sorted(params.keys()),
+            }
 
-        arguments: dict[str, Any] = params.get("arguments") or {}
+        for note in alias_warnings:
+            logger.warning("[McpConnector] %s", note)
 
         endpoint_url, auth_header, _cached_tools = await self._get_mcp_config()
         client: GenericMcpClient = self._make_client(endpoint_url, auth_header)
@@ -340,7 +415,13 @@ class McpConnector(BaseConnector):
             return {"error": f"HTTP error calling MCP tool '{tool_name}': {exc.response.status_code}"}
 
         text_output: str = _extract_text_from_content(result)
-        return {"tool": tool_name, "output": text_output}
+        response: dict[str, Any] = {"tool": tool_name, "output": text_output}
+        if alias_warnings:
+            response["warning"] = (
+                "Non-canonical parameter keys were used and remapped. "
+                + " ".join(alias_warnings)
+            )
+        return response
 
     # ------------------------------------------------------------------
     # Stubs for abstract methods (MCP connector does not sync CRM data)
