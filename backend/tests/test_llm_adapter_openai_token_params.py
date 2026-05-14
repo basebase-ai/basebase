@@ -47,6 +47,39 @@ def _openai_api_status_error(message: str, status_code: int = 404) -> APIStatusE
     )
 
 
+def test_anthropic_thinking_kwargs_use_adaptive_when_supported():
+    adapter = AnthropicAdapter(api_key="test-key")
+
+    assert adapter._build_thinking_kwargs(model="claude-opus-4-6", thinking=True) == {
+        "thinking": {"type": "adaptive"}
+    }
+
+
+def test_minimax_thinking_kwargs_are_omitted_when_unsupported():
+    adapter = AnthropicAdapter(
+        api_key="test-key",
+        supports_document_blocks=False,
+        supports_adaptive_thinking=False,
+    )
+
+    assert adapter._build_thinking_kwargs(model="MiniMax-M2.7", thinking=True) == {}
+
+
+def test_minimax_factory_disables_adaptive_thinking():
+    adapter = get_adapter(
+        LLMConfig(
+            provider="minimax",
+            primary_model="MiniMax-M2.7",
+            cheap_model="MiniMax-M2.7-highspeed",
+            workflow_model="MiniMax-M2.7-highspeed",
+            api_key="test-key",
+        )
+    )
+
+    assert isinstance(adapter, AnthropicAdapter)
+    assert adapter._build_thinking_kwargs(model="MiniMax-M2.7", thinking=True) == {}
+
+
 def test_openai_gpt5_uses_max_completion_tokens():
     adapter = OpenAIAdapter(api_key="test-key")
 
@@ -528,7 +561,6 @@ def test_minimax_provider_prefix_rejects_image_messages_before_formatting():
         )
 
     assert str(exc_info.value) == MINIMAX_IMAGE_UNSUPPORTED_MESSAGE
-
 
 def test_anthropic_model_allows_image_messages():
     adapter = AnthropicAdapter(api_key="test-key")
