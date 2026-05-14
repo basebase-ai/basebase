@@ -204,7 +204,11 @@ register_tool(
 Use this to get an up-to-date list of connected connectors and their capabilities
 (query, write, action). The manifest shows available operations and their parameters
 for each connector. Useful when the user asks about available connectors or when you
-need to verify a connector is connected before using it.""",
+need to verify a connector is connected before using it.
+
+For **airtop**, check `saved_browser_sites` and `routing_note`: each entry is a logged-in website
+(e.g. LinkedIn) — there is no separate `linkedin` slug; use connector `airtop` and
+`account` matching that site's label.""",
     input_schema={
         "type": "object",
         "properties": {},
@@ -312,6 +316,10 @@ register_tool(
 Use this for any ACTION-capable connector: sending Slack messages, sending emails
 (Gmail/Outlook), sending SMS (Twilio), fetching URLs (web_search), creating Google Drive
 files, executing sandbox commands (code_sandbox), or any future connector with action capability.
+
+For **websites that only have a logged-in web UI** (LinkedIn, Instagram, company internal tools, etc.),
+use connector slug **airtop** (not a vendor-specific slug). Pass **account** equal to the saved site
+label from the manifest / `list_connected_connectors` (each Airtop site is its own account label).
 
 Check the Connected Connectors manifest for available actions and their required parameters.""",
     input_schema={

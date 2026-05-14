@@ -35,7 +35,7 @@ def test_execute_tool_marks_turn_for_credit_closeout_when_grace_used(monkeypatch
     async def _fake_should_skip_approval(*args, **kwargs) -> bool:
         return True
 
-    async def _fake_list_connected_connectors(_organization_id: str):
+    async def _fake_list_connected_connectors(*_args: object):
         return {"connectors": []}
 
     monkeypatch.setattr(credits, "deduct_with_grace", _fake_deduct_with_grace)

@@ -753,6 +753,8 @@ class ChatOrchestrator:
                         Integration.last_sync_at,
                         Integration.last_error,
                         Integration.extra_data,
+                        Integration.account_label,
+                        Integration.account_identifier,
                     )
                     .where(
                         Integration.organization_id == UUID(self.organization_id),
@@ -763,12 +765,17 @@ class ChatOrchestrator:
                 rows = result.all()
 
             active_providers: dict[str, dict[str, Any]] = {}
+            airtop_site_labels: list[str] = []
             for row in rows:
                 active_providers[row[0]] = {
                     "last_sync": row[1],
                     "last_error": row[2],
                     "extra_data": row[3],
                 }
+                if row[0] == "airtop":
+                    site_lbl: str = (row[4] or row[5] or "").strip()
+                    if site_lbl:
+                        airtop_site_labels.append(site_lbl)
 
             registry = discover_connectors()
             all_slugs: set[str] = set(registry.keys()) | set(active_providers.keys())
@@ -776,6 +783,7 @@ class ChatOrchestrator:
             lines: list[str] = [
                 "Call `get_connector_docs(connector)` to get detailed usage instructions and parameter reference before using a connector for the first time.",
                 "Cached query shortcuts: google_drive supports search:<text>, search:spreadsheet|document|presentation, type:spreadsheet|document|presentation, and file:<external_id>.",
+                "Web-only products (LinkedIn, Twitter, internal portals, etc.) are not separate connector slugs: use **airtop** with `run_on_connector` and pass `account` as the saved site label listed under **airtop** below.",
                 "",
             ]
             for slug in sorted(all_slugs):
@@ -813,6 +821,19 @@ class ChatOrchestrator:
                 action_str: str = f" Actions: {', '.join(action_names)}" if action_names else ""
 
                 label: str = f"- **{slug}** ({display_name}) [{caps}]{sync_status} – {summary}{action_str}"
+                if slug == "airtop":
+                    sites_sorted: list[str] = sorted(set(airtop_site_labels))
+                    if sites_sorted:
+                        label += (
+                            " Saved browser sites (use as `account` with connector `airtop`): "
+                            + ", ".join(sites_sorted)
+                            + "."
+                        )
+                    else:
+                        label += (
+                            " No labeled sites yet — add one in Connectors (Airtop); then use "
+                            "`account` = that site label with run_on_connector."
+                        )
                 if is_dynamic_mcp:
                     mcp_tools: list[dict[str, Any]] = extra.get("tools", [])
                     if mcp_tools:

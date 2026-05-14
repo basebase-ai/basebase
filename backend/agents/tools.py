@@ -332,7 +332,7 @@ async def execute_tool(
         "search_documents": lambda: _search_documents(tool_input, organization_id, user_id),
         "initiate_connector": lambda: _initiate_connector(tool_input, organization_id, user_id, context),
         # Connector-driven generic tools
-        "list_connected_connectors": lambda: _list_connected_connectors(organization_id),
+        "list_connected_connectors": lambda: _list_connected_connectors(organization_id, user_id),
         "get_connector_docs": lambda: _get_connector_docs(tool_input, organization_id),
         "query_on_connector": lambda: _query_on_connector(tool_input, organization_id, user_id),
         "write_on_connector": lambda: _write_on_connector(tool_input, organization_id, user_id, skip_approval, context),
@@ -696,24 +696,39 @@ def _attach_cross_user_connector_warning(result: Any, warning: str | None) -> di
     return {"result": result, "warning": warning}
 
 
-async def _list_connected_connectors(organization_id: str) -> dict[str, Any]:
+async def _list_connected_connectors(
+    organization_id: str, user_id: str | None = None
+) -> dict[str, Any]:
     """Return the connectors manifest for all connected connectors."""
     from connectors.registry import Capability, ConnectorMeta, discover_connectors, resolve_connector
     from models.integration import Integration
 
-    async with get_session(organization_id=organization_id) as session:
+    async with get_session(organization_id=organization_id, user_id=user_id) as session:
         result = await session.execute(
-            select(Integration.connector, Integration.extra_data).where(
+            select(
+                Integration.connector,
+                Integration.extra_data,
+                Integration.account_label,
+                Integration.account_identifier,
+            ).where(
                 Integration.organization_id == UUID(organization_id),
                 Integration.is_active == True,  # noqa: E712
             )
         )
-        rows: list[tuple[str, dict[str, Any] | None]] = [(r[0], r[1]) for r in result.all()]
+        raw_rows: list[tuple[str, dict[str, Any] | None, str | None, str | None]] = [
+            (r[0], r[1], r[2], r[3]) for r in result.all()
+        ]
 
-    active_providers: set[str] = {row[0] for row in rows}
-    extra_data_by_provider: dict[str, dict[str, Any]] = {
-        row[0]: row[1] for row in rows if row[1]
-    }
+    active_providers: set[str] = {row[0] for row in raw_rows}
+    extra_data_by_provider: dict[str, dict[str, Any]] = {}
+    airtop_site_labels: list[str] = []
+    for conn, extra, acct_label, acct_ident in raw_rows:
+        if extra:
+            extra_data_by_provider[conn] = extra
+        if conn == "airtop":
+            site_label: str = (acct_label or acct_ident or "").strip()
+            if site_label:
+                airtop_site_labels.append(site_label)
 
     registry = discover_connectors()
 
@@ -759,6 +774,15 @@ async def _list_connected_connectors(organization_id: str) -> dict[str, Any]:
                     for t in mcp_tools
                     if isinstance(t, dict)
                 ]
+        if slug == "airtop":
+            unique_airtop: list[str] = sorted(set(airtop_site_labels))
+            if unique_airtop:
+                entry["saved_browser_sites"] = [{"account": lab} for lab in unique_airtop]
+            entry["routing_note"] = (
+                "There is no separate linkedin (or other web-only vendor) connector slug. "
+                "Each saved website is an Airtop profile: use run_on_connector with connector='airtop' "
+                "and account matching saved_browser_sites[].account (or get_connector_docs('airtop'))."
+            )
         connectors.append(entry)
 
     # Exclude the base "mcp" slug — it's a template, not a real connection
