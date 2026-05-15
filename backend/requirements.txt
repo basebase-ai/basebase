@@ -31,8 +31,8 @@ anthropic==0.76.0
 openai==2.32.0
 
 # Configuration
-pydantic[email]==2.6.1
-pydantic-settings==2.2.1
+pydantic[email]>=2.10,<3
+pydantic-settings>=2.2,<3
 python-dotenv==1.2.2
 
 # Security
