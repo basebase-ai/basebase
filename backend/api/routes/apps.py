@@ -503,7 +503,8 @@ async def execute_app_sql(
         )
 
     if result.get("error"):
-        raise HTTPException(status_code=400, detail=str(result["error"]))
+        logger.error("[apps.execute_app_sql] Embedded app SQL execution failed: %s", str(result["error"]))
+        raise HTTPException(status_code=400, detail="SQL execution failed")
     return result
 
 

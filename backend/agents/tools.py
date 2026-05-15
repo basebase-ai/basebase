@@ -1535,9 +1535,9 @@ async def _run_sql_query(
                 "rows": data,
                 "row_count": len(data),
             }
-    except Exception as e:
-        logger.error("[Tools._run_sql_query] Query execution failed: %s", str(e))
-        return {"error": f"Query execution failed: {str(e)}"}
+    except Exception:
+        logger.exception("[Tools._run_sql_query] Query execution failed")
+        return {"error": "Query execution failed"}
 
 
 # Tables that can be written to via run_sql_write
@@ -2155,9 +2155,9 @@ async def _run_sql_write(
                 "message": f"{operation} completed successfully. {rows_affected} row(s) affected.",
             }
             
-    except Exception as e:
-        logger.error("[Tools._run_sql_write] Query execution failed: %s", str(e))
-        return {"error": f"Query execution failed: {str(e)}"}
+    except Exception:
+        logger.exception("[Tools._run_sql_write] Query execution failed")
+        return {"error": "Query execution failed"}
 
 
 async def _handle_crm_write_from_sql(
@@ -2240,9 +2240,9 @@ async def _handle_crm_write_from_sql(
                 crm_operation,
                 record_type,
             )
-    except Exception as e:
-        logger.error("[Tools._handle_crm_write_from_sql] Failed: %s", str(e))
-        return {"error": f"Failed to create pending operation: {str(e)}"}
+    except Exception:
+        logger.exception("[Tools._handle_crm_write_from_sql] Failed to create pending operation")
+        return {"error": "Failed to create pending operation"}
 
     result = await execute_crm_operation(
         str(pending_op.id),
@@ -3540,15 +3540,15 @@ async def execute_crm_operation(
         return result
         
     except Exception as e:
-        logger.error("[Tools.execute_crm_operation] Error: %s", str(e))
+        logger.exception("[Tools.execute_crm_operation] Error")
         
-        error_msg = str(e)[:500]
+        error_msg = "Operation failed due to an internal error"
         
         async with get_session(organization_id=org_id) as session:
             crm_op = await session.get(CrmOperation, UUID(operation_id))
             if crm_op:
                 crm_op.status = "failed"
-                crm_op.error_message = error_msg
+                crm_op.error_message = str(e)[:500]
                 crm_op.executed_at = datetime.utcnow()
                 await session.commit()
         
@@ -3615,9 +3615,9 @@ async def _create_local_pending_records(
                         db_session=session,
                     )
                     success_count += 1
-                except Exception as e:
-                    logger.warning("[_create_local_pending_records] Failed update proposal: %s", e)
-                    errors.append({"record": record, "error": str(e)})
+                except Exception:
+                    logger.exception("[_create_local_pending_records] Failed update proposal")
+                    errors.append({"record": record, "error": "Failed to process update proposal"})
             await session.commit()
         return {
             "status": "pending_sync",
@@ -3690,9 +3690,9 @@ async def _create_local_pending_records(
                     db_session=session,
                 )
                 created_count += 1
-            except Exception as e:
-                logger.warning("[_create_local_pending_records] Failed create proposal: %s", e)
-                create_errors.append({"record": record, "error": str(e)})
+            except Exception:
+                logger.exception("[_create_local_pending_records] Failed create proposal")
+                create_errors.append({"record": record, "error": "Failed to process create proposal"})
         await session.commit()
 
     skipped_count: int = len(validated_records) - len(records_to_process)
