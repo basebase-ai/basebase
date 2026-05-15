@@ -1,165 +1,119 @@
 # Deploying Basebase to Railway
 
-This guide walks you through deploying the Basebase application to Railway.
+This guide matches the **five-service** layout described in [README.md](README.md): **Frontend**, **Backend (API)**, **Celery Worker**, **Celery Beat**, and **Redis**. **PostgreSQL** is expected to live elsewhere (typically **Supabase** with `pgvector`), not as a sixth Railway container.
 
 ## Prerequisites
 
-1. A [Railway account](https://railway.app)
-2. Your code pushed to a GitHub repository
-3. Environment variables ready (see below)
+- [Railway](https://railway.app) account and GitHub repo access
+- **Supabase** project: Postgres + Auth (`SUPABASE_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_ANON_KEY` — see root [`env.example`](env.example))
+- **Nango** account for OAuth-backed connectors (`NANGO_SECRET_KEY`, `NANGO_PUBLIC_KEY`)
+- LLM keys (at minimum `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` for embeddings/research, unless you standardize on another provider)
 
 ## Architecture
 
-The deployment consists of two services:
-- **Backend** (FastAPI) - `/backend` directory
-- **Frontend** (Vite + Nginx) - `/frontend` directory
+| Service        | Root directory | Role |
+| -------------- | -------------- | ---- |
+| Frontend       | `frontend`     | Vite build → static hosting; needs `VITE_*` at **build** time |
+| Backend (API)  | `backend`      | FastAPI (`api.main:app`); healthcheck `GET /health` |
+| Worker         | `backend`      | `python -m celery -A workers.celery_app worker --loglevel=info` (consumes the `default` queue) |
+| Beat           | `backend`      | `python -m celery -A workers.celery_app beat --loglevel=info` + `ENABLE_CELERY_BEAT=true` |
+| Redis          | Railway Redis  | Broker + result backend for Celery |
 
-## Step 1: Create a New Project on Railway
+Set `DATABASE_URL` on **API** and **Worker** to your Supabase pooler or direct Postgres URI (with `+asyncpg` as in `env.example`). Run migrations from CI or a one-off shell:
 
-1. Go to [railway.app](https://railway.app) and create a new project
-2. Choose "Empty Project"
-
-## Step 2: Deploy the Backend
-
-1. Click "New Service" → "GitHub Repo"
-2. Select your repository
-3. In the service settings:
-   - **Root Directory**: `backend`
-   - Railway will auto-detect the `railway.toml` configuration
-
-4. Add the following environment variables in the service settings:
-
-| Variable | Description |
-|----------|-------------|
-| `DATABASE_URL` | Your Supabase PostgreSQL URL (use pooler URL with `?pgbouncer=true`) |
-| `ANTHROPIC_API_KEY` | Your Anthropic API key |
-| `NANGO_SECRET_KEY` | Your Nango secret key |
-| `NANGO_PUBLIC_KEY` | Your Nango public key |
-| `SUPABASE_URL` | Your Supabase project URL |
-| `SUPABASE_KEY` | Your Supabase service role key |
-| `FRONTEND_URL` | (Set after frontend deploys) Frontend URL for CORS |
-
-5. Click "Deploy"
-
-## Step 3: Deploy the Frontend
-
-1. Click "New Service" → "GitHub Repo" (same repo)
-2. In the service settings:
-   - **Root Directory**: `frontend`
-   - Railway will auto-detect the `railway.toml` configuration
-
-3. Add the following environment variables (as build args):
-
-| Variable | Description |
-|----------|-------------|
-| `VITE_API_URL` | Backend URL from Step 2 (e.g., `https://backend-xxx.railway.app`) |
-| `VITE_SUPABASE_URL` | Your Supabase project URL |
-| `VITE_SUPABASE_ANON_KEY` | Your Supabase anonymous key |
-| `VITE_NANGO_PUBLIC_KEY` | Your Nango public key |
-
-4. Click "Deploy"
-
-## Step 4: Update CORS
-
-After both services are deployed:
-
-1. Go to your **Backend** service settings
-2. Add/update the `FRONTEND_URL` variable with your frontend's Railway URL
-3. Redeploy the backend
-
-## Step 5: Configure Custom Domains (Optional)
-
-1. Go to each service's settings
-2. Click "Generate Domain" or add a custom domain
-3. Update environment variables if using custom domains
-
-## Environment Variable Reference
-
-### Backend (.env example)
-
-```env
-# Database
-DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/db?pgbouncer=true
-
-# AI
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Nango
-NANGO_SECRET_KEY=...
-NANGO_PUBLIC_KEY=...
-
-# Supabase
-SUPABASE_URL=https://xxx.supabase.co
-SUPABASE_KEY=eyJ...
-
-# CORS (set after frontend deploys)
-FRONTEND_URL=https://frontend-xxx.railway.app
+```bash
+cd backend && alembic upgrade head
 ```
 
-### Frontend (build args)
+## Step 1 — Redis
 
-```env
-VITE_API_URL=https://backend-xxx.railway.app
-VITE_SUPABASE_URL=https://xxx.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJ...
-VITE_NANGO_PUBLIC_KEY=...
+1. Railway project → **New** → **Database** → **Redis**
+2. Note `REDIS_URL` for all Python services
+
+## Step 2 — Backend (API)
+
+1. **New** → **GitHub Repo** → select this repo  
+2. **Settings → Source → Root Directory**: `backend`  
+3. **Variables** (mirror production values from [`env.example`](env.example)), including at minimum:
+   - `DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`, `ENVIRONMENT`, `FRONTEND_URL`, `BACKEND_PUBLIC_URL`
+   - `SUPABASE_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_ANON_KEY`
+   - `NANGO_SECRET_KEY`, `NANGO_PUBLIC_KEY`
+   - `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
+   - Optional per feature: `EXA_API_KEY`, `PERPLEXITY_API_KEY`, `SCRAPINGBEE_API_KEY`, `E2B_API_KEY`, `RESEND_API_KEY`, Slack/Twilio/Teams/Stripe keys
+4. **Deploy → Healthcheck Path**: `/health`
+
+## Step 3 — Celery worker
+
+Duplicate the backend service (or create another service from the same repo, root `backend`) with **Start Command**:
+
+```bash
+python -m celery -A workers.celery_app worker --loglevel=info
 ```
 
-## Nango
+Use the **same** `DATABASE_URL` and integration secrets as the API so sync and tool tasks can reach the DB and external systems. **Do not** pass legacy `-Q default,sync,workflows` — the app uses a single `default` queue ([`workers/celery_app.py`](backend/workers/celery_app.py)).
 
-OAuth redirect stays as `api.nango.dev/oauth/callback`; no change needed when you change app/API domain. Ensure **VITE_NANGO_PUBLIC_KEY** is set when building the frontend (required for the Connect UI popup); if it’s missing, connecting GitHub or other Nango integrations can fail.
+## Step 4 — Celery beat
 
-### Slack: Add-to-Slack (Basebase bot) and Nango Connect
+Another `backend` service with:
 
-To support both (1) **Connect** (Nango OAuth) and (2) **Add Basebase to Slack** (other workspaces installing the bot), use a single Slack OAuth callback on your backend:
+```bash
+python -m celery -A workers.celery_app beat --loglevel=info
+```
 
-1. **Slack app** (api.slack.com → Your App → OAuth & Permissions): set **Redirect URL** to:
-   ```
-   https://your-backend-domain/api/auth/slack/oauth-callback
-   ```
-2. **Nango** (Slack integration): set the integration’s **callback URL** to the same backend URL above (so Nango sends users to Slack with this `redirect_uri`).
-3. **Backend env**: set `BACKEND_PUBLIC_URL=https://your-backend-domain`, `SLACK_CLIENT_ID`, and `SLACK_CLIENT_SECRET` (same app as Nango).
-4. Run migration `078_slack_bot_installs` so the `slack_bot_installs` table exists.
+**Required:** `ENABLE_CELERY_BEAT=true` and `REDIS_URL`. Optionally copy the worker env bundle so feature flags like `ENABLE_NIGHTLY_TOPIC_GRAPH` match production.
 
-## Updating Supabase Auth
+When enabled, Beat schedules hourly org sync, workflow timers, monitoring tasks, daily digests, and optional nightly topic graph jobs — see [`celery_app.py`](backend/workers/celery_app.py).
 
-**Required after changing app domain (e.g. to app.basebase.com):** If users are sent to the old domain after Google/OAuth sign-in, Supabase is still using the previous Site URL.
+**Run only one Beat instance** to avoid duplicate schedules.
 
-1. Go to **Supabase Dashboard** → **Authentication** → **URL Configuration**
-2. Set:
-   - **Site URL**: your app origin, e.g. `https://app.basebase.com`
-   - **Redirect URLs**: add `https://app.basebase.com/**` (or at least `https://app.basebase.com/auth/callback`)
-3. Save. New OAuth sign-ins will redirect to this domain.
+## Step 5 — Frontend
+
+1. **New** → **GitHub Repo** → root directory `frontend`  
+2. Set build-time variables (Railway “Variables” / build args):
+
+| Variable | Example |
+| -------- | ------- |
+| `VITE_API_URL` | `https://<your-api>.railway.app` (no `/api` suffix) |
+| `VITE_SUPABASE_URL` | `https://<project>.supabase.co` |
+| `VITE_SUPABASE_ANON_KEY` | Supabase anon key |
+| `VITE_NANGO_PUBLIC_KEY` | Same as `NANGO_PUBLIC_KEY` |
+| `VITE_WWW_URL` (optional) | Marketing site origin |
+
+3. After deploy, set backend `FRONTEND_URL` to the frontend origin (no trailing slash) and redeploy the API for CORS.
+
+## Slack: Nango + Add-to-Slack
+
+Use **one** Slack app for both Nango “Connect” and Basebase’s Add-to-Slack OAuth callback on the backend:
+
+1. Slack app → **OAuth & Permissions** → Redirect URL: `https://<api-host>/api/auth/slack/oauth-callback`
+2. Nango Slack integration → same redirect URL
+3. Backend env: `BACKEND_PUBLIC_URL`, `SLACK_SIGNING_SECRET`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`
+
+See README **Railway** section and [`backend/api/routes/auth.py`](backend/api/routes/auth.py) for details.
+
+## Supabase Auth URLs
+
+After changing app domain (e.g. to `app.basebase.com`):
+
+1. Supabase → **Authentication** → **URL Configuration**
+2. Set **Site URL** and **Redirect URLs** to your app origin (e.g. `https://app.basebase.com/**`)
+
+## WebSockets
+
+Ensure `VITE_API_URL` points at the **API** host. Railway supports WebSockets; the app uses `GET /ws/chat?token=<jwt>` ([`frontend/src/lib/api.ts`](frontend/src/lib/api.ts)).
 
 ## Troubleshooting
 
-### CORS Errors
-- Ensure `FRONTEND_URL` is set correctly on the backend
-- Check that the URL doesn't have a trailing slash
+- **CORS** — `FRONTEND_URL` on the API must match the browser origin exactly (no trailing slash).
+- **Nango / GitHub connect fails** — confirm `VITE_NANGO_PUBLIC_KEY` is present at **frontend build** time.
+- **No scheduled jobs** — verify `ENABLE_CELERY_BEAT=true` on the Beat service and that a Worker is running.
+- **Migrations** — use `MIGRATION_DATABASE_URL` with a direct (non-pooler) role if Supabase pooler blocks `alembic upgrade` (see comments in [`env.example`](env.example)).
 
-### Nango after domain change (e.g. old-domain.com → basebase.com)
-- Redirect URLs in Nango stay as **api.nango.dev/oauth/callback**; the domain change doesn’t affect that.
-- **Backend env (production):** Set `FRONTEND_URL=https://app.basebase.com` (and `BACKEND_PUBLIC_URL=https://api.basebase.com` if used). The backend passes `redirect_url` to Nango so users land on your app after OAuth; that URL is built from `FRONTEND_URL`.
-- **Supabase:** Update **Site URL** and **Redirect URLs** to `https://app.basebase.com` (see “Updating Supabase Auth” above).
+## Local vs production
 
-### GitHub / Nango integrations fail to connect
-- Ensure **VITE_NANGO_PUBLIC_KEY** is set when building the frontend (build arg / env). If it’s missing, the Connect UI can fail (console may show “VITE_NANGO_PUBLIC_KEY is not set”). Nango OAuth callback stays as api.nango.dev; no change needed when changing app domain.
-
-### OAuth redirects to wrong domain (e.g. old-domain.com instead of app.basebase.com)
-- Supabase uses **Site URL** as the default post-login redirect. Update it: **Supabase** → **Authentication** → **URL Configuration** → set **Site URL** to your app origin (e.g. `https://app.basebase.com`) and add that origin to **Redirect URLs** (`https://app.basebase.com/**`).
-
-### WebSocket Connection Issues
-- Ensure `VITE_API_URL` is set correctly (should be the backend URL without `/api`)
-- Railway supports WebSockets by default
-
-### Build Failures
-- Check that all build args (VITE_*) are set in Railway's service variables
-- Ensure the root directory is set correctly for each service
-
-## Local Development vs Production
-
-| Feature | Local | Production |
-|---------|-------|------------|
-| API URL | Proxied via Vite | Direct to backend |
-| WebSocket | `ws://localhost:5173` | `wss://backend.railway.app` |
-| Database | Local PostgreSQL | Supabase |
+| Concern | Local | Production |
+| ------- | ----- | ------------ |
+| API | `http://localhost:8000` | Railway API URL |
+| DB | Docker Postgres or Supabase | Supabase (recommended) |
+| Redis | Docker / localhost | Railway Redis |
+| Celery Beat | Off unless `ENABLE_CELERY_BEAT=true` | `true` on Beat only |
