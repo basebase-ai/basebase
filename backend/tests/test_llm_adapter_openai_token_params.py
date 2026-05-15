@@ -529,6 +529,23 @@ def _warned_image_history():
     ]
 
 
+def _image_only_message():
+    return [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {
+                        "media_type": "image/png",
+                        "data": "iVBORw0KGgo=",
+                    },
+                },
+            ],
+        }
+    ]
+
+
 def test_deepseek_v4_text_model_rejects_image_messages_before_formatting():
     adapter = OpenAIAdapter(api_key="test-key")
 
@@ -688,6 +705,28 @@ def test_deepseek_v4_text_model_rejects_new_image_after_prior_warning():
             model="deepseek-v4-pro",
             messages=messages,
         )
+
+
+def test_deepseek_v4_text_model_strips_already_warned_image_only_turn():
+    adapter = OpenAIAdapter(api_key="test-key")
+    messages = [
+        _image_only_message()[0],
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE}
+            ],
+        },
+        {"role": "user", "content": "Please continue without the image."},
+    ]
+
+    prepared = adapter._prepare_messages_for_model(
+        model="deepseek-v4-pro",
+        messages=messages,
+    )
+
+    assert prepared == messages[1:]
+    assert messages[0]["content"][0]["type"] == "image"
 
 
 @pytest.mark.asyncio

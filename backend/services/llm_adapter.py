@@ -206,7 +206,7 @@ def strip_image_blocks_for_text_only_model(
 
         if len(filtered_content) == len(content):
             stripped_messages.append(msg)
-        else:
+        elif filtered_content:
             stripped_messages.append({**msg, "content": filtered_content})
 
     if removed_count:
