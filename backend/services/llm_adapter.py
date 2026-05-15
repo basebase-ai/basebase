@@ -106,19 +106,115 @@ def model_image_unsupported_message(model: str) -> str | None:
     return None
 
 
+def _is_image_block(block: Any) -> bool:
+    """Return whether a content block carries image bytes/URLs."""
+    if not isinstance(block, dict):
+        return False
+    block_type: str = str(block.get("type", "")).lower()
+    return block_type in {"image", "image_url"}
+
+
 def messages_contain_images(messages: list[dict[str, Any]]) -> bool:
     """Detect image content blocks before dispatching to a provider API."""
     for msg in messages:
         content: Any = msg.get("content")
         if not isinstance(content, list):
             continue
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            block_type: str = str(block.get("type", "")).lower()
-            if block_type in {"image", "image_url"}:
-                return True
+        if any(_is_image_block(block) for block in content):
+            return True
     return False
+
+
+def _content_text(content: Any) -> str:
+    """Extract user-visible text from common message content shapes."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+
+    parts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type")
+        if block_type == "text":
+            parts.append(str(block.get("text", "")))
+        elif block_type == "tool_result":
+            parts.append(str(block.get("content", "")))
+    return "\n".join(parts)
+
+
+def _is_text_only_image_warning(content: Any) -> bool:
+    """Detect assistant turns that already warned about text-only image support."""
+    text = _content_text(content).lower()
+    if not text:
+        return False
+    return (
+        "can’t process image attachments" in text
+        or "can't process image attachments" in text
+        or "haven’t analyzed the image" in text
+        or "haven't analyzed the image" in text
+    )
+
+
+def messages_contain_unwarned_images(messages: list[dict[str, Any]]) -> bool:
+    """Return whether images appear after the latest text-only image warning.
+
+    Images are intentionally preserved in stored conversation history. For
+    text-only models, a prior assistant warning marks the earlier image-bearing
+    user turn as acknowledged, so later model calls can silently omit those
+    image blocks instead of repeating the same refusal.
+    """
+    has_image_since_warning = False
+    for msg in messages:
+        role = msg.get("role")
+        content: Any = msg.get("content")
+        if isinstance(content, list) and any(
+            _is_image_block(block) for block in content
+        ):
+            has_image_since_warning = True
+            continue
+
+        if (
+            role == "assistant"
+            and has_image_since_warning
+            and _is_text_only_image_warning(content)
+        ):
+            has_image_since_warning = False
+
+    return has_image_since_warning
+
+
+def strip_image_blocks_for_text_only_model(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return a copy of messages with image blocks removed for text-only models."""
+    stripped_messages: list[dict[str, Any]] = []
+    removed_count = 0
+    for msg in messages:
+        content: Any = msg.get("content")
+        if not isinstance(content, list):
+            stripped_messages.append(msg)
+            continue
+
+        filtered_content: list[Any] = []
+        for block in content:
+            if _is_image_block(block):
+                removed_count += 1
+                continue
+            filtered_content.append(block)
+
+        if len(filtered_content) == len(content):
+            stripped_messages.append(msg)
+        elif filtered_content:
+            stripped_messages.append({**msg, "content": filtered_content})
+
+    if removed_count:
+        logger.info(
+            "Dropped image blocks before text-only model dispatch",
+            extra={"removed_image_blocks": removed_count},
+        )
+    return stripped_messages
 
 
 def _get_attr_or_item(value: Any, name: str, default: Any = None) -> Any:
@@ -345,8 +441,10 @@ class AnthropicAdapter:
         thinking: bool = False,
         max_tokens: int = 32768,
     ) -> AsyncIterator[StreamEvent]:
-        self._guard_model_image_support(model=model, messages=messages)
-        api_messages: list[dict[str, Any]] = self.format_messages_for_api(messages)
+        prepared_messages = self._prepare_messages_for_model(
+            model=model, messages=messages
+        )
+        api_messages: list[dict[str, Any]] = self.format_messages_for_api(prepared_messages)
         api_kwargs: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
@@ -443,8 +541,10 @@ class AnthropicAdapter:
         messages: list[dict[str, Any]],
         max_tokens: int = 1024,
     ) -> CompletedMessage:
-        self._guard_model_image_support(model=model, messages=messages)
-        api_messages: list[dict[str, Any]] = self.format_messages_for_api(messages)
+        prepared_messages = self._prepare_messages_for_model(
+            model=model, messages=messages
+        )
+        api_messages: list[dict[str, Any]] = self.format_messages_for_api(prepared_messages)
         response = await self._client.messages.create(
             model=model,
             max_tokens=max_tokens,
@@ -463,9 +563,9 @@ class AnthropicAdapter:
     def _guard_model_image_support(
         self, *, model: str, messages: list[dict[str, Any]]
     ) -> None:
-        """Fail locally before sending images to text-only model variants."""
+        """Fail locally before sending new images to text-only model variants."""
         unsupported_message = model_image_unsupported_message(model)
-        if unsupported_message is None or not messages_contain_images(messages):
+        if unsupported_message is None or not messages_contain_unwarned_images(messages):
             return
 
         logger.info(
@@ -473,6 +573,15 @@ class AnthropicAdapter:
             extra={"model": model, "adapter": self.__class__.__name__},
         )
         raise DeepSeekImageUnsupportedError(unsupported_message)
+
+    def _prepare_messages_for_model(
+        self, *, model: str, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Validate image support and strip already-warned images if needed."""
+        self._guard_model_image_support(model=model, messages=messages)
+        if model_image_unsupported_message(model) is None:
+            return messages
+        return strip_image_blocks_for_text_only_model(messages)
 
     def format_tools(self, tools: list[ToolDef]) -> list[dict[str, Any]]:
         return [
@@ -626,10 +735,12 @@ class OpenAIAdapter:
         thinking: bool = False,
         max_tokens: int = 32768,
     ) -> AsyncIterator[StreamEvent]:
-        self._guard_model_image_support(model=model, messages=messages)
+        prepared_messages = self._prepare_messages_for_model(
+            model=model, messages=messages
+        )
         api_messages: list[dict[str, Any]] = [
             {"role": "system", "content": system}
-        ] + self.format_messages_for_api(messages)
+        ] + self.format_messages_for_api(prepared_messages)
 
         api_kwargs: dict[str, Any] = {
             "messages": api_messages,
@@ -772,10 +883,12 @@ class OpenAIAdapter:
         messages: list[dict[str, Any]],
         max_tokens: int = 1024,
     ) -> CompletedMessage:
-        self._guard_model_image_support(model=model, messages=messages)
+        prepared_messages = self._prepare_messages_for_model(
+            model=model, messages=messages
+        )
         api_messages: list[dict[str, Any]] = [
             {"role": "system", "content": system}
-        ] + self.format_messages_for_api(messages)
+        ] + self.format_messages_for_api(prepared_messages)
 
         response: Any = None
         model_candidates: list[str] = [model, *self._openai_not_found_fallback_models(model)]
@@ -820,9 +933,9 @@ class OpenAIAdapter:
     def _guard_model_image_support(
         self, *, model: str, messages: list[dict[str, Any]]
     ) -> None:
-        """Fail locally before sending images to text-only model variants."""
+        """Fail locally before sending new images to text-only model variants."""
         unsupported_message = model_image_unsupported_message(model)
-        if unsupported_message is None or not messages_contain_images(messages):
+        if unsupported_message is None or not messages_contain_unwarned_images(messages):
             return
 
         logger.info(
@@ -830,6 +943,15 @@ class OpenAIAdapter:
             extra={"model": model, "adapter": self.__class__.__name__},
         )
         raise DeepSeekImageUnsupportedError(unsupported_message)
+
+    def _prepare_messages_for_model(
+        self, *, model: str, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Validate image support and strip already-warned images if needed."""
+        self._guard_model_image_support(model=model, messages=messages)
+        if model_image_unsupported_message(model) is None:
+            return messages
+        return strip_image_blocks_for_text_only_model(messages)
 
     def format_tools(self, tools: list[ToolDef]) -> list[dict[str, Any]]:
         return [
