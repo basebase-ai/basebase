@@ -108,9 +108,11 @@ def _parse_inline_markdown(line: str) -> tuple[str, list[tuple[int, int, str]]]:
                 display_parts.append(line[i:])
                 break
             content = line[i + 2 : j]
-            runs.append((pos, pos + _utf16_len(content), "bold"))
+            content_len: int = _utf16_len(content)
+            if content_len > 0:
+                runs.append((pos, pos + content_len, "bold"))
             display_parts.append(content)
-            pos += _utf16_len(content)
+            pos += content_len
             i = j + 2
         elif line[i] == "*" and (i == 0 or line[i - 1] != "*"):
             j = line.find("*", i + 1)
@@ -118,9 +120,11 @@ def _parse_inline_markdown(line: str) -> tuple[str, list[tuple[int, int, str]]]:
                 display_parts.append(line[i:])
                 break
             content = line[i + 1 : j]
-            runs.append((pos, pos + _utf16_len(content), "italic"))
+            content_len = _utf16_len(content)
+            if content_len > 0:
+                runs.append((pos, pos + content_len, "italic"))
             display_parts.append(content)
-            pos += _utf16_len(content)
+            pos += content_len
             i = j + 1
         elif line[i] == "`":
             j = line.find("`", i + 1)
@@ -128,9 +132,11 @@ def _parse_inline_markdown(line: str) -> tuple[str, list[tuple[int, int, str]]]:
                 display_parts.append(line[i:])
                 break
             content = line[i + 1 : j]
-            runs.append((pos, pos + _utf16_len(content), "code"))
+            content_len = _utf16_len(content)
+            if content_len > 0:
+                runs.append((pos, pos + content_len, "code"))
             display_parts.append(content)
-            pos += _utf16_len(content)
+            pos += content_len
             i = j + 1
         else:
             display_parts.append(line[i])
@@ -202,6 +208,8 @@ def _markdown_to_docs_requests(content: str) -> list[dict[str, Any]]:
         for start_off, end_off, style in inline_runs:
             start_idx: int = idx + start_off
             end_idx: int = idx + end_off
+            if start_idx >= end_idx:
+                continue
             if style == "bold":
                 requests.append({
                     "updateTextStyle": {
