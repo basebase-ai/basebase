@@ -7,6 +7,7 @@ from openai import APIStatusError
 
 from services.llm_adapter import (
     LLMConfig,
+    DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE,
     MINIMAX_IMAGE_UNSUPPORTED_MESSAGE,
     AnthropicAdapter,
     supports_anthropic_adaptive_thinking,
@@ -515,6 +516,36 @@ def _image_message():
     ]
 
 
+def _warned_image_history():
+    return [
+        _image_message()[0],
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE}
+            ],
+        },
+        {"role": "user", "content": "Thanks, please continue without the image."},
+    ]
+
+
+def _image_only_message():
+    return [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {
+                        "media_type": "image/png",
+                        "data": "iVBORw0KGgo=",
+                    },
+                },
+            ],
+        }
+    ]
+
+
 def test_deepseek_v4_text_model_rejects_image_messages_before_formatting():
     adapter = OpenAIAdapter(api_key="test-key")
 
@@ -560,6 +591,34 @@ def test_minimax_provider_prefix_rejects_image_messages_before_formatting():
         )
 
     assert str(exc_info.value) == MINIMAX_IMAGE_UNSUPPORTED_MESSAGE
+
+
+def test_minimax_model_allows_already_warned_image_history():
+    adapter = AnthropicAdapter(api_key="test-key", supports_document_blocks=False)
+    messages = [
+        _image_message()[0],
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": MINIMAX_IMAGE_UNSUPPORTED_MESSAGE}
+            ],
+        },
+        {"role": "user", "content": "Please continue without the image."},
+    ]
+
+    adapter._guard_model_image_support(
+        model="MiniMax-M2.7",
+        messages=messages,
+    )
+
+    prepared = adapter._prepare_messages_for_model(
+        model="MiniMax-M2.7",
+        messages=messages,
+    )
+    assert prepared[0]["content"] == [
+        {"type": "text", "text": "What is in this image?"}
+    ]
+
 
 def test_anthropic_model_allows_image_messages():
     adapter = AnthropicAdapter(api_key="test-key")
@@ -616,3 +675,83 @@ async def test_deepseek_v4_vision_stream_sends_images_to_api():
         "type": "image_url",
         "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
     }
+
+
+def test_deepseek_v4_text_model_allows_already_warned_image_history():
+    adapter = OpenAIAdapter(api_key="test-key")
+    messages = _warned_image_history()
+
+    adapter._guard_model_image_support(
+        model="deepseek-v4-pro",
+        messages=messages,
+    )
+
+    prepared = adapter._prepare_messages_for_model(
+        model="deepseek-v4-pro",
+        messages=messages,
+    )
+    assert messages[0]["content"][1]["type"] == "image"
+    assert prepared[0]["content"] == [
+        {"type": "text", "text": "What is in this image?"}
+    ]
+
+
+def test_deepseek_v4_text_model_rejects_new_image_after_prior_warning():
+    adapter = OpenAIAdapter(api_key="test-key")
+    messages = _warned_image_history() + _image_message()
+
+    with pytest.raises(ValueError, match="DeepSeek-V4-Vision"):
+        adapter._guard_model_image_support(
+            model="deepseek-v4-pro",
+            messages=messages,
+        )
+
+
+def test_deepseek_v4_text_model_strips_already_warned_image_only_turn():
+    adapter = OpenAIAdapter(api_key="test-key")
+    messages = [
+        _image_only_message()[0],
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": DEEPSEEK_V4_IMAGE_UNSUPPORTED_MESSAGE}
+            ],
+        },
+        {"role": "user", "content": "Please continue without the image."},
+    ]
+
+    prepared = adapter._prepare_messages_for_model(
+        model="deepseek-v4-pro",
+        messages=messages,
+    )
+
+    assert prepared == messages[1:]
+    assert messages[0]["content"][0]["type"] == "image"
+
+
+@pytest.mark.asyncio
+async def test_deepseek_v4_stream_drops_already_warned_images_at_api_layer():
+    adapter = OpenAIAdapter(api_key="test-key")
+    create_mock = AsyncMock(return_value=_EmptyAsyncIterator())
+    adapter._client = SimpleNamespace(  # type: ignore[assignment]
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock))
+    )
+    messages = _warned_image_history()
+
+    events = [
+        event
+        async for event in adapter.stream(
+            model="deepseek-v4-pro",
+            system="sys",
+            messages=messages,
+            max_tokens=42,
+        )
+    ]
+
+    assert events == []
+    assert create_mock.await_count == 1
+    sent_messages = create_mock.await_args.kwargs["messages"]
+    assert sent_messages[1]["content"] == [
+        {"type": "text", "text": "What is in this image?"}
+    ]
+    assert messages[0]["content"][1]["type"] == "image"
