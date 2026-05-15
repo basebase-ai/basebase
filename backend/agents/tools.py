@@ -949,7 +949,7 @@ def _build_connection_revoked_result(
 
     provider_name: str = get_provider_display_name(connector)
     return {
-        "error": f"{operation_label} failed: {exc}",
+        "error": f"{operation_label} failed due to an expired or revoked connection.",
         "user_guidance": (
             f"The {provider_name} connection has expired or been revoked. "
             f"To fix this, go to the Connectors page (/connectors), "
@@ -1080,7 +1080,7 @@ async def _query_on_connector(
         except Exception as exc:
             logger.error("[Tools] query_on_connector(%s) failed: %s", connector, exc, exc_info=True)
             return await _attach_connector_docs(
-                {"error": f"Query to {connector} failed: {exc}"},
+                {"error": f"Query to {connector} failed due to an internal connector error."},
                 connector, organization_id,
             )
 
@@ -1168,7 +1168,7 @@ async def _write_on_connector(
             raw_data = _json.JSONDecoder(strict=False).decode(raw_data)
         except (ValueError, TypeError) as exc:
             logger.warning("[Tools] write_on_connector: failed to parse data string: %s", exc)
-            return {"error": f"data must be a JSON object (parse error: {exc})"}
+            return {"error": "data must be a valid JSON object"}
     data: dict[str, Any] = dict(raw_data)
 
     if connector == "artifacts":
@@ -1248,17 +1248,25 @@ async def _write_on_connector(
         await record_outcome(change_id, organization_id, result)
         return _attach_cross_user_connector_warning(result, cross_user_warning)
     except ExternalConnectionRevokedError as exc:
-        await record_outcome(change_id, organization_id, {"error": str(exc)})
+        await record_outcome(
+            change_id,
+            organization_id,
+            {"error": "Write failed due to an expired or revoked connection."},
+        )
         logger.warning("[Tools] write_on_connector(%s, %s) connection revoked: %s", connector, operation, exc)
         return await _attach_connector_docs(
             _build_connection_revoked_result(connector, f"Write to {connector}.{operation}", exc),
             connector, organization_id,
         )
     except Exception as exc:
-        await record_outcome(change_id, organization_id, {"error": str(exc)})
+        await record_outcome(
+            change_id,
+            organization_id,
+            {"error": "Write failed due to an internal connector error."},
+        )
         logger.error("[Tools] write_on_connector(%s, %s) failed: %s", connector, operation, exc, exc_info=True)
         return await _attach_connector_docs(
-            {"error": f"Write to {connector}.{operation} failed: {exc}"},
+            {"error": f"Write to {connector}.{operation} failed due to an internal connector error."},
             connector, organization_id,
         )
 
@@ -1369,7 +1377,7 @@ async def _run_on_connector(
             raw_action_params = _json.JSONDecoder(strict=False).decode(raw_action_params)
         except (ValueError, TypeError) as exc:
             logger.warning("[Tools] run_on_connector: failed to parse params string: %s", exc)
-            return {"error": f"params must be a JSON object (parse error: {exc})"}
+            return {"error": "params must be a valid JSON object"}
     action_params: dict[str, Any] = dict(raw_action_params)
 
     if not connector:
@@ -1443,17 +1451,25 @@ async def _run_on_connector(
         await record_outcome(change_id, organization_id, result)
         return _attach_cross_user_connector_warning(result, cross_user_warning)
     except ExternalConnectionRevokedError as exc:
-        await record_outcome(change_id, organization_id, {"error": str(exc)})
+        await record_outcome(
+            change_id,
+            organization_id,
+            {"error": "Action failed due to an expired or revoked connection."},
+        )
         logger.warning("[Tools] run_on_connector(%s, %s) connection revoked: %s", connector, action, exc)
         return await _attach_connector_docs(
             _build_connection_revoked_result(connector, f"Action {connector}.{action}", exc),
             connector, organization_id,
         )
     except Exception as exc:
-        await record_outcome(change_id, organization_id, {"error": str(exc)})
+        await record_outcome(
+            change_id,
+            organization_id,
+            {"error": "Action failed due to an internal connector error."},
+        )
         logger.error("[Tools] run_on_connector(%s, %s) failed: %s", connector, action, exc, exc_info=True)
         return await _attach_connector_docs(
-            {"error": f"Action {connector}.{action} failed: {exc}"},
+            {"error": f"Action {connector}.{action} failed due to an internal connector error."},
             connector, organization_id,
         )
 
