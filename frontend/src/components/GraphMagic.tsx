@@ -350,6 +350,27 @@ export function GraphMagic(): JSX.Element {
     return Math.max(2.5, 2 + (node.importance_score * 12));
   };
 
+  const cosmographPoints = useMemo(
+    () => graphWithVisuals?.nodes.map((n) => ({
+      id: n.id,
+      label: n.label,
+      color: n.color,
+      _size: getNodeSize(n),
+    } as Record<string, unknown>)) ?? [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [graphWithVisuals, sizeMode],
+  );
+
+  const cosmographLinks = useMemo(
+    () => graphWithVisuals?.edges.map((e) => ({
+      source: e.source,
+      target: e.target,
+      _width: Math.max(1, e.weight),
+      _color: `rgba(148, 163, 184, ${Math.min(0.85, 0.2 + (e.weight / 8))})`,
+    } as Record<string, unknown>)) ?? [],
+    [graphWithVisuals],
+  );
+
   const onNodeClick = async (id: string): Promise<void> => {
     setNodeId(id);
     const { data } = await apiRequest<{ snippets: Array<{ ref: string; snippet: string; event_time: string; source_display?: string }> }>(
@@ -443,25 +464,33 @@ export function GraphMagic(): JSX.Element {
       <div className="bg-surface-900 border border-surface-800 rounded-lg p-3 flex-1 min-h-[68vh] relative">
         {graphWithVisuals ? (
           <Cosmograph
-            key={`graph-${orgId}-${selectedDate}-${repulsionLevel}`}
-            nodes={graphWithVisuals.nodes}
-            links={graphWithVisuals.edges}
-            nodeLabelAccessor={(n: GraphNode) => n.label}
-            nodeColor={(n: GraphNode) => n.color ?? '#a855f7'}
-            nodeSize={(n: GraphNode) => getNodeSize(n as GraphNodeWithVisuals)}
-            linkWidth={(link: GraphEdge) => Math.max(1, link.weight)}
-            linkColor={(link: GraphEdge) => `rgba(148, 163, 184, ${Math.min(0.85, 0.2 + (link.weight / 8))})`}
+            key={`graph-${orgId}-${selectedDate}-${repulsionLevel}-${sizeMode}`}
+            points={cosmographPoints}
+            pointIdBy="id"
+            pointLabelBy="label"
+            pointColorBy="color"
+            pointSizeBy="_size"
+            links={cosmographLinks}
+            linkSourceBy="source"
+            linkTargetBy="target"
+            linkWidthBy="_width"
+            linkColorBy="_color"
             simulationRepulsion={REPULSION_LEVELS[repulsionLevel]}
             simulationLinkDistance={GRAPH_SIMULATION.linkDistance}
             simulationLinkSpring={GRAPH_SIMULATION.linkSpring}
             fitViewOnInit
             className="h-full w-full"
-            onClick={(clickedNode: GraphNode | undefined) => {
-              if (!clickedNode?.id) {
+            onClick={(index: number | undefined, _pointPosition: [number, number] | undefined, _event: MouseEvent) => {
+              if (index === undefined || !graphWithVisuals) {
                 closeNodeDetails();
                 return;
               }
-              void onNodeClick(clickedNode.id);
+              const clickedNodeId: string | undefined = graphWithVisuals.nodes[index]?.id;
+              if (!clickedNodeId) {
+                closeNodeDetails();
+                return;
+              }
+              void onNodeClick(clickedNodeId);
             }}
           />
         ) : (
