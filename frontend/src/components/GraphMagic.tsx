@@ -480,7 +480,7 @@ export function GraphMagic(): JSX.Element {
             simulationLinkSpring={GRAPH_SIMULATION.linkSpring}
             fitViewOnInit
             className="h-full w-full"
-            onClick={(index: number | undefined, _pointPosition: [number, number] | undefined, _event: MouseEvent) => {
+            onClick={(index: number | undefined) => {
               if (index === undefined || !graphWithVisuals) {
                 closeNodeDetails();
                 return;
