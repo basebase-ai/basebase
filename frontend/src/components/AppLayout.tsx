@@ -66,6 +66,7 @@ const ADMIN_TAB_TO_PATH: Record<AdminPanelTab, string> = {
   organizations: '/admin/teams',
   connectors: '/admin/connectors',
   jobs: '/admin/jobs',
+  models: '/admin/models',
   'graph-magic': '/admin/graph-magic',
 };
 

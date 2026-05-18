@@ -523,6 +523,26 @@ export function AdminPanel(): JSX.Element {
   const [cancellingJobId, setCancellingJobId] = useState<string | null>(null);
   const [killingAllJobs, setKillingAllJobs] = useState<boolean>(false);
 
+  // Models tab state
+  interface AdminModel {
+    id: string;
+    model_name: string;
+    provider: string;
+    input_cost_per_m: number;
+    output_cost_per_m: number;
+    is_enabled: boolean;
+    supports_images: boolean;
+    supports_tools: boolean;
+    max_context_tokens: number | null;
+    created_at: string;
+    updated_at: string;
+  }
+  const [adminModels, setAdminModels] = useState<AdminModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState<boolean>(true);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const [editingModel, setEditingModel] = useState<AdminModel | null>(null);
+  const [savingModel, setSavingModel] = useState<boolean>(false);
+
   // Dashboard tab state
   const [creditUsage, setCreditUsage] = useState<CreditUsageResponse | null>(null);
   const [creditUsageLoading, setCreditUsageLoading] = useState<boolean>(true);
@@ -701,6 +721,39 @@ export function AdminPanel(): JSX.Element {
     }
   }, [user]);
 
+  const fetchModels = useCallback(async (): Promise<void> => {
+    setModelsLoading(true);
+    setModelsError(null);
+    try {
+      const { data, error: reqErr } = await apiRequest<AdminModel[]>('/admin/models');
+      if (reqErr || !data) { setModelsError(reqErr ?? 'Failed to fetch models'); return; }
+      setAdminModels(data);
+    } catch { setModelsError('Request failed'); }
+    finally { setModelsLoading(false); }
+  }, []);
+
+  const handleSaveModel = async (model: AdminModel): Promise<void> => {
+    setSavingModel(true);
+    try {
+      const { data, error: reqErr } = await apiRequest<AdminModel>(`/admin/models/${encodeURIComponent(model.model_name)}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          provider: model.provider,
+          input_cost_per_m: model.input_cost_per_m,
+          output_cost_per_m: model.output_cost_per_m,
+          is_enabled: model.is_enabled,
+          supports_images: model.supports_images,
+          supports_tools: model.supports_tools,
+          max_context_tokens: model.max_context_tokens,
+        }),
+      });
+      if (reqErr || !data) { alert(reqErr ?? 'Save failed'); return; }
+      setAdminModels((prev) => prev.map((m) => m.id === data.id ? data : m));
+      setEditingModel(null);
+    } catch { alert('Save failed'); }
+    finally { setSavingModel(false); }
+  };
+
   const fetchQueryOutcomeRate = useCallback(async (): Promise<void> => {
     if (!user) return;
 
@@ -737,10 +790,12 @@ export function AdminPanel(): JSX.Element {
       void fetchQueryOutcomeRate();
     } else if (activeTab === 'jobs') {
       void fetchRunningJobs();
+    } else if (activeTab === 'models') {
+      void fetchModels();
     } else if (activeTab === 'graph-magic') {
       // graph tab fetches on-demand in component
     }
-  }, [activeTab, fetchCreditUsage, fetchTopConversations, fetchWaitlist, fetchUsers, fetchOrganizations, fetchIntegrations, fetchQueryOutcomeRate, fetchRunningJobs]);
+  }, [activeTab, fetchCreditUsage, fetchTopConversations, fetchWaitlist, fetchUsers, fetchOrganizations, fetchIntegrations, fetchQueryOutcomeRate, fetchRunningJobs, fetchModels]);
 
   const handleCancelJob = async (job: AdminRunningJob): Promise<void> => {
     if (!user) return;
@@ -2602,6 +2657,140 @@ export function AdminPanel(): JSX.Element {
               <div className="text-sm text-surface-500 text-center">
                 Showing {filteredIntegrations.length} of {adminIntegrations.length} connectors
                 {sourceSearch && ` matching "${sourceSearch}"`}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'models' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-surface-400">Manage LLM model pricing and capabilities.</p>
+              <button
+                onClick={() => void fetchModels()}
+                className="rounded-lg border border-surface-700 bg-surface-800 px-3 py-1.5 text-sm text-surface-200 hover:bg-surface-700"
+              >
+                Refresh
+              </button>
+            </div>
+
+            {modelsError && (
+              <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400">{modelsError}</div>
+            )}
+
+            {modelsLoading ? (
+              <p className="text-surface-400 text-sm">Loading models…</p>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-surface-800">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-surface-800 bg-surface-900/50">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-surface-400 uppercase">Model</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-surface-400 uppercase">Provider</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-surface-400 uppercase">Input $/M</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-surface-400 uppercase">Output $/M</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-surface-400 uppercase">Enabled</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-surface-400 uppercase">Images</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-surface-400 uppercase">Tools</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-surface-400 uppercase">Context</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-surface-400 uppercase">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-800">
+                    {adminModels.map((model) => (
+                      <tr key={model.id} className="hover:bg-surface-800/40 transition-colors">
+                        <td className="px-4 py-3 text-sm font-mono text-surface-200">{model.model_name}</td>
+                        <td className="px-4 py-3 text-sm text-surface-300">{model.provider}</td>
+                        <td className="px-4 py-3 text-sm text-surface-300 text-right">${model.input_cost_per_m.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-sm text-surface-300 text-right">${model.output_cost_per_m.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-center">{model.is_enabled ? <span className="text-green-400">Yes</span> : <span className="text-surface-500">No</span>}</td>
+                        <td className="px-4 py-3 text-center">{model.supports_images ? <span className="text-green-400">Yes</span> : <span className="text-surface-500">No</span>}</td>
+                        <td className="px-4 py-3 text-center">{model.supports_tools ? <span className="text-green-400">Yes</span> : <span className="text-surface-500">No</span>}</td>
+                        <td className="px-4 py-3 text-sm text-surface-300 text-right">{model.max_context_tokens ? `${(model.max_context_tokens / 1000).toFixed(0)}k` : '—'}</td>
+                        <td className="px-4 py-3 text-center">
+                          <button
+                            onClick={() => setEditingModel({ ...model })}
+                            className="text-xs text-primary-400 hover:text-primary-300"
+                          >
+                            Edit
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {editingModel && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setEditingModel(null)}>
+                <div className="bg-surface-900 border border-surface-700 rounded-xl p-6 w-full max-w-md space-y-4" onClick={(e) => e.stopPropagation()}>
+                  <h3 className="text-lg font-semibold text-surface-100">Edit {editingModel.model_name}</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs text-surface-400 mb-1">Provider</label>
+                      <input
+                        type="text"
+                        value={editingModel.provider}
+                        onChange={(e) => setEditingModel({ ...editingModel, provider: e.target.value })}
+                        className="input-field w-full"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-surface-400 mb-1">Max Context (tokens)</label>
+                      <input
+                        type="number"
+                        value={editingModel.max_context_tokens ?? ''}
+                        onChange={(e) => setEditingModel({ ...editingModel, max_context_tokens: e.target.value ? Number(e.target.value) : null })}
+                        className="input-field w-full"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-surface-400 mb-1">Input $/M tokens</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={editingModel.input_cost_per_m}
+                        onChange={(e) => setEditingModel({ ...editingModel, input_cost_per_m: Number(e.target.value) })}
+                        className="input-field w-full"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-surface-400 mb-1">Output $/M tokens</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={editingModel.output_cost_per_m}
+                        onChange={(e) => setEditingModel({ ...editingModel, output_cost_per_m: Number(e.target.value) })}
+                        className="input-field w-full"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-6">
+                    <label className="flex items-center gap-2 text-sm text-surface-300">
+                      <input type="checkbox" checked={editingModel.is_enabled} onChange={(e) => setEditingModel({ ...editingModel, is_enabled: e.target.checked })} className="rounded" />
+                      Enabled
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-surface-300">
+                      <input type="checkbox" checked={editingModel.supports_images} onChange={(e) => setEditingModel({ ...editingModel, supports_images: e.target.checked })} className="rounded" />
+                      Images
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-surface-300">
+                      <input type="checkbox" checked={editingModel.supports_tools} onChange={(e) => setEditingModel({ ...editingModel, supports_tools: e.target.checked })} className="rounded" />
+                      Tools
+                    </label>
+                  </div>
+                  <div className="flex justify-end gap-3 pt-2">
+                    <button onClick={() => setEditingModel(null)} className="px-4 py-2 text-sm text-surface-300 hover:text-surface-100">Cancel</button>
+                    <button
+                      onClick={() => void handleSaveModel(editingModel)}
+                      disabled={savingModel}
+                      className="px-4 py-2 text-sm font-medium text-white bg-primary-500 hover:bg-primary-600 rounded-lg disabled:opacity-50"
+                    >
+                      {savingModel ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </div>
