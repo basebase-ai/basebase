@@ -1012,6 +1012,64 @@ def _tier_from_subscription(sub: Any) -> Optional[str]:
     return None
 
 
+class UsageByDayItem(BaseModel):
+    date: str
+    input_tokens: int
+    output_tokens: int
+    credits_charged: int
+    call_count: int
+
+
+class UsageByDayResponse(BaseModel):
+    days: list[UsageByDayItem]
+
+
+@router.get("/usage-by-day", response_model=UsageByDayResponse)
+async def get_usage_by_day(
+    auth: AuthContext = Depends(require_organization),
+    days: int = 30,
+) -> UsageByDayResponse:
+    """Daily LLM token usage and credit spend for the current organization."""
+    org_id = auth.organization_id
+    if not org_id:
+        raise HTTPException(status_code=403, detail="Organization required")
+
+    lookback_days: int = max(1, min(int(days), 90))
+    cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+
+    async with get_admin_session() as session:
+        from sqlalchemy import cast, Date, func
+        from models.llm_usage import LlmUsage
+
+        result = await session.execute(
+            select(
+                cast(LlmUsage.created_at, Date).label("usage_date"),
+                func.coalesce(func.sum(LlmUsage.input_tokens), 0).label("input_tokens"),
+                func.coalesce(func.sum(LlmUsage.output_tokens), 0).label("output_tokens"),
+                func.coalesce(func.sum(LlmUsage.credits_charged), 0).label("credits_charged"),
+                func.count(LlmUsage.id).label("call_count"),
+            )
+            .where(LlmUsage.organization_id == org_id)
+            .where(LlmUsage.created_at >= cutoff)
+            .group_by(cast(LlmUsage.created_at, Date))
+            .order_by(cast(LlmUsage.created_at, Date).asc())
+        )
+        rows = result.all()
+
+    return UsageByDayResponse(
+        days=[
+            UsageByDayItem(
+                date=str(row.usage_date),
+                input_tokens=int(row.input_tokens or 0),
+                output_tokens=int(row.output_tokens or 0),
+                credits_charged=int(row.credits_charged or 0),
+                call_count=int(row.call_count or 0),
+            )
+            for row in rows
+        ]
+    )
+
+
 async def _handle_subscription_deleted(sub: Any) -> None:
     """Mark org subscription as canceled."""
     org_id = sub.metadata.get("organization_id")

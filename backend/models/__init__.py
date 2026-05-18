@@ -27,6 +27,8 @@ from models.memory import Memory
 from models.org_member import OrgMember
 from models.goal import Goal
 from models.credit_transaction import CreditTransaction
+from models.llm_model import LlmModel
+from models.llm_usage import LlmUsage
 from models.tracker_team import TrackerTeam
 from models.tracker_project import TrackerProject
 from models.tracker_issue import TrackerIssue
@@ -70,6 +72,8 @@ __all__ = [
     "OrgMember",
     "Goal",
     "CreditTransaction",
+    "LlmModel",
+    "LlmUsage",
     "TrackerTeam",
     "TrackerProject",
     "TrackerIssue",

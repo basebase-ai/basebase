@@ -79,6 +79,18 @@ interface CreditDetails {
   starting_balance: number;
 }
 
+interface UsageByDayItem {
+  date: string;
+  input_tokens: number;
+  output_tokens: number;
+  credits_charged: number;
+  call_count: number;
+}
+
+interface UsageByDayResponse {
+  days: UsageByDayItem[];
+}
+
 /** Total credits for a chat (team + former-user) for sorting. */
 function chatTotalCredits(conv: ConversationUsage): number {
   return conv.total_credits_used + (conv.unattributed_credits_used ?? 0);
@@ -194,6 +206,22 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
   const [showCreditDetails, setShowCreditDetails] = useState(false);
   const [creditDetails, setCreditDetails] = useState<CreditDetails | null>(null);
   const [creditDetailsLoading, setCreditDetailsLoading] = useState(false);
+  const [usageByDay, setUsageByDay] = useState<UsageByDayItem[]>([]);
+  const [usageByDayLoading, setUsageByDayLoading] = useState(false);
+
+  useEffect(() => {
+    if (activeTab !== 'billing') return;
+    let cancelled = false;
+    setUsageByDayLoading(true);
+    (async () => {
+      const { data } = await apiRequest<UsageByDayResponse>('/billing/usage-by-day?days=30');
+      if (!cancelled) {
+        setUsageByDay(data?.days ?? []);
+        setUsageByDayLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeTab, organization.id, billingRefresh]);
 
   useEffect(() => {
     if (!showCreditDetails) return;
@@ -1528,6 +1556,46 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                               return resetDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
                             })()}
                           </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-sm font-medium text-surface-200 mb-3">LLM usage (last 30 days)</h3>
+                    <div className="card p-4">
+                      {usageByDayLoading ? (
+                        <p className="text-sm text-surface-400">Loading usage…</p>
+                      ) : usageByDay.length === 0 ? (
+                        <p className="text-sm text-surface-400">No LLM usage recorded yet.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {(() => {
+                            const maxCredits = Math.max(...usageByDay.map((d) => d.credits_charged), 1);
+                            return usageByDay.map((day) => (
+                              <div key={day.date} className="flex items-center gap-3 text-xs">
+                                <span className="w-20 shrink-0 text-surface-400">
+                                  {new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, {
+                                    month: 'short',
+                                    day: 'numeric',
+                                  })}
+                                </span>
+                                <div className="flex-1 h-5 bg-surface-700 rounded overflow-hidden">
+                                  <div
+                                    className="h-full bg-primary-500/80 rounded"
+                                    style={{ width: `${(day.credits_charged / maxCredits) * 100}%` }}
+                                    title={`${day.credits_charged} credits · ${day.input_tokens + day.output_tokens} tokens · ${day.call_count} calls`}
+                                  />
+                                </div>
+                                <span className="w-16 shrink-0 text-right text-surface-300">
+                                  {day.credits_charged}
+                                </span>
+                              </div>
+                            ));
+                          })()}
+                          <p className="text-xs text-surface-500 pt-2">
+                            Bar height = credits charged per day (1 credit ≈ $0.001 LLM spend).
+                          </p>
                         </div>
                       )}
                     </div>

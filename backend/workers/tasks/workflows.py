@@ -2017,8 +2017,19 @@ async def _action_llm(
         )
         raise
 
+    if org_id:
+        from services.credits import deduct_for_llm
+
+        await deduct_for_llm(
+            org_id,
+            model,
+            getattr(completed, "input_tokens", 0),
+            getattr(completed, "output_tokens", 0),
+            user_id=str(context.get("user_id")) if context.get("user_id") else None,
+        )
+
     output: str = (completed.content_blocks[0].text or "") if completed.content_blocks else ""
-    
+
     return {
         "status": "completed",
         "action": "llm",

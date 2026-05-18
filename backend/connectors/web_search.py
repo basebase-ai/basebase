@@ -223,6 +223,15 @@ class WebSearchConnector(BaseConnector):
                 )
                 content: str = (response.choices[0].message.content or "").strip()
                 if content:
+                    if self.organization_id and response.usage is not None:
+                        from services.credits import deduct_for_llm
+
+                        await deduct_for_llm(
+                            self.organization_id,
+                            model,
+                            int(response.usage.prompt_tokens or 0),
+                            int(response.usage.completion_tokens or 0),
+                        )
                     return {"answer": content, "provider": "openai", "model": model}
             except Exception as exc:
                 logger.warning("[WebSearch] OpenAI fallback model %s failed: %s", model, exc)

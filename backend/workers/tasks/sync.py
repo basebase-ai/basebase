@@ -1683,6 +1683,14 @@ async def _generate_meeting_summary(
             max_tokens=1024,
         )
         await report_anthropic_call_success(source="workers.tasks.sync._generate_meeting_summary")
+        from services.credits import deduct_for_llm
+
+        await deduct_for_llm(
+            organization_id,
+            llm_config.cheap_model,
+            getattr(completed, "input_tokens", 0),
+            getattr(completed, "output_tokens", 0),
+        )
     except Exception as exc:
         await report_anthropic_call_failure(
             exc=exc,
