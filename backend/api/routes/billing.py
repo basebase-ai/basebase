@@ -78,19 +78,17 @@ CREDIT_HISTORY_LOOKBACK_DAYS = 365
 # Tier config: name, price_cents, credits_included
 # "free" tier requires no credit card; "partner" tier is hidden and assigned manually
 PLANS: dict[str, dict[str, Any]] = {
-    "free": {"name": "Free", "price_cents": 0, "credits_included": 100},
-    "pro": {"name": "Pro", "price_cents": 10000, "credits_included": 500},
-    "business": {"name": "Business", "price_cents": 25000, "credits_included": 2500},
-    "scale": {"name": "Scale", "price_cents": 60000, "credits_included": 8000},
-    "partner": {"name": "Partner", "price_cents": 0, "credits_included": 2000, "hidden": True},
+    "free": {"name": "Free", "price_cents": 0, "credits_included": 20_000},
+    "basic": {"name": "Basic", "price_cents": 10000, "credits_included": 100_000},
+    "team": {"name": "Team", "price_cents": 50000, "credits_included": 500_000},
+    "partner": {"name": "Partner", "price_cents": 0, "credits_included": 100_000, "hidden": True},
 }
 
-# Rollover cap multiplier per tier (e.g. Pro: unused credits up to 2x included)
+# Rollover cap multiplier per tier (e.g. Basic: unused credits up to 2x included)
 ROLLOVER_CAP: dict[str, int] = {
     "free": 0,
-    "pro": 2,
-    "business": 2,
-    "scale": 3,
+    "basic": 2,
+    "team": 3,
     "partner": 3,
 }
 
@@ -99,14 +97,12 @@ ROLLOVER_CAP: dict[str, int] = {
 # These are selected based on STRIPE_SECRET_KEY prefix (sk_live_ vs sk_test_)
 # Note: "free" tier doesn't use Stripe, so no price ID needed
 STRIPE_PRICE_IDS_TEST: dict[str, str] = {
-    "pro": "price_1T2zG6BB0TvgbMzRkCwxwTKm",
-    "business": "price_1T2zGkBB0TvgbMzRYy2b7Y0r",
-    "scale": "price_1T2zH1BB0TvgbMzRmJF4RglP",
+    "basic": "price_1T2zG6BB0TvgbMzRkCwxwTKm",
+    "team": "price_1T2zGkBB0TvgbMzRYy2b7Y0r",
 }
 STRIPE_PRICE_IDS_LIVE: dict[str, str] = {
-    "pro": "price_1T31ohP5SO7X9dBUQ1noH603",
-    "business": "price_1T31oiP5SO7X9dBUeVPJdaiW",
-    "scale": "price_1T31oiP5SO7X9dBUkbZiwevH",
+    "basic": "price_1T31ohP5SO7X9dBUQ1noH603",
+    "team": "price_1T31oiP5SO7X9dBUeVPJdaiW",
 }
 
 

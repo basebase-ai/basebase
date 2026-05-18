@@ -286,7 +286,7 @@ export function SubscriptionSetup({ onComplete, onBack, backLabel = 'Back', curr
       // Include all plans - free tier shown for downgrade option
       const allPlans = plansData.plans;
       setPlans(allPlans);
-      const defaultTier = allPlans.find((p) => p.tier === 'pro')?.tier ?? allPlans[0]?.tier ?? 'pro';
+      const defaultTier = allPlans.find((p) => p.tier === 'basic')?.tier ?? allPlans[0]?.tier ?? 'basic';
       setSelectedTier(defaultTier);
       const { data: setupData } = await apiRequest<{ client_secret: string }>(
         '/billing/setup-intent',
