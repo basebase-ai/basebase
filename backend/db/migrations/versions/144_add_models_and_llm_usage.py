@@ -18,19 +18,20 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 # (model_name, provider, input_$/M, output_$/M, is_enabled, supports_images, supports_tools, max_context)
+# Pricing sourced May 2026; DeepSeek uses discounted launch pricing.
 _SEED_MODELS: tuple[tuple[str, str, str, str, bool, bool, bool, int | None], ...] = (
-    ("claude-opus-4-6", "anthropic", "15.000000", "75.000000", True, True, True, 200000),
+    ("claude-opus-4-6", "anthropic", "5.000000", "25.000000", True, True, True, 1000000),
     ("claude-haiku-4-5-20251001", "anthropic", "1.000000", "5.000000", True, True, True, 200000),
-    ("MiniMax-M2.7", "minimax", "0.300000", "1.200000", True, False, True, 200000),
-    ("MiniMax-M2.7-highspeed", "minimax", "0.300000", "1.200000", True, False, True, 200000),
-    ("gpt-5.5", "openai", "2.500000", "10.000000", True, True, True, 128000),
-    ("gpt-5.5-mini", "openai", "0.400000", "1.600000", True, True, True, 128000),
-    ("gpt-5", "openai", "2.500000", "10.000000", True, True, True, 128000),
+    ("MiniMax-M2.7", "minimax", "0.300000", "1.200000", True, False, True, 205000),
+    ("MiniMax-M2.7-highspeed", "minimax", "0.600000", "2.400000", True, False, True, 205000),
+    ("gpt-5.5", "openai", "5.000000", "30.000000", True, True, True, 128000),
+    ("gpt-5.5-mini", "openai", "0.750000", "4.500000", True, True, True, 400000),
+    ("gpt-5", "openai", "1.250000", "10.000000", True, True, True, 128000),
     ("gemini-2.5-pro", "gemini", "1.250000", "10.000000", True, True, True, 1000000),
     ("gemini-2.5-flash", "gemini", "0.300000", "2.500000", True, True, True, 1000000),
-    ("qwen3.6-plus", "qwen", "0.800000", "3.200000", True, False, True, 128000),
-    ("qwen3-30b-a3b-instruct-2507", "qwen", "0.200000", "0.800000", True, False, True, 128000),
-    ("deepseek-v4-pro", "deepseek", "0.550000", "2.190000", True, False, True, 128000),
+    ("qwen3.6-plus", "qwen", "0.280000", "1.650000", True, False, True, 1000000),
+    ("qwen3-30b-a3b-instruct-2507", "qwen", "0.080000", "0.280000", True, False, True, 131000),
+    ("deepseek-v4-pro", "deepseek", "0.440000", "0.870000", True, False, True, 1000000),
 )
 
 _ORG_MATCH_SQL: str = """
