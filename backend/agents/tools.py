@@ -292,15 +292,15 @@ async def execute_tool(
         return {"error": "No organization associated with user. Please complete onboarding."}
 
     conversation_id: str | None = (context or {}).get("conversation_id")
-    # Deduct credits before running the tool (fail fast if insufficient); import here to avoid circular import
-    from services.credits import credits_for_tool, deduct_with_grace
-    cost: int = credits_for_tool(tool_name, tool_input or {}, context)
+    from services.credits import credits_for_external_surcharge, deduct_with_grace
+
+    surcharge: int = credits_for_external_surcharge(tool_name, tool_input or {}, context)
     used_grace_credits: bool = False
-    if cost > 0:
+    if surcharge > 0:
         ok, used_grace_credits = await deduct_with_grace(
             organization_id,
-            cost,
-            "tool",
+            surcharge,
+            "tool_surcharge",
             reference_type="conversation",
             reference_id=conversation_id,
             user_id=user_id,
@@ -2320,6 +2320,10 @@ async def _openai_web_search_fallback(
     query: str,
     context_answer: str | None,
     provider_context: str | None = None,
+    *,
+    organization_id: str | None = None,
+    user_id: str | None = None,
+    conversation_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Run an OpenAI synthesis pass for web-search results using known context."""
     if not settings.OPENAI_API_KEY:
@@ -2375,6 +2379,17 @@ async def _openai_web_search_fallback(
                     model,
                 )
                 continue
+            if organization_id and response.usage is not None:
+                from services.credits import deduct_for_llm
+
+                await deduct_for_llm(
+                    organization_id,
+                    model,
+                    int(response.usage.prompt_tokens or 0),
+                    int(response.usage.completion_tokens or 0),
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                )
             return {
                 "answer": content,
                 "provider": "openai",

@@ -1705,6 +1705,7 @@ class ChatOrchestrator:
             is_thinking_block: bool = False
             final_message_received: bool = False
             context_retry_needed = False
+            llm_out_of_credits: bool = False
 
             # Keep provider-agnostic message history here; provider adapters are
             # responsible for final API translation.
@@ -1823,11 +1824,26 @@ class ChatOrchestrator:
                                 current_tool_input_json = ""
 
                         elif event.type == "usage":
+                            usage_input: int = int(event.input_tokens or 0)
+                            usage_output: int = int(event.output_tokens or 0)
                             yield _json_dumps({
                                 "type": "context_usage",
-                                "input_tokens": event.input_tokens,
-                                "output_tokens": event.output_tokens,
+                                "input_tokens": usage_input,
+                                "output_tokens": usage_output,
                             })
+                            if self.organization_id and (usage_input > 0 or usage_output > 0):
+                                from services.credits import deduct_for_llm
+
+                                charge_ok, used_grace = await deduct_for_llm(
+                                    self.organization_id,
+                                    model_name,
+                                    usage_input,
+                                    usage_output,
+                                    user_id=self.user_id,
+                                    conversation_id=self.conversation_id,
+                                )
+                                if not charge_ok or used_grace:
+                                    llm_out_of_credits = True
 
                     final_message_received = True
                     await report_anthropic_call_success(source="agents.orchestrator._stream_with_tools")
@@ -1930,6 +1946,22 @@ class ChatOrchestrator:
             # If we exhausted retries without success, raise the last error
             if not final_message_received and last_error is not None:
                 raise last_error
+
+            if llm_out_of_credits:
+                out_of_credits_message = (
+                    "You're out of credits. I paused here before finishing your last request. "
+                    "Please add a payment method in Basebase to continue."
+                )
+                logger.info(
+                    "[Orchestrator] Ending turn after LLM usage charge org_id=%s conversation_id=%s",
+                    self.organization_id,
+                    self.conversation_id,
+                )
+                if current_text.strip():
+                    content_blocks.append({"type": "text", "text": current_text})
+                content_blocks.append({"type": "text", "text": out_of_credits_message})
+                yield out_of_credits_message
+                break
             
             # If no tool calls, we're done
             if not tool_uses:

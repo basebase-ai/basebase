@@ -122,6 +122,14 @@ async def _generate_cluster_labels(
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=150,
             )
+            from services.credits import deduct_for_llm
+
+            await deduct_for_llm(
+                organization_id,
+                llm_config.cheap_model,
+                getattr(completed, "input_tokens", 0),
+                getattr(completed, "output_tokens", 0),
+            )
             raw: str = ""
             for block in completed.content_blocks:
                 if block.text:

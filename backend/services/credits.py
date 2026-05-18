@@ -2,7 +2,8 @@
 Credit balance and metering for subscription tiers.
 
 - get_balance / check_sufficient / deduct for usage tracking
-- credits_for_tool maps tool names and context to credit cost
+- deduct_for_llm charges token-based LLM usage (via services.llm_pricing)
+- credits_for_external_surcharge covers non-LLM third-party API costs on tools
 """
 from __future__ import annotations
 
@@ -284,34 +285,64 @@ async def deduct_with_grace(
         return ok, used_grace
 
 
-def credits_for_tool(
+async def deduct_for_llm(
+    organization_id: str,
+    model_name: str,
+    input_tokens: int,
+    output_tokens: int,
+    *,
+    user_id: str | None = None,
+    conversation_id: str | None = None,
+) -> tuple[bool, bool]:
+    """Charge token-based LLM usage. Returns (ok, used_grace).
+
+    Fails gracefully (returns (True, False)) for invalid org IDs or zero usage.
+    """
+    if not organization_id:
+        return True, False
+    try:
+        UUID(organization_id)
+    except (ValueError, TypeError):
+        logger.warning("[Credits] deduct_for_llm: invalid org_id %r, skipping", organization_id)
+        return True, False
+
+    safe_input: int = max(0, int(input_tokens or 0))
+    safe_output: int = max(0, int(output_tokens or 0))
+    if safe_input == 0 and safe_output == 0:
+        return True, False
+
+    from services.llm_pricing import charge_llm_usage
+
+    ok, used_grace, _credits = await charge_llm_usage(
+        organization_id=organization_id,
+        model_name=model_name,
+        input_tokens=safe_input,
+        output_tokens=safe_output,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        reason="llm",
+    )
+    return ok, used_grace
+
+
+def credits_for_external_surcharge(
     tool_name: str,
     tool_input: dict[str, Any],
     context: dict[str, Any] | None,
 ) -> int:
     """
-    Map tool execution to credit cost (pricing doc: simple 1, cross-source 2-3,
-    write-back 2, artifact 5-10, bulk ~1 per record, etc.).
+    Fixed surcharge for tools that incur third-party API cost beyond LLM tokens.
+
+    LLM token usage is charged separately via deduct_for_llm.
     """
-    # Simple read-only / list
-    if tool_name in ("run_sql_query", "list_connected_connectors"):
-        return 1
-    # Connector write-back
+    _ = context
     if tool_name == "write_on_connector":
         connector: str = (tool_input or {}).get("connector", "")
         if connector in ("artifacts", "apps"):
             return 5
         return 2
-    # Connector queries often cross sources
-    if tool_name == "query_on_connector":
-        return 2
-    # Run on connector (enrichment, etc.)
     if tool_name == "run_on_connector":
         return 3
-    # Workflow run
-    if tool_name == "run_workflow":
-        return 3
-    # Bulk: ~1 per item, cap at 50 for a single foreach
     if tool_name == "foreach":
         total = (
             (tool_input or {}).get("total_items")
@@ -321,11 +352,4 @@ def credits_for_tool(
         if isinstance(total, (int, float)):
             return min(max(1, int(total)), 50)
         return 5
-    # Sync, keep_notes, manage_memory
-    if tool_name in ("trigger_sync", "keep_notes", "manage_memory"):
-        return 1
-    # run_sql_write
-    if tool_name == "run_sql_write":
-        return 2
-    # Default for unknown tools
-    return 1
+    return 0

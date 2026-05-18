@@ -109,10 +109,19 @@ async def generate_widget_config(
         await report_anthropic_call_success(source="services.widget_inference.generate_widget_config")
     except Exception as exc:
         await report_anthropic_call_failure(
+            exc=exc,
             source="services.widget_inference.generate_widget_config",
-            error=exc,
         )
         raise
+
+    from services.credits import deduct_for_llm
+
+    await deduct_for_llm(
+        organization_id,
+        llm_config.cheap_model,
+        getattr(completed, "input_tokens", 0),
+        getattr(completed, "output_tokens", 0),
+    )
 
     raw_text = (completed.content_blocks[0].text or "").strip() if completed.content_blocks else ""
     # Strip markdown fences if present

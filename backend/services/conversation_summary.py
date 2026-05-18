@@ -237,6 +237,15 @@ async def generate_conversation_summary(
             await report_anthropic_call_success(
                 source="services.conversation_summary.generate_conversation_summary"
             )
+            from services.credits import deduct_for_llm
+
+            await deduct_for_llm(
+                organization_id,
+                llm_config.cheap_model,
+                getattr(completed, "input_tokens", 0),
+                getattr(completed, "output_tokens", 0),
+                conversation_id=conversation_id,
+            )
         except Exception as exc:
             await report_anthropic_call_failure(
                 exc=exc,
@@ -345,6 +354,15 @@ async def generate_conversation_title(
             )
             await report_anthropic_call_success(
                 source="services.conversation_summary.generate_conversation_title"
+            )
+            from services.credits import deduct_for_llm
+
+            await deduct_for_llm(
+                organization_id,
+                llm_config.cheap_model,
+                getattr(completed, "input_tokens", 0),
+                getattr(completed, "output_tokens", 0),
+                conversation_id=conversation_id,
             )
         except Exception as exc:
             await report_anthropic_call_failure(

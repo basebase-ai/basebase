@@ -446,6 +446,15 @@ async def _call_llm_for_summary(raw: dict[str, Any], organization_id: UUID | str
             max_tokens=2048,
         )
         await report_anthropic_call_success(source="daily_digest")
+        from services.credits import deduct_for_llm
+
+        await deduct_for_llm(
+            organization_id,
+            llm_config.cheap_model,
+            getattr(completed, "input_tokens", 0),
+            getattr(completed, "output_tokens", 0),
+            user_id=user_id,
+        )
     except Exception as exc:
         await report_anthropic_call_failure(exc=exc, source="daily_digest")
         logger.exception("daily_digest LLM failed: %s", exc)
@@ -619,6 +628,14 @@ async def generate_team_summary(
                 max_tokens=512,
             )
             await report_anthropic_call_success(source="daily_team_summary")
+            from services.credits import deduct_for_llm
+
+            await deduct_for_llm(
+                organization_id,
+                llm_config.cheap_model,
+                getattr(completed, "input_tokens", 0),
+                getattr(completed, "output_tokens", 0),
+            )
             text_parts: list[str] = []
             for block in completed.content_blocks:
                 if block.text:
