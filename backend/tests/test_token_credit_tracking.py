@@ -19,7 +19,6 @@ from services.llm_pricing import (
     compute_credit_cost_for_model,
     charge_llm_usage,
     invalidate_model_price_cache,
-    _price_cache,
 )
 
 
@@ -113,13 +112,11 @@ def test_charge_llm_usage_deducts_and_records(monkeypatch) -> None:
     """charge_llm_usage should compute cost, deduct, and record usage."""
     deduct_mock = AsyncMock(return_value=(True, False))
     record_mock = AsyncMock()
+    price_mock = AsyncMock(return_value=(Decimal("5"), Decimal("25")))
 
     monkeypatch.setattr("services.llm_pricing.deduct_with_grace", deduct_mock)
     monkeypatch.setattr("services.llm_pricing.record_llm_usage", record_mock)
-
-    # Pre-populate price cache to avoid DB hit
-    invalidate_model_price_cache()
-    _price_cache["claude-opus-4-6"] = (Decimal("5"), Decimal("25"))
+    monkeypatch.setattr("services.llm_pricing.get_model_price", price_mock)
 
     ok, used_grace, credits_charged = asyncio.run(charge_llm_usage(
         organization_id="00000000-0000-0000-0000-000000000001",
@@ -151,20 +148,16 @@ def test_charge_llm_usage_deducts_and_records(monkeypatch) -> None:
     assert record_kwargs["output_tokens"] == 1000
     assert record_kwargs["credits_charged"] == 50
 
-    # Cleanup
-    invalidate_model_price_cache()
-
 
 def test_charge_llm_usage_reports_failure_on_insufficient_balance(monkeypatch) -> None:
     """When deduct fails, charge_llm_usage should not record usage."""
     deduct_mock = AsyncMock(return_value=(False, False))
     record_mock = AsyncMock()
+    price_mock = AsyncMock(return_value=(Decimal("5"), Decimal("25")))
 
     monkeypatch.setattr("services.llm_pricing.deduct_with_grace", deduct_mock)
     monkeypatch.setattr("services.llm_pricing.record_llm_usage", record_mock)
-
-    invalidate_model_price_cache()
-    _price_cache["claude-opus-4-6"] = (Decimal("5"), Decimal("25"))
+    monkeypatch.setattr("services.llm_pricing.get_model_price", price_mock)
 
     ok, used_grace, credits_charged = asyncio.run(charge_llm_usage(
         organization_id="00000000-0000-0000-0000-000000000001",
@@ -179,18 +172,11 @@ def test_charge_llm_usage_reports_failure_on_insufficient_balance(monkeypatch) -
     assert credits_charged == 50
     record_mock.assert_not_called()
 
-    invalidate_model_price_cache()
 
-
-def test_compute_credit_cost_for_model_uses_cache(monkeypatch) -> None:
-    """compute_credit_cost_for_model should use cached pricing."""
-    invalidate_model_price_cache()
-    _price_cache["deepseek-v4-pro"] = (Decimal("0.44"), Decimal("0.87"))
-
-    # Patch _load_price_cache to avoid DB access (cache is already warm)
-    monkeypatch.setattr("services.llm_pricing._CACHE_TTL_SECONDS", 99999)
-    import services.llm_pricing as lp
-    monkeypatch.setattr(lp, "_cache_loaded_at", 1e18)
+def test_compute_credit_cost_for_model_uses_pricing(monkeypatch) -> None:
+    """compute_credit_cost_for_model should use model pricing from get_model_price."""
+    price_mock = AsyncMock(return_value=(Decimal("0.44"), Decimal("0.87")))
+    monkeypatch.setattr("services.llm_pricing.get_model_price", price_mock)
 
     result = asyncio.run(compute_credit_cost_for_model(
         "deepseek-v4-pro",
@@ -199,8 +185,7 @@ def test_compute_credit_cost_for_model_uses_cache(monkeypatch) -> None:
     ))
     # ($0.44 * 100k + $0.87 * 10k) / 1M = ($44000 + $8700) / 1M = $0.0527 => 53 credits
     assert result == 53
-
-    invalidate_model_price_cache()
+    price_mock.assert_called_once_with("deepseek-v4-pro")
 
 
 # ─── API: admin models endpoint ───────────────────────────────────────────────
