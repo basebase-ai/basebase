@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 CREDITS_PER_DOLLAR: Final[int] = 1000
 MIN_CREDITS_PER_CALL: Final[int] = 1
-DEFAULT_INPUT_COST_PER_M: Final[Decimal] = Decimal("2.500000")
-DEFAULT_OUTPUT_COST_PER_M: Final[Decimal] = Decimal("10.000000")
+DEFAULT_INPUT_COST_PER_M: Final[Decimal] = Decimal("5.000000")
+DEFAULT_OUTPUT_COST_PER_M: Final[Decimal] = Decimal("25.000000")
 _CACHE_TTL_SECONDS: Final[float] = 300.0
 
 _price_cache: dict[str, tuple[Decimal, Decimal]] = {}
