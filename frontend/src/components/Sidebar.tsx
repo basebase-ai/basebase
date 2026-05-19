@@ -516,11 +516,11 @@ export function Sidebar({
               }`}
               aria-hidden={panelMode !== 'chats'}
             >
-            <div className={`px-3 pt-0.5 pb-1 flex-shrink-0 ${collapsed ? 'flex flex-col items-center' : ''}`}>
+            <div className={`px-3 pt-0.5 pb-0.5 flex-shrink-0 ${collapsed ? 'flex flex-col items-center' : ''}`}>
               <button
                 type="button"
                 onClick={onNewChat}
-                className={`flex items-center gap-1.5 px-1.5 py-1 rounded-md text-[13px] text-surface-300 hover:text-surface-100 hover:bg-surface-800/50 transition-colors ${collapsed ? 'justify-center' : ''}`}
+                className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded-md text-[13px] text-surface-300 hover:text-surface-100 hover:bg-surface-800/50 transition-colors ${collapsed ? 'justify-center' : ''}`}
               >
                 <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -685,7 +685,7 @@ function HubNav({
   ];
 
   return (
-    <div className={`${collapsed ? 'px-1' : 'px-3'} pt-0.5 pb-1 space-y-px flex-shrink-0`}>
+    <div className={`${collapsed ? 'px-1' : 'px-3'} pt-0 pb-0.5 space-y-px flex-shrink-0`}>
       {items.map((item) => {
         const isActive: boolean = currentView === item.view
           || (item.view === 'data' && DATA_HUB_VIEWS.includes(currentView));
@@ -696,7 +696,7 @@ function HubNav({
             type="button"
             title={collapsed ? item.label : undefined}
             onClick={() => onViewChange(item.view)}
-            className={`w-full flex items-center ${collapsed ? 'justify-center' : ''} px-2 py-1.5 rounded-lg text-[13px] transition-colors outline-none focus:outline-none ${
+            className={`w-full flex items-center ${collapsed ? 'justify-center' : ''} px-2 py-1 rounded-lg text-[13px] transition-colors outline-none focus:outline-none ${
               isActive
                 ? 'bg-surface-800 text-surface-100'
                 : 'text-surface-200 hover:text-surface-100 hover:bg-surface-800'
@@ -880,7 +880,7 @@ function ChatAccordion({
     return (
       <div
         key={itemKey}
-        className={`group/chat relative w-full text-left px-2 py-[5px] rounded-md transition-colors cursor-pointer leading-tight min-h-[28px] flex items-center ${
+        className={`group/chat relative w-full text-left px-2 py-[3px] rounded-md transition-colors cursor-pointer leading-tight min-h-[24px] flex items-center ${
           isActive
             ? 'bg-surface-800/60 text-surface-100 font-medium'
             : 'text-surface-200 hover:text-surface-100 hover:bg-surface-800/40'
@@ -1076,7 +1076,7 @@ function SidebarSectionHeader({
   onOptionsClick?: () => void;
 }): JSX.Element {
   return (
-    <div className="group/section flex items-center gap-1 px-1 pt-1 pb-0.5 min-h-[22px]">
+    <div className="group/section flex items-center gap-1 px-1 pt-1.5 pb-0 min-h-[20px]">
       <button
         type="button"
         onClick={onToggle}
