@@ -112,14 +112,6 @@ LIMIT 1
 }
 
 DAILY_DIGEST_APP_FRONTEND_CODE: str = """
-import { useState, useMemo, useCallback } from "react";
-import {
-  useAppQuery,
-  triggerWorkflow,
-  Spinner,
-  ErrorBanner,
-} from "@revtops/app-sdk";
-
 function addDays(iso, delta) {
   const parts = iso.split("-");
   const y = Number(parts[0]);
