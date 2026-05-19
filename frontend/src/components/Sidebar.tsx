@@ -101,18 +101,16 @@ function OrgSwitcherSection({
         onClick={onTogglePanel}
         aria-expanded={panelOpen}
         aria-label={panelOpen ? 'Hide workspace menu' : 'Show workspace menu'}
-        className="w-full flex items-center gap-3 px-4 pt-3 pb-1 hover:bg-surface-800/50 transition-colors"
+        className="w-full flex items-center gap-2.5 px-3.5 pt-3 pb-2 hover:bg-surface-800/40 rounded-lg mx-auto transition-colors"
       >
         {isAdminConsole ? (
           <>
-            <div className="w-9 h-9 rounded-lg bg-surface-800 flex items-center justify-center flex-shrink-0 self-start mt-0.5 text-amber-400">
-              <GlobalAdminShieldIcon className="w-6 h-6" />
+            <div className="w-7 h-7 rounded-md bg-surface-800 flex items-center justify-center flex-shrink-0 text-amber-400">
+              <GlobalAdminShieldIcon className="w-4 h-4" />
             </div>
-            <div className="flex-1 min-w-0 text-left">
-              <div className="text-lg font-semibold text-surface-100 truncate leading-tight">
-                Global Admin
-              </div>
-            </div>
+            <span className="flex-1 min-w-0 text-left text-sm font-semibold text-surface-100 truncate">
+              Global Admin
+            </span>
           </>
         ) : (
           <>
@@ -120,22 +118,20 @@ function OrgSwitcherSection({
               <img
                 src={organization.logoUrl}
                 alt={organization.name}
-                className="w-9 h-9 rounded-lg object-cover flex-shrink-0 self-start mt-0.5"
+                className="w-7 h-7 rounded-md object-cover flex-shrink-0"
               />
             ) : (
-              <div className="w-9 h-9 rounded-lg bg-surface-800 flex items-center justify-center flex-shrink-0 self-start mt-0.5">
-                <img src={LOGO_PATH} alt={APP_NAME} className="w-6 h-6" />
+              <div className="w-7 h-7 rounded-md bg-surface-800 flex items-center justify-center flex-shrink-0">
+                <img src={LOGO_PATH} alt={APP_NAME} className="w-4 h-4" />
               </div>
             )}
-            <div className="flex-1 min-w-0 text-left">
-              <div className="text-lg font-semibold text-surface-100 truncate leading-tight">
-                {organization.name}
-              </div>
-            </div>
+            <span className="flex-1 min-w-0 text-left text-sm font-semibold text-surface-100 truncate">
+              {organization.name}
+            </span>
           </>
         )}
         <svg
-          className={`w-4 h-4 text-surface-400 flex-shrink-0 transition-transform duration-200 ${panelOpen ? 'rotate-180' : ''}`}
+          className={`w-3.5 h-3.5 text-surface-400 flex-shrink-0 transition-transform duration-200 ${panelOpen ? 'rotate-180' : ''}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -468,7 +464,7 @@ export function Sidebar({
   return (
     <aside
       style={{ width: widthPx }}
-      className="h-full bg-surface-950 flex flex-col transition-all duration-200 ease-in-out flex-shrink-0 overflow-hidden"
+      className="h-full flex flex-col transition-all duration-200 ease-in-out flex-shrink-0 overflow-hidden"
     >
       {/* Header: Organization identity */}
       <div className="relative min-w-0 overflow-hidden flex-shrink-0">
@@ -520,27 +516,16 @@ export function Sidebar({
               }`}
               aria-hidden={panelMode !== 'chats'}
             >
-            <div className={`px-3 py-2 flex-shrink-0 flex items-center gap-1.5 ${collapsed ? 'flex-col' : ''}`}>
+            <div className={`px-3 pt-0.5 pb-1 flex-shrink-0 ${collapsed ? 'flex flex-col items-center' : ''}`}>
               <button
                 type="button"
                 onClick={onNewChat}
-                className={`flex-1 flex items-center gap-2 px-3 py-[5px] rounded-lg bg-primary-600 hover:bg-primary-700 text-white font-medium text-sm transition-colors ${collapsed ? 'w-full justify-center' : ''}`}
+                className={`flex items-center gap-1.5 px-1.5 py-1 rounded-md text-[13px] text-surface-300 hover:text-surface-100 hover:bg-surface-800/50 transition-colors ${collapsed ? 'justify-center' : ''}`}
               >
-                <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                 </svg>
-                {!collapsed && <span>New Chat</span>}
-              </button>
-              <button
-                type="button"
-                onClick={() => onViewChange('chats')}
-                title="Search all chats"
-                aria-label="Search all chats"
-                className={`flex items-center justify-center rounded-lg text-surface-400 hover:text-surface-100 hover:bg-surface-800/60 transition-colors ${collapsed ? 'w-full py-[5px]' : 'h-8 w-8'}`}
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
+                {!collapsed && <span>New chat</span>}
               </button>
             </div>
 
@@ -588,20 +573,25 @@ export function Sidebar({
       </div>
 
       {/* Bottom Section */}
-      <div className="mt-auto bg-surface-900/40">
+      <div className="mt-auto px-3 py-2">
         {user && (
           <button
+            type="button"
             onClick={onOpenProfilePanel}
-            className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-surface-800/60 transition-colors ${collapsed ? 'justify-center' : ''}`}
+            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-surface-800/40 transition-colors ${collapsed ? 'justify-center' : ''}`}
           >
-            <Avatar user={user} size="md" />
+            <Avatar user={user} size="xs" />
             {!collapsed && (
-              <div className="flex-1 min-w-0 text-left">
-                <div className="text-sm font-medium text-surface-200 truncate">
-                  {user.name ?? 'User'}
-                </div>
-                <div className="text-xs text-surface-500 truncate">{user.email}</div>
-              </div>
+              <>
+                <span className="text-[13px] text-surface-200 truncate text-left">
+                  {user.name ?? user.email?.split('@')[0] ?? 'User'}
+                </span>
+                <span className="flex-1" />
+                <svg className="w-3.5 h-3.5 text-surface-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </>
             )}
           </button>
         )}
@@ -627,14 +617,6 @@ function formatRelativeTime(date: Date): string {
 interface ChannelMemoryResponse {
   id: string;
   content: string;
-}
-
-function normalizeChannelIdForMemory(source: string | null | undefined, channelKey: string, normalizedChannelId?: string | null): string {
-  const raw = (normalizedChannelId ?? '').trim() || channelKey.replace(/^channel:/, '').trim();
-  if ((source ?? '').toLowerCase() === 'slack') {
-    return raw.split(':', 1)[0] ?? raw;
-  }
-  return raw;
 }
 
 /** Hub navigation: always-visible icon+label links above the chat list. */
@@ -690,7 +672,7 @@ function HubNav({
   ];
 
   return (
-    <div className={`${collapsed ? 'px-1' : 'px-3'} pt-1 pb-2 space-y-0.5 mb-1 flex-shrink-0`}>
+    <div className={`${collapsed ? 'px-1' : 'px-3'} pt-0.5 pb-1 space-y-px flex-shrink-0`}>
       {items.map((item) => {
         const isActive: boolean = currentView === item.view
           || (item.view === 'data-hub' && DATA_HUB_VIEWS.includes(currentView));
@@ -701,14 +683,13 @@ function HubNav({
             type="button"
             title={collapsed ? item.label : undefined}
             onClick={() => onViewChange(item.view)}
-            className={`w-full flex items-center ${collapsed ? 'justify-center' : 'gap-2'} px-2 py-1.5 rounded-md text-sm transition-colors ${
+            className={`w-full flex items-center ${collapsed ? 'justify-center' : ''} px-2 py-1.5 rounded-lg text-[13px] transition-colors outline-none focus:outline-none ${
               isActive
                 ? 'bg-surface-800 text-surface-100'
-                : 'text-surface-400 hover:text-surface-100 hover:bg-surface-800/70'
+                : 'text-surface-200 hover:text-surface-100 hover:bg-surface-800'
             }`}
           >
-            {item.icon}
-            {!collapsed && <span>{item.label}</span>}
+            {collapsed ? item.icon : <span>{item.label}</span>}
           </button>
         );
       })}
@@ -881,10 +862,10 @@ function ChatAccordion({
     return (
       <div
         key={itemKey}
-        className={`group/chat relative w-full text-left px-2 py-1.5 rounded-md transition-colors cursor-pointer leading-tight min-h-[32px] flex items-center ${
+        className={`group/chat relative w-full text-left px-2 py-[5px] rounded-md transition-colors cursor-pointer leading-tight min-h-[28px] flex items-center ${
           isActive
-            ? 'bg-surface-800 text-surface-100'
-            : 'text-surface-300 hover:text-surface-100 hover:bg-surface-800/70'
+            ? 'bg-surface-800/60 text-surface-100 font-medium'
+            : 'text-surface-200 hover:text-surface-100 hover:bg-surface-800/40'
         }`}
         onClick={() => onSelectChat(chat.id)}
         onMouseEnter={() => {
@@ -906,7 +887,7 @@ function ChatAccordion({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
           )}
-          <div className="truncate text-[15px] flex-1 leading-tight">
+          <div className="truncate text-[13px] flex-1 leading-tight">
             {chat.title}
           </div>
           {isUnread && (
@@ -922,10 +903,8 @@ function ChatAccordion({
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
           )}
-          {/* Hover metadata: in flow so it pushes the title to truncate.
-              Row min-height keeps avatar height from shifting the row. */}
-          <div className="hidden group-hover/chat:flex items-center gap-1.5 leading-none flex-shrink-0">
-            <span className="text-xs text-surface-500">
+          <div className="hidden group-hover/chat:flex items-center gap-1.5 leading-none flex-shrink-0 absolute right-2 top-1/2 -translate-y-1/2 bg-surface-800/90 rounded px-1 py-0.5">
+            <span className="text-[11px] text-surface-500">
               {formatRelativeTime(chat.lastMessageAt)}
             </span>
             {hasParticipants && (
@@ -968,52 +947,50 @@ function ChatAccordion({
                   collapsed={isSectionCollapsed('pinned')}
                   onToggle={() => toggleSection('pinned')}
                 />
-                {!isSectionCollapsed('pinned') && groupedSidebarChats.pinned.map((chat) => renderChatItem(chat, `pinned-${chat.id}`))}
+                {!isSectionCollapsed('pinned') &&
+                  groupedSidebarChats.pinned.map((chat) => renderChatItem(chat, `pinned-${chat.id}`))}
               </>
             )}
+
             {groupedSidebarChats.direct.length > 0 && (
               <>
                 <SidebarSectionHeader
-                  title="Direct"
+                  title="Recents"
                   collapsed={isSectionCollapsed('direct')}
                   onToggle={() => toggleSection('direct')}
                 />
-                {!isSectionCollapsed('direct') && groupedSidebarChats.direct.map((chat) => renderChatItem(chat, `direct-${chat.id}`, { suppressLockIcon: true }))}
+                {!isSectionCollapsed('direct') &&
+                  groupedSidebarChats.direct.map((chat) => renderChatItem(chat, `direct-${chat.id}`, { suppressLockIcon: false }))}
               </>
             )}
-            {groupedSidebarChats.channels.map((channel) => (
-              <div key={channel.key}>
+
+            {groupedSidebarChats.channels.map((section) => (
+              <div key={section.key}>
                 <SidebarSectionHeader
-                  title={channel.label}
-                  collapsed={isSectionCollapsed(`channel:${channel.key}`)}
-                  onToggle={() => toggleSection(`channel:${channel.key}`)}
-                  onOptionsClick={() => {
-                    const normalizedChannelId = normalizeChannelIdForMemory(
-                      channel.source,
-                      channel.key,
-                      channel.normalizedChannelId,
-                    );
-                    setChannelPersonalityTarget({
-                      key: channel.key,
-                      label: channel.label,
-                      source: channel.source,
-                      normalizedChannelId,
-                    });
-                  }}
+                  title={section.label}
+                  collapsed={isSectionCollapsed(section.key)}
+                  onToggle={() => toggleSection(section.key)}
+                  onOptionsClick={() => setChannelPersonalityTarget({
+                    key: section.key,
+                    label: section.label,
+                    source: section.source,
+                    normalizedChannelId: section.normalizedChannelId ?? section.key,
+                  })}
                 />
-                {!isSectionCollapsed(`channel:${channel.key}`) &&
-                  channel.chats.map((chat) => renderChatItem(chat, `channel-${channel.key}-${chat.id}`))}
+                {!isSectionCollapsed(section.key) &&
+                  section.chats.map((chat) => renderChatItem(chat, `chan-${section.key}-${chat.id}`))}
               </div>
             ))}
+
             {groupedSidebarChats.uncategorized.length > 0 && (
               <>
                 <SidebarSectionHeader
-                  title="Uncategorized"
+                  title="Other"
                   collapsed={isSectionCollapsed('uncategorized')}
                   onToggle={() => toggleSection('uncategorized')}
                 />
                 {!isSectionCollapsed('uncategorized') &&
-                  groupedSidebarChats.uncategorized.map((chat) => renderChatItem(chat, `uncategorized-${chat.id}`))}
+                  groupedSidebarChats.uncategorized.map((chat) => renderChatItem(chat, `uncat-${chat.id}`))}
               </>
             )}
           </>
@@ -1048,7 +1025,7 @@ function SidebarSectionHeader({
   onOptionsClick?: () => void;
 }): JSX.Element {
   return (
-    <div className="group/section flex items-center gap-1 px-1 pt-1.5 pb-0.5 min-h-[26px]">
+    <div className="group/section flex items-center gap-1 px-1 pt-1 pb-0.5 min-h-[22px]">
       <button
         type="button"
         onClick={onToggle}
@@ -1056,7 +1033,7 @@ function SidebarSectionHeader({
         aria-expanded={!collapsed}
         aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${title}`}
       >
-        <h3 className="truncate text-[10px] uppercase tracking-wider text-primary-500/85 font-semibold">
+        <h3 className="truncate text-[11px] text-surface-500 font-normal">
           {title}
         </h3>
       </button>
@@ -1077,7 +1054,7 @@ function SidebarSectionHeader({
       <button
         type="button"
         onClick={onToggle}
-        className="shrink-0 p-0.5 rounded text-primary-500/60 hover:text-primary-500 hover:bg-surface-800/60 transition-colors"
+        className="shrink-0 p-0.5 rounded text-surface-500 hover:text-surface-300 hover:bg-surface-800/60 transition-colors"
         aria-label={collapsed ? `Expand ${title}` : `Collapse ${title}`}
         aria-expanded={!collapsed}
       >
