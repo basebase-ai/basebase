@@ -350,7 +350,7 @@ Routers are mounted in [`backend/api/main.py`](backend/api/main.py). Use **OpenA
 | `/api/sync` | Trigger and inspect data syncs |
 | `/api/chat` | Conversations, messages, uploads, legacy `GET /api/chat/history` |
 | `/api/apps`, `/api/artifacts`, `/api/drive`, `/api/data` | Mini-apps, artifacts, Drive helpers, tabular data APIs |
-| `/api/workflows`, `/api/workstreams`, `/api/daily-digests` | Workflows, semantic workstreams, daily digests |
+| `/api/workflows`, `/api/workstreams` | Workflows, semantic workstreams; daily digests via Home apps + `temp_data` |
 | `/api/memories`, `/api/search` | User/org memories, search |
 | `/api/billing`, `/api/notifications`, `/api/deals`, `/api/support` | Stripe billing, notifications, deals, support |
 | `/api/waitlist` | Public waitlist + admin invite/list routes under `/api/waitlist/admin/...` |

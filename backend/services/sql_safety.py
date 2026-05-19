@@ -21,7 +21,6 @@ ALLOWED_TABLES: set[str] = {
     "tracker_teams", "tracker_projects", "tracker_issues",
     "bulk_operations", "bulk_operation_results",
     "temp_data",
-    "daily_digests", "daily_team_summaries",
 }
 
 _SQL_BUILTIN_FUNCTIONS: set[str] = {
