@@ -35,6 +35,7 @@ export default {
       },
       fontFamily: {
         sans: ['DM Sans', 'system-ui', 'sans-serif'],
+        serif: ['Libre Baskerville', 'Georgia', 'Times New Roman', 'serif'],
         mono: ['JetBrains Mono', 'Menlo', 'monospace'],
       },
       animation: {

@@ -34,14 +34,12 @@ import {
   useChatStore,
   useConversationState,
   useActiveTasksByConversation,
-  useConnectedIntegrations,
   useIsOrgAdmin,
   useOrganization,
   useUser,
   type AppBlock,
   type ChatMessage,
   type ConversationSummaryText,
-  type Integration,
   type ThinkingBlock as ThinkingBlockType,
   type ToolCallData,
   type ToolUseBlock,
@@ -479,8 +477,8 @@ export function Chat({
     : configuredPrimaryModel;
   const activeModelName: string | null = conversationState?.activeModelName ?? displayPrimaryModel;
   const activeModelLabel: string | null = conversationState?.activeModelName
-    ? `Running: ${formatModelNameForUi(conversationState.activeModelName)}`
-    : (displayPrimaryModel ? `Default: ${formatModelNameForUi(displayPrimaryModel)}` : null);
+    ? formatModelNameForUi(conversationState.activeModelName)
+    : (displayPrimaryModel ? formatModelNameForUi(displayPrimaryModel) : null);
 
   // Get actions from Zustand (stable references)
   const addConversationMessage = useAppStore((s) => s.addConversationMessage);
@@ -1718,6 +1716,11 @@ export function Chat({
   const chatSearchTerm = useChatStore((s) => s.chatSearchTerm);
   const chatSearchMatchCount = useChatStore((s) => s.chatSearchMatchCount);
   const isCurrentChatPinned: boolean = Boolean(chatId && pinnedChatIds.includes(chatId));
+  const isLandingView: boolean =
+    visibleMessages.length === 0 &&
+    !isThinking &&
+    conversationType !== 'workflow' &&
+    !chatSearchTerm;
 
   // When opened from search, auto-load ALL older messages so all matches are navigable.
   // Uses messages.length as a dep so it re-checks after initial load completes.
@@ -2113,8 +2116,9 @@ export function Chat({
           </button>
         </div>
       )}
-      {/* Header - hidden on mobile since AppLayout has mobile header */}
-      <header className="hidden md:flex h-[49px] border-b border-surface-700 dark:border-surface-800/60 items-center justify-between px-4 md:px-6 flex-shrink-0">
+      {/* Header - hidden on mobile and on new-chat landing */}
+      {!isLandingView && (
+      <header className="hidden md:flex h-[49px] border-b border-surface-700/60 dark:border-surface-800/60 items-center justify-between px-4 md:px-6 flex-shrink-0">
         <div className="flex items-center gap-3 min-w-0 flex-1">
           {/* Back to All Chats */}
           <button
@@ -2144,7 +2148,7 @@ export function Chat({
                 if (e.key === 'Escape') cancelEditingHeaderTitle();
               }}
               onBlur={() => void saveHeaderTitle()}
-              className="text-lg font-semibold text-surface-100 bg-transparent border-b border-primary-500 outline-none w-full"
+              className="text-lg font-semibold text-surface-100 bg-transparent border-b border-surface-500 outline-none w-full"
               maxLength={100}
             />
           ) : (
@@ -2168,8 +2172,8 @@ export function Chat({
             const isShared: boolean = (chatId ? conversationScope : newConversationScope) === 'shared';
             const chipStatic: string =
               'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide';
-            const chipShared: string = `${chipStatic} bg-primary-500/15 text-primary-400/90`;
-            const chipPrivate: string = `${chipStatic} bg-surface-700 text-surface-400`;
+            const chipShared: string = `${chipStatic} bg-surface-800/80 text-surface-500 normal-case tracking-normal`;
+            const chipPrivate: string = `${chipStatic} bg-surface-800/80 text-surface-500 normal-case tracking-normal`;
             const nextScopeLabel: string = isShared ? 'private' : 'shared';
 
             return (
@@ -2404,6 +2408,7 @@ export function Chat({
           </div>
         </div>
       </header>
+      )}
       {showSummaryPanel && chatSummary && (
         <SummaryPanel summary={chatSummary} onClose={() => setShowSummaryPanel(false)} />
       )}
@@ -2442,6 +2447,305 @@ export function Chat({
         <SummaryPanel summary={chatSummary} onClose={() => setShowSummaryPanel(false)} />
       )}
 
+      {isLandingView ? (
+      <div className="flex-1 flex flex-col items-center justify-center min-h-0 overflow-y-auto px-4 md:px-6 py-8 md:py-14 gap-6">
+        <ChatLandingGreeting user={currentUser} />
+        <div className="w-full max-w-2xl flex-shrink-0">
+      {/* Composer */}
+      <div className="w-full">
+        <div className="relative">
+          <div
+            className={`absolute left-0 bottom-full mb-1 min-w-[14rem] max-w-sm max-h-44 overflow-y-auto rounded-lg border border-surface-700 bg-surface-900 shadow-lg z-50 ${
+              mentionPopover.open && mentionSuggestions.length > 0 ? '' : 'hidden'
+            }`}
+            role="listbox"
+          >
+            {mentionSuggestions.slice(0, 8).map((item, idx) => (
+              <button
+                key={item.type === 'agent' ? 'agent' : item.userId}
+                type="button"
+                role="option"
+                aria-selected={idx === mentionPopover.selectedIndex}
+                ref={idx === mentionPopover.selectedIndex ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}
+                className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors ${
+                  idx === mentionPopover.selectedIndex ? 'bg-primary-500/15 text-surface-100' : 'hover:bg-surface-800 text-surface-200'
+                }`}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  const displayName: string = item.type === 'agent' ? 'Basebase' : item.displayName;
+                  selectMention(
+                    item.type === 'agent' ? { type: 'agent' } : { type: 'user', userId: item.userId },
+                    displayName
+                  );
+                }}
+              >
+                {item.type === 'agent' ? (
+                  <span className="flex items-center gap-2 font-medium text-primary-400">
+                    <svg className="w-4 h-4" viewBox="0 0 500 500" fill="none"><rect x="277.744" y="193.333" width="42.89" height="119.37" transform="rotate(45 277.744 193.333)" fill="currentColor"/><rect x="308.074" y="277.744" width="42.89" height="119.37" transform="rotate(135 308.074 277.744)" fill="currentColor"/><path d="M310.7 59.7c35.2-35.2 92.2-35.2 127.3 0s35.2 92.1 0 127.3c-42.4 42.4-162.6 35.3-162.6 35.3s-7.1-120.2 35.3-162.6zm66 29.6c-16.6 0-30 13.5-30 30 0 16.6 13.4 30 30 30s30-13.4 30-30c0-16.5-13.4-30-30-30z" fill="currentColor"/><path d="M59.7 187c-35.2-35.2-35.2-92.2 0-127.3s92.1-35.2 127.3 0c42.4 42.4 35.3 162.6 35.3 162.6s-120.2 7.1-162.6-35.3zm29.6-66c0 16.6 13.5 30 30 30 16.6 0 30-13.4 30-30s-13.4-30-30-30-30 13.4-30 30z" fill="currentColor"/><path d="M310.7 439.1c35.2 35.1 92.2 35.1 127.3 0s35.2-92.2 0-127.3c-42.4-42.4-162.5-35.4-162.6-35.4 0 0-7.1 120.2 35.3 162.7zm66-29.7c-16.6 0-30-13.4-30-30s13.4-30 30-30 30 13.4 30 30-13.4 30-30 30z" fill="currentColor"/><path d="M59.7 311.8c-35.2 35.2-35.2 92.2 0 127.3s92.1 35.2 127.3 0c42.4-42.4 35.3-162.5 35.3-162.6 0 0-120.2-7.1-162.6 35.3zm29.7 66c0-16.6 13.4-30 30-30s30 13.4 30 30-13.4 30-30 30-30-13.4-30-30z" fill="currentColor"/></svg>
+                    Basebase
+                  </span>
+                ) : (
+                  <span className="min-w-0 text-left">
+                    <span className="font-medium">{item.displayName}</span>
+                    {item.email.trim().toLowerCase() !== item.displayName.trim().toLowerCase() ? (
+                      <span className="text-surface-500"> ({item.email})</span>
+                    ) : null}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+          {outOfCredits && (
+            <div className="mb-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-sm flex items-center gap-2">
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              You&apos;re out of credits. Upgrade your plan to continue chatting.
+            </div>
+          )}
+          {chatId && conversationState && conversationState.agentResponding === false && (
+            <div className="mb-2 px-3 py-2 rounded-lg bg-surface-700/50 border border-surface-600 text-surface-400 text-sm flex items-center justify-between">
+              <span>Basebase paused — use @Basebase to resume</span>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!chatId) return;
+                  sendMessage({
+                    type: 'send_message',
+                    message: '@Basebase',
+                    conversation_id: chatId,
+                    mentions: [{ type: 'agent' }],
+                  });
+                  setConversationAgentResponding(chatId, true);
+                  setConversationThinking(chatId, true);
+                }}
+                className="px-3 py-1 text-xs font-medium bg-primary-600 hover:bg-primary-500 text-white rounded-md transition-colors"
+              >
+                Resume
+              </button>
+            </div>
+          )}
+          {lowCredits && (
+            <div className="mb-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 text-sm flex items-center gap-2">
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              Running low on credits ({creditsInfo?.balance} remaining).
+            </div>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            accept="image/*,.pdf,.csv,.tsv,.xlsx,.docx,.pptx,.txt,.json,.md,.xml,.html,.css,.yaml,.yml,.rtf,.eml,.ics,.vcf,.sql,.log,.py,.js,.ts,.jsx,.tsx,.sh,.rb,.java,.c,.cpp,.h,.go,.rs,.swift,.kt,.r,.m"
+            onChange={handleFileSelect}
+          />
+
+          {(() => {
+            const composerExpanded: boolean =
+              isMobile || composerFocused || input.trim().length > 0 || pendingAttachments.length > 0;
+
+            const handleComposerBlur = (e: React.FocusEvent<HTMLDivElement>): void => {
+              if (composerRef.current?.contains(e.relatedTarget as Node)) return;
+              setComposerFocused(false);
+            };
+
+            const attachButton: JSX.Element = (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading || agentRunning}
+                className="flex shrink-0 w-7 h-7 rounded text-surface-400 hover:text-surface-200 hover:bg-surface-700 items-center justify-center transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Attach file"
+              >
+                {isUploading ? (
+                  <div className="w-4 h-4 border-2 border-surface-600 border-t-primary-500 rounded-full animate-spin" />
+                ) : (
+                  <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                )}
+              </button>
+            );
+
+            const sendStopButton: JSX.Element = agentRunning ? (
+              <button
+                onClick={handleStop}
+                className="shrink-0 w-7 h-7 rounded bg-red-600 text-white hover:bg-red-500 flex items-center justify-center transition-colors"
+                title="Stop"
+              >
+                <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                  <rect x="6" y="6" width="12" height="12" rx="1" />
+                </svg>
+              </button>
+            ) : (
+              <button
+                onClick={handleSend}
+                disabled={(!input.trim() && pendingAttachments.length === 0) || !isConnected || outOfCredits}
+                className={`shrink-0 w-7 h-7 rounded flex items-center justify-center transition-colors ${
+                  (input.trim() || pendingAttachments.length > 0) && isConnected && !outOfCredits
+                    ? 'bg-primary-600 text-white hover:bg-primary-500'
+                    : 'text-surface-500 cursor-default'
+                }`}
+              >
+                <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3 21l18-9L3 3l3 9zm0 0h8" />
+                </svg>
+              </button>
+            );
+
+            const modelLabel: JSX.Element | null = activeModelLabel ? (
+              <span
+                className="text-xs text-surface-500 truncate max-w-[180px] flex items-center gap-0.5 shrink-0"
+                title={activeModelName ?? undefined}
+              >
+                {activeModelLabel}
+                <svg className="w-3 h-3 opacity-60 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </span>
+            ) : null;
+
+            return (
+              <div
+                ref={composerRef}
+                onDrop={(e) => void handleDrop(e)}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onBlur={handleComposerBlur}
+                className={`relative chat-composer-shell transition-all duration-150 ${
+                  isDragOver
+                    ? 'border-primary-500 ring-1 ring-primary-500/40 bg-surface-850'
+                    : (!isConnected || outOfCredits)
+                      ? 'border-surface-700 opacity-50 bg-surface-900'
+                      : 'border-surface-700 focus-within:border-surface-600 bg-surface-900'
+                } w-full min-w-0 overflow-hidden`}
+              >
+                {isDragOver && (
+                  <div className="absolute inset-0 rounded-lg bg-primary-500/10 flex items-center justify-center z-10 pointer-events-none">
+                    <span className="text-sm font-medium text-primary-400">Drop files here</span>
+                  </div>
+                )}
+
+                {composerExpanded ? (
+                  <>
+                    {pendingAttachments.length > 0 && (
+                      <div className="flex flex-wrap gap-2 px-3 pt-3">
+                        {pendingAttachments.map((att) => (
+                          <AttachmentCard
+                            key={att.upload_id}
+                            filename={att.filename}
+                            mimeType={att.mime_type}
+                            size={att.size}
+                            onRemove={() => removeAttachment(att.upload_id)}
+                          />
+                        ))}
+                      </div>
+                    )}
+
+                    <textarea
+                      ref={inputRef}
+                      value={input}
+                      onChange={(e) => {
+                        const val: string = e.target.value;
+                        const cursor: number = e.target.selectionStart ?? val.length;
+                        setInput(val);
+                        e.target.style.height = 'auto';
+                        e.target.style.height = `${Math.min(e.target.scrollHeight, 240)}px`;
+
+                        const textBefore: string = val.substring(0, cursor);
+                        const lastAt: number = textBefore.lastIndexOf('@');
+                        if (lastAt !== -1) {
+                          const prevChar: string = lastAt > 0 ? (val[lastAt - 1] ?? ' ') : ' ';
+                          if (/\s/.test(prevChar) || lastAt === 0) {
+                            const query: string = textBefore.substring(lastAt + 1);
+                            if (!query.includes(' ')) {
+                              setMentionPopover(() => ({ open: true, query, selectedIndex: 0 }));
+                              notifyTyping();
+                              return;
+                            }
+                          }
+                        }
+                        setMentionPopover((prev) => (prev.open ? { ...prev, open: false } : prev));
+                        notifyTyping();
+                      }}
+                      onKeyDown={handleKeyDown}
+                      onPaste={(e) => void handlePaste(e)}
+                      onFocus={() => setComposerFocused(true)}
+                      placeholder={outOfCredits ? 'Out of credits — upgrade to continue' : agentRunning ? 'Agent working...' : isLandingView || chatId === null ? 'How can I help you today?' : 'Message...'}
+                      className="w-full resize-none bg-transparent text-surface-100 px-4 pt-4 pb-3 text-[15px] placeholder-surface-400 focus:outline-none leading-[1.5] scrollbar-none disabled:cursor-not-allowed"
+                      style={{ minHeight: '44px', maxHeight: '240px' }}
+                      rows={1}
+                      disabled={!isConnected || outOfCredits}
+                      autoFocus={chatId === null}
+                    />
+
+                    <div className="flex items-center justify-between gap-2 px-2.5 pt-0 pb-2 min-w-0">
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        {attachButton}
+                        {modelLabel}
+                      </div>
+                      {sendStopButton}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-1 px-1.5 py-1 min-w-0">
+                    <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+                      {attachButton}
+                      <textarea
+                        ref={inputRef}
+                        value={input}
+                        onChange={(e) => {
+                          const val: string = e.target.value;
+                          const cursor: number = e.target.selectionStart ?? val.length;
+                          setInput(val);
+                          e.target.style.height = 'auto';
+                          e.target.style.height = `${Math.min(e.target.scrollHeight, 240)}px`;
+
+                          const textBefore: string = val.substring(0, cursor);
+                          const lastAt: number = textBefore.lastIndexOf('@');
+                          if (lastAt !== -1) {
+                            const prevChar: string = lastAt > 0 ? (val[lastAt - 1] ?? ' ') : ' ';
+                            if (/\s/.test(prevChar) || lastAt === 0) {
+                              const query: string = textBefore.substring(lastAt + 1);
+                              if (!query.includes(' ')) {
+                                setMentionPopover(() => ({ open: true, query, selectedIndex: 0 }));
+                                notifyTyping();
+                                return;
+                              }
+                            }
+                          }
+                          setMentionPopover((prev) => (prev.open ? { ...prev, open: false } : prev));
+                          notifyTyping();
+                        }}
+                        onKeyDown={handleKeyDown}
+                        onPaste={(e) => void handlePaste(e)}
+                        onFocus={() => setComposerFocused(true)}
+                        placeholder={outOfCredits ? 'Out of credits — upgrade to continue' : agentRunning ? 'Agent working...' : isLandingView || chatId === null ? 'How can I help you today?' : 'Message...'}
+                        className="flex-1 min-w-0 resize-none bg-transparent text-surface-100 py-1 text-[15px] placeholder-surface-500 focus:outline-none leading-[1.46] scrollbar-none disabled:cursor-not-allowed"
+                        style={{ height: '28px' }}
+                        rows={1}
+                        disabled={!isConnected || outOfCredits}
+                        autoFocus={chatId === null}
+                      />
+                    </div>
+                    {modelLabel}
+                    {sendStopButton}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+
+
+        </div>
+        <ChatQuickActions onSuggestionClick={handleSuggestionClick} />
+      </div>
+      ) : (
+      <>
       {/* Content area with messages and optional artifact sidebar */}
       <div className="flex-1 flex overflow-hidden">
         {/* Messages column (vertical flex with optional app preview above) */}
@@ -2803,8 +3107,14 @@ export function Chat({
             );
 
             const modelLabel: JSX.Element | null = activeModelLabel ? (
-              <span className="text-[11px] text-surface-500 truncate max-w-[200px]" title={activeModelName ?? undefined}>
+              <span
+                className="text-xs text-surface-500 truncate max-w-[180px] flex items-center gap-0.5 shrink-0"
+                title={activeModelName ?? undefined}
+              >
                 {activeModelLabel}
+                <svg className="w-3 h-3 opacity-60 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
               </span>
             ) : null;
 
@@ -2815,7 +3125,7 @@ export function Chat({
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onBlur={handleComposerBlur}
-                className={`relative rounded-lg border transition-all duration-150 ${
+                className={`relative chat-composer-shell transition-all duration-150 ${
                   isDragOver
                     ? 'border-primary-500 ring-1 ring-primary-500/40 bg-surface-850'
                     : (!isConnected || outOfCredits)
@@ -2874,15 +3184,15 @@ export function Chat({
                       onKeyDown={handleKeyDown}
                       onPaste={(e) => void handlePaste(e)}
                       onFocus={() => setComposerFocused(true)}
-                      placeholder={outOfCredits ? 'Out of credits — upgrade to continue' : agentRunning ? 'Agent working...' : 'Message...'}
-                      className="w-full resize-none bg-transparent text-surface-100 px-3.5 pt-3 pb-2.5 text-[15px] placeholder-surface-500 focus:outline-none leading-[1.46] scrollbar-none disabled:cursor-not-allowed"
-                      style={{ minHeight: '36px', maxHeight: '240px' }}
+                      placeholder={outOfCredits ? 'Out of credits — upgrade to continue' : agentRunning ? 'Agent working...' : isLandingView || chatId === null ? 'How can I help you today?' : 'Message...'}
+                      className="w-full resize-none bg-transparent text-surface-100 px-4 pt-4 pb-3 text-[15px] placeholder-surface-400 focus:outline-none leading-[1.5] scrollbar-none disabled:cursor-not-allowed"
+                      style={{ minHeight: '44px', maxHeight: '240px' }}
                       rows={1}
                       disabled={!isConnected || outOfCredits}
                       autoFocus={chatId === null}
                     />
 
-                    <div className="flex items-center justify-between gap-2 px-1.5 pt-0 pb-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2 px-2.5 pt-0 pb-2 min-w-0">
                       <div className="flex min-w-0 items-center gap-1.5">
                         {attachButton}
                         {modelLabel}
@@ -2923,7 +3233,7 @@ export function Chat({
                         onKeyDown={handleKeyDown}
                         onPaste={(e) => void handlePaste(e)}
                         onFocus={() => setComposerFocused(true)}
-                        placeholder={outOfCredits ? 'Out of credits — upgrade to continue' : agentRunning ? 'Agent working...' : 'Message...'}
+                        placeholder={outOfCredits ? 'Out of credits — upgrade to continue' : agentRunning ? 'Agent working...' : isLandingView || chatId === null ? 'How can I help you today?' : 'Message...'}
                         className="flex-1 min-w-0 resize-none bg-transparent text-surface-100 py-1 text-[15px] placeholder-surface-500 focus:outline-none leading-[1.46] scrollbar-none disabled:cursor-not-allowed"
                         style={{ height: '28px' }}
                         rows={1}
@@ -2931,6 +3241,7 @@ export function Chat({
                         autoFocus={chatId === null}
                       />
                     </div>
+                    {modelLabel}
                     {sendStopButton}
                   </div>
                 )}
@@ -2939,6 +3250,10 @@ export function Chat({
           })()}
         </div>
       </div>
+
+
+      </>
+      )}
 
       {/* Tool Call Detail Modal */}
       {selectedToolCall && (
@@ -4526,63 +4841,104 @@ function AttachmentCard({
   );
 }
 
-function buildSuggestions(connected: Integration[]): string[] {
-  const providers = new Set(connected.map((i) => i.provider));
-  const suggestions: string[] = [];
 
-  if (providers.has('hubspot') || providers.has('salesforce'))
-    suggestions.push('What deals are closing this month?', 'Show me my pipeline by stage');
-  if (providers.has('gmail') || providers.has('microsoft_mail'))
-    suggestions.push('Summarize my unread emails from today');
-  if (providers.has('google_calendar') || providers.has('microsoft_calendar') || providers.has('zoom'))
-    suggestions.push('What meetings do I have this week?');
-  if (providers.has('github') || providers.has('linear') || providers.has('jira') || providers.has('asana'))
-    suggestions.push('Show me open issues assigned to me');
-  if (providers.has('slack'))
-    suggestions.push('What are the latest messages in my Slack channels?');
+function greetingFirstName(user: { name: string | null; email: string } | null | undefined): string {
+  const name: string | null = user?.name?.trim() ?? null;
+  if (name) {
+    const part: string | undefined = name.split(/\s+/)[0];
+    if (part) return part;
+  }
+  const email: string = user?.email?.trim() ?? '';
+  if (email) {
+    const local: string | undefined = email.split('@')[0];
+    if (local) return local;
+  }
+  return 'there';
+}
 
-  if (suggestions.length < 3)
-    return ['What can you help me with?', 'What connectors can I connect?', 'Show me what you can do'];
+function buildChatGreeting(user: { name: string | null; email: string } | null | undefined): string {
+  const first: string = greetingFirstName(user);
+  const hour: number = new Date().getHours();
+  if (hour < 12) return `Good morning, ${first}`;
+  if (hour < 18) return `Good afternoon, ${first}`;
+  return `Back at it, ${first}`;
+}
 
-  return suggestions.slice(0, 5);
+function ChatLandingGreeting({
+  user,
+}: {
+  user: { name: string | null; email: string } | null | undefined;
+}): JSX.Element {
+  return (
+    <div className="text-center w-full max-w-2xl flex-shrink-0">
+      <div className="flex items-center justify-center gap-3 flex-wrap">
+        <img src={LOGO_PATH} alt={APP_NAME} className="w-9 h-9 flex-shrink-0" />
+        <h1 className="chat-greeting text-balance">{buildChatGreeting(user)}</h1>
+      </div>
+    </div>
+  );
+}
+
+const QUICK_ACTION_ITEMS: readonly { label: string; icon: JSX.Element; prompt: string }[] = [
+  {
+    label: 'Write',
+    prompt: 'Help me write something',
+    icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>,
+  },
+  {
+    label: 'Research',
+    prompt: 'Help me research a topic',
+    icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>,
+  },
+  {
+    label: 'Analyze',
+    prompt: 'Analyze my data',
+    icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>,
+  },
+  {
+    label: 'Summarize',
+    prompt: 'Summarize something for me',
+    icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16m-7 6h7" /></svg>,
+  },
+  {
+    label: 'Explore',
+    prompt: 'What can you help me with?',
+    icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>,
+  },
+];
+
+function ChatQuickActions({
+  onSuggestionClick,
+}: {
+  onSuggestionClick: (text: string) => void;
+}): JSX.Element {
+  return (
+    <div className="flex flex-wrap gap-2 justify-center w-full max-w-2xl flex-shrink-0 px-1">
+      {QUICK_ACTION_ITEMS.map((item) => (
+        <button
+          key={item.label}
+          type="button"
+          onClick={() => onSuggestionClick(item.prompt)}
+          className="chat-quick-action"
+        >
+          {item.icon}
+          {item.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 interface EmptyStateProps {
   onSuggestionClick: (text: string) => void;
 }
 
-function EmptyState({ onSuggestionClick }: EmptyStateProps): JSX.Element {
-  const connected = useConnectedIntegrations();
-  const suggestions = buildSuggestions(connected);
-
+/** Fallback empty thread (non-landing) — greeting only. */
+function EmptyState({ onSuggestionClick: _onSuggestionClick }: EmptyStateProps): JSX.Element {
+  const currentUser = useUser();
   return (
-    <div className="h-full flex items-center justify-center px-4">
-      <div className="text-center max-w-lg">
-        <div className="w-16 h-16 md:w-20 md:h-20 rounded-2xl bg-primary-500/10 flex items-center justify-center mx-auto mb-4 md:mb-6">
-          <img 
-            src={LOGO_PATH} 
-            alt={APP_NAME} 
-            className="w-8 h-8 md:w-10 md:h-10" 
-          />
-        </div>
-        <h2 className="text-xl md:text-2xl font-bold text-surface-50 mb-2">
-          Ask me anything
-        </h2>
-        <p className="text-surface-400 mb-6 md:mb-8 text-sm md:text-base">
-          Get instant insights from your connectors
-        </p>
-        <div className="flex flex-wrap gap-2 justify-center">
-          {suggestions.map((text) => (
-            <button
-              key={text}
-              onClick={() => onSuggestionClick(text)}
-              className="px-3 md:px-4 py-1.5 md:py-2 rounded-full bg-surface-800 hover:bg-surface-700 text-surface-300 text-xs md:text-sm transition-colors border border-surface-700"
-            >
-              {text}
-            </button>
-          ))}
-        </div>
-      </div>
+    <div className="h-full flex items-center justify-center px-4 py-12">
+      <ChatLandingGreeting user={currentUser} />
     </div>
   );
 }

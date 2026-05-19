@@ -13,10 +13,10 @@
   --surface-400: #887e71;
   --surface-500: #a39687;
   --surface-600: #bfb4a5;
-  --surface-700: #d9d2c2;
-  --surface-800: #f6f2e8;
+  --surface-700: #e5e2db;
+  --surface-800: #f2efe9;
   --surface-900: #ffffff;
-  --surface-950: #fdfcf8;
+  --surface-950: #faf9f7;
   color-scheme: light;
 }
 
@@ -103,8 +103,28 @@
   .input {
     @apply w-full px-4 py-3 bg-surface-900 text-surface-100 rounded-lg
            border border-surface-700 placeholder-surface-500
-           focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent
+           focus:outline-none focus:ring-2 focus:ring-surface-400 focus:border-transparent
            transition-all duration-150;
+  }
+
+  /* Claude-style chat greeting (serif, spacious) */
+  .chat-greeting {
+    @apply font-serif text-3xl md:text-4xl text-surface-100 tracking-tight;
+  }
+
+  /* Centered composer shell for new-chat empty state */
+  .chat-composer-shell {
+    @apply w-full max-w-2xl mx-auto rounded-3xl border border-surface-700 bg-surface-900
+           shadow-[0_1px_4px_rgba(0,0,0,0.04),0_2px_12px_rgba(0,0,0,0.05)]
+           focus-within:border-surface-600 focus-within:shadow-[0_1px_4px_rgba(0,0,0,0.06),0_4px_20px_rgba(0,0,0,0.08)]
+           transition-all duration-200;
+  }
+
+  /* Quick-action pills below composer */
+  .chat-quick-action {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm text-surface-300
+           border border-surface-700 bg-surface-900 hover:bg-surface-800 hover:text-surface-100
+           transition-colors duration-150;
   }
 
   /* Fix autofill styling for dark theme */
