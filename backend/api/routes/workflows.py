@@ -770,6 +770,40 @@ async def list_workflow_runs(
         return [WorkflowRunResponse(**r.to_dict()) for r in runs]
 
 
+@router.get(
+    "/{organization_id}/runs/{run_id}",
+    response_model=WorkflowRunResponse,
+)
+async def get_workflow_run(
+    organization_id: str,
+    run_id: str,
+    auth: AuthContext = Depends(require_organization),
+) -> WorkflowRunResponse:
+    """Fetch a single workflow run by id (for app Generate polling via parent session)."""
+    try:
+        run_uuid = UUID(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid run ID format") from exc
+    org_uuid = _enforce_workflow_org_scope(organization_id, auth)
+
+    async with get_session(
+        organization_id=organization_id,
+        user_id=str(auth.user_id),
+    ) as session:
+        result = await session.execute(
+            select(WorkflowRun).where(
+                and_(
+                    WorkflowRun.id == run_uuid,
+                    WorkflowRun.organization_id == org_uuid,
+                )
+            )
+        )
+        run: WorkflowRun | None = result.scalar_one_or_none()
+        if run is None:
+            raise HTTPException(status_code=404, detail="Workflow run not found")
+        return WorkflowRunResponse(**run.to_dict())
+
+
 @router.delete("/{organization_id}/runs/{run_id}")
 async def delete_workflow_run(
     organization_id: str,

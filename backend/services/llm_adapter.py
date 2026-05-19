@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Literal, Protocol
+from typing import Any, AsyncIterator, Literal, Protocol, TypedDict
 
 from anthropic import AsyncAnthropic
 from openai import APIStatusError as OpenAIAPIStatusError, AsyncOpenAI
@@ -232,6 +232,38 @@ PROVIDER_DEFAULT_MODELS: dict[str, dict[str, str]] = {
     "qwen": {"primary": "qwen3.6-plus", "cheap": "qwen3-30b-a3b-instruct-2507"},
     "deepseek": {"primary": "deepseek-v4-pro", "cheap": "deepseek-v4-pro"},
 }
+
+
+# ---------------------------------------------------------------------------
+# OpenAI-compatible thinking capabilities (declarative)
+#
+# Each entry maps a model-prefix to the extra kwargs needed for reasoning.
+# `reasoning_effort` is only included when the provider actually accepts it as
+# a top-level parameter (OpenAI o-series).  DeepSeek uses `extra_body.thinking`
+# instead.  To add a new provider, add a row — no branching required.
+# ---------------------------------------------------------------------------
+
+
+class _OpenAIThinkingCaps(TypedDict, total=False):
+    reasoning_effort: str | None
+    thinking_body_key: str | None
+
+
+_OPENAI_THINKING_CAPS_TABLE: list[tuple[tuple[str, ...], _OpenAIThinkingCaps]] = [
+    # DeepSeek — uses extra_body.thinking, no reasoning_effort top-level param
+    (DEEPSEEK_MODEL_PREFIXES, {"reasoning_effort": None, "thinking_body_key": "thinking"}),
+    # OpenAI o-series — uses reasoning_effort, no extra_body thinking
+    (("o1", "o3", "o4"), {"reasoning_effort": "high", "thinking_body_key": None}),
+]
+
+
+def _resolve_openai_thinking_caps(model: str) -> _OpenAIThinkingCaps | None:
+    """Look up thinking capabilities for an OpenAI-compat model by prefix."""
+    normalized: str = _normalized_model_name(model)
+    for prefixes, caps in _OPENAI_THINKING_CAPS_TABLE:
+        if normalized.startswith(prefixes):
+            return caps
+    return None
 
 
 @dataclass(frozen=True)
@@ -678,19 +710,29 @@ class OpenAIAdapter:
         return {token_param_name: token_limit}
 
     def _build_thinking_kwargs(self, *, model: str, thinking: bool) -> dict[str, Any]:
-        """Return provider-specific thinking controls for OpenAI-compatible APIs."""
-        if not is_deepseek_model(model):
+        """Return provider-specific thinking controls for OpenAI-compatible APIs.
+
+        Uses a declarative capabilities table so adding future providers or
+        models only requires a new entry — no branching logic.
+        """
+        caps: _OpenAIThinkingCaps | None = _resolve_openai_thinking_caps(model)
+        if caps is None:
             return {}
 
-        thinking_type = "enabled" if thinking else "disabled"
+        thinking_type: str = "enabled" if thinking else "disabled"
         logger.debug(
-            "DeepSeek thinking mode controls selected",
-            extra={"model": model, "thinking_type": thinking_type},
+            "OpenAI-compat thinking controls selected",
+            extra={"model": model, "thinking_type": thinking_type, "caps": caps},
         )
-        return {
-            "reasoning_effort": "high",
-            "extra_body": {"thinking": {"type": thinking_type}},
-        }
+        kwargs: dict[str, Any] = {}
+        if caps.get("reasoning_effort"):
+            kwargs["reasoning_effort"] = caps["reasoning_effort"]
+        extra_body: dict[str, Any] = {}
+        if caps.get("thinking_body_key"):
+            extra_body[caps["thinking_body_key"]] = {"type": thinking_type}
+        if extra_body:
+            kwargs["extra_body"] = extra_body
+        return kwargs
 
     def _openai_not_found_fallback_models(self, model: str) -> list[str]:
         """Return same-family model candidates when a model is not found."""

@@ -10,11 +10,11 @@ from typing import Any
 DAILY_DIGEST_WORKFLOW_NAME: str = "Daily Digest"
 DAILY_DIGEST_APP_TITLE: str = "Daily Digest"
 
-DAILY_DIGEST_WORKFLOW_PROMPT: str = """Generate the team daily digest for yesterday (America/Los_Angeles calendar day).
+DAILY_DIGEST_WORKFLOW_PROMPT: str = """Generate the team daily digest for one calendar day (America/Los_Angeles).
 
 ## Date
-1. Compute digest_date as yesterday in America/Los_Angeles (YYYY-MM-DD).
-2. Use that digest_date for all steps below.
+1. If trigger data includes digest_date (YYYY-MM-DD), use it for all steps below.
+2. Otherwise compute digest_date as yesterday in America/Los_Angeles (YYYY-MM-DD).
 
 ## Active members
 Run SQL to list members to summarize:
@@ -140,10 +140,10 @@ function MemberCard({ row }) {
   const initial = name.slice(0, 1).toUpperCase();
   return (
     <article style={{
-      border: "1px solid #3f3f46",
+      border: "1px solid var(--app-border)",
       borderRadius: "0.75rem",
       padding: "1rem",
-      background: "rgba(24,24,27,0.6)",
+      background: "var(--app-card-bg)",
       display: "flex",
       flexDirection: "column",
       gap: "0.75rem",
@@ -155,30 +155,30 @@ function MemberCard({ row }) {
           <img src={row.avatar_url} alt="" style={{ width: 40, height: 40, borderRadius: "50%", objectFit: "cover" }} />
         ) : (
           <div style={{
-            width: 40, height: 40, borderRadius: "50%", background: "#3f3f46",
+            width: 40, height: 40, borderRadius: "50%", background: "var(--app-control-bg)",
             display: "flex", alignItems: "center", justifyContent: "center",
-            color: "#d4d4d8", fontWeight: 500,
+            color: "var(--app-control-fg)", fontWeight: 500,
           }}>{initial}</div>
         )}
-        <h3 style={{ margin: 0, color: "#f4f4f5", fontSize: "1rem", fontWeight: 500 }}>{name}</h3>
+        <h3 style={{ margin: 0, color: "var(--app-fg)", fontSize: "1rem", fontWeight: 500 }}>{name}</h3>
       </div>
       {sources.length > 0 ? (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
           {sources.map((s) => (
             <span key={s} style={{
               fontSize: "0.7rem", padding: "0.15rem 0.45rem",
-              borderRadius: "0.35rem", background: "#27272a", color: "#a1a1aa",
+              borderRadius: "0.35rem", background: "var(--app-tag-bg)", color: "var(--app-tag-fg)",
             }}>{s}</span>
           ))}
         </div>
       ) : null}
       {narrative ? (
-        <p style={{ color: "#e4e4e7", fontSize: "0.875rem", lineHeight: 1.6, margin: 0 }}>{narrative}</p>
+        <p style={{ color: "var(--app-fg)", fontSize: "0.875rem", lineHeight: 1.6, margin: 0 }}>{narrative}</p>
       ) : (
-        <p style={{ color: "#71717a", fontSize: "0.875rem", margin: 0 }}>No digest for this day yet.</p>
+        <p style={{ color: "var(--app-body-muted)", fontSize: "0.875rem", margin: 0 }}>No digest for this day yet.</p>
       )}
       {highlights.length > 0 ? (
-        <ul style={{ margin: 0, paddingLeft: "1.25rem", color: "#d4d4d8", fontSize: "0.875rem" }}>
+        <ul style={{ margin: 0, paddingLeft: "1.25rem", color: "var(--app-muted)", fontSize: "0.875rem" }}>
           {highlights.map((h, i) => (
             <li key={i}>{String(h)}</li>
           ))}
@@ -232,7 +232,11 @@ export default function App() {
     setGenerating(true);
     setGenError(null);
     try {
-      await triggerWorkflow(workflowId, { digest_date: digestDate });
+      const queued = await triggerWorkflow(workflowId, { digest_date: digestDate });
+      const runId = queued && queued.run_id ? String(queued.run_id) : "";
+      if (runId) {
+        await waitForWorkflowRun(runId, { timeoutMs: 600000, pollIntervalMs: 3000 });
+      }
       await refetchMembers();
       await refetchTeam();
     } catch (e) {
@@ -249,9 +253,9 @@ export default function App() {
     <div style={{ display: "flex", flexDirection: "column", gap: "1rem", maxWidth: 1200, margin: "0 auto" }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.5rem", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-          <button type="button" onClick={function() { setDigestDate(function(d) { return addDays(d, -1); }); }} style={{ background: "#27272a", borderColor: "#52525b", color: "#e4e4e7" }}>←</button>
-          <span style={{ fontWeight: 500, minWidth: "7rem", textAlign: "center", color: "#e4e4e7" }}>{formatDisplay(digestDate)}</span>
-          <button type="button" onClick={function() { setDigestDate(function(d) { return addDays(d, 1); }); }} style={{ background: "#27272a", borderColor: "#52525b", color: "#e4e4e7" }}>→</button>
+          <button type="button" onClick={function() { setDigestDate(function(d) { return addDays(d, -1); }); }} style={{ background: "var(--app-control-bg)", borderColor: "var(--app-border)", color: "var(--app-control-fg)" }}>←</button>
+          <span style={{ fontWeight: 500, minWidth: "7rem", textAlign: "center", color: "var(--app-fg)" }}>{formatDisplay(digestDate)}</span>
+          <button type="button" onClick={function() { setDigestDate(function(d) { return addDays(d, 1); }); }} style={{ background: "var(--app-control-bg)", borderColor: "var(--app-border)", color: "var(--app-control-fg)" }}>→</button>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
           <input
@@ -264,7 +268,7 @@ export default function App() {
           <button type="button" disabled={generating} onClick={function() { void handleGenerate(); }}>
             {generating ? "Generating…" : "Generate"}
           </button>
-          <button type="button" onClick={function() { void refetchMembers(); void refetchTeam(); }} style={{ background: "#27272a", borderColor: "#6366f1", color: "#a5b4fc" }}>
+          <button type="button" onClick={function() { void refetchMembers(); void refetchTeam(); }} style={{ background: "var(--app-control-bg)", borderColor: "var(--app-accent)", color: "var(--app-accent-muted)" }}>
             Refresh
           </button>
         </div>
@@ -278,15 +282,15 @@ export default function App() {
           border: "1px solid rgba(99,102,241,0.35)",
           borderRadius: "0.75rem",
           padding: "1rem",
-          background: "rgba(24,24,27,0.6)",
+          background: "var(--app-card-bg)",
         }}>
-          <div style={{ fontSize: "0.7rem", fontWeight: 600, color: "#818cf8", textTransform: "uppercase", marginBottom: "0.5rem" }}>Team Summary</div>
-          <div style={{ color: "#d4d4d8", fontSize: "0.875rem", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{teamSummary}</div>
+          <div style={{ fontSize: "0.7rem", fontWeight: 600, color: "var(--app-accent-muted)", textTransform: "uppercase", marginBottom: "0.5rem" }}>Team Summary</div>
+          <div style={{ color: "var(--app-muted)", fontSize: "0.875rem", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{teamSummary}</div>
         </article>
       ) : null}
 
       {!loading && filtered.length === 0 ? (
-        <p style={{ color: "#71717a", fontSize: "0.875rem" }}>No team members or no digest data for this day.</p>
+        <p style={{ color: "var(--app-body-muted)", fontSize: "0.875rem" }}>No team members or no digest data for this day.</p>
       ) : null}
 
       {!loading && filtered.length > 0 ? (
