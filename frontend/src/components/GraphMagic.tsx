@@ -136,6 +136,8 @@ export function GraphMagic(): JSX.Element {
   const [repulsionLevel, setRepulsionLevel] = useState<RepulsionLevel>(uriState.repulsionLevel);
   const [snippets, setSnippets] = useState<Array<{ ref: string; snippet: string; event_time: string; source_display?: string }>>([]);
   const [availableOrgs, setAvailableOrgs] = useState<AdminOrganization[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isLoadingGraph, setIsLoadingGraph] = useState(false);
 
   const partialWarning = graph?.run_metadata?.coverage?.partial ? 'Partial data: some connectors failed' : null;
 
@@ -179,14 +181,18 @@ export function GraphMagic(): JSX.Element {
 
   const fetchGraph = async (): Promise<void> => {
     if (!orgId || !selectedDate) return;
+    setIsLoadingGraph(true);
     console.debug('[Graph Magic] Fetching graph snapshot', { orgId, selectedDate });
     const { data, error: reqErr } = await apiRequest<GraphResponse>(`/admin-topic-graph/${orgId}/${selectedDate}`);
     if (reqErr || !data) {
       setError(reqErr ?? 'Failed to load graph');
+      setGraph(null);
+      setIsLoadingGraph(false);
       return;
     }
     setError(null);
     setGraph(data);
+    setIsLoadingGraph(false);
   };
 
   useEffect(() => {
@@ -272,7 +278,9 @@ export function GraphMagic(): JSX.Element {
   }, [orgId]);
 
   const rebuild = async (): Promise<void> => {
-    if (!canRebuild) return;
+    if (!canRebuild || isGenerating) return;
+    setIsGenerating(true);
+    setError(null);
     console.debug('[Graph Magic] Rebuilding graphs for range', { orgId, startDate, endDate });
     const { error: reqErr } = await apiRequest('/admin-topic-graph/rebuild', {
       method: 'POST',
@@ -280,9 +288,11 @@ export function GraphMagic(): JSX.Element {
     });
     if (reqErr) {
       setError(reqErr);
+      setIsGenerating(false);
       return;
     }
     await fetchGraph();
+    setIsGenerating(false);
   };
 
 
@@ -430,8 +440,12 @@ export function GraphMagic(): JSX.Element {
           <input type="date" className="px-3 py-2 rounded bg-surface-800" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
         </label>
         <div className="flex items-end">
-          <button disabled={!canRebuild} onClick={() => void rebuild()} className="w-full md:w-auto px-3 py-2 rounded bg-primary-600 disabled:opacity-40">
-            Generate
+          <button
+            disabled={!canRebuild || isGenerating}
+            onClick={() => void rebuild()}
+            className="w-full md:w-auto px-3 py-2 rounded bg-primary-600 disabled:opacity-40"
+          >
+            {isGenerating ? `Generating ${startDate}${startDate !== endDate ? ` → ${endDate}` : ''}...` : 'Generate'}
           </button>
         </div>
         <label className="flex flex-col gap-1 text-xs text-surface-400">
@@ -462,6 +476,11 @@ export function GraphMagic(): JSX.Element {
       {partialWarning && <p className="text-xs text-amber-400">Partial data: some connectors failed</p>}
       {error && <p className="text-sm text-red-400">{error}</p>}
       <div className="bg-surface-900 border border-surface-800 rounded-lg p-3 flex-1 min-h-[68vh] relative">
+        {(isLoadingGraph || isGenerating) && (
+          <div className="absolute inset-3 z-20 flex items-center justify-center rounded bg-surface-950/80 text-sm text-surface-200">
+            {isGenerating ? `Generating graph for ${startDate}${startDate !== endDate ? ` → ${endDate}` : ''}...` : `Loading graph for ${selectedDate}...`}
+          </div>
+        )}
         {graphWithVisuals ? (
           <Cosmograph
             key={`graph-${orgId}-${selectedDate}-${repulsionLevel}-${sizeMode}`}
@@ -479,7 +498,7 @@ export function GraphMagic(): JSX.Element {
             simulationLinkDistance={GRAPH_SIMULATION.linkDistance}
             simulationLinkSpring={GRAPH_SIMULATION.linkSpring}
             fitViewOnInit
-            className="h-full w-full"
+            className="h-full min-h-[62vh] w-full"
             onClick={(index: number | undefined) => {
               if (index === undefined || !graphWithVisuals) {
                 closeNodeDetails();
