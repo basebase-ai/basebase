@@ -415,7 +415,7 @@ def _empty_summary(member_name: str = "", digest_date: date | None = None, org_n
     }
 
 
-async def _call_llm_for_summary(raw: dict[str, Any], organization_id: UUID | str) -> dict[str, Any]:
+async def _call_llm_for_summary(raw: dict[str, Any], organization_id: UUID | str, user_id: UUID | str) -> dict[str, Any]:
     digest_date_str: str = str(raw.get("digest_date", ""))
     member_name: str = str(raw.get("member_name", "")).strip() or "This team member"
     first_name: str = member_name.split()[0] if member_name else "They"
@@ -453,7 +453,7 @@ async def _call_llm_for_summary(raw: dict[str, Any], organization_id: UUID | str
             llm_config.cheap_model,
             getattr(completed, "input_tokens", 0),
             getattr(completed, "output_tokens", 0),
-            user_id=user_id,
+            user_id=str(user_id),
         )
     except Exception as exc:
         await report_anthropic_call_failure(exc=exc, source="daily_digest")
@@ -510,7 +510,7 @@ async def generate_member_digest(
     if _is_raw_effectively_empty(raw):
         summary: dict[str, Any] = _empty_summary(raw_member_name, digest_date, raw_org_name)
     else:
-        summary = await _call_llm_for_summary(raw, organization_id)
+        summary = await _call_llm_for_summary(raw, organization_id, user_id)
 
     now: datetime = datetime.now(timezone.utc)
     new_id: UUID = uuid.uuid4()
