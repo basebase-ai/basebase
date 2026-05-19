@@ -2601,6 +2601,9 @@ export function Chat({
                 title={activeModelName ?? undefined}
               >
                 {activeModelLabel}
+                <svg className="w-3 h-3 opacity-60 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
               </span>
             ) : null;
 
@@ -3109,6 +3112,9 @@ export function Chat({
                 title={activeModelName ?? undefined}
               >
                 {activeModelLabel}
+                <svg className="w-3 h-3 opacity-60 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
               </span>
             ) : null;
 

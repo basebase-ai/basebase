@@ -6,17 +6,17 @@
  *   rule (#d9d2c2) → hairlines (surface-700). Darker steps are derived for text.
  */
 :root {
-  --surface-50: #151617;
-  --surface-100: #333538;
-  --surface-200: #4b4e52;
-  --surface-300: #64686d;
-  --surface-400: #7e8288;
-  --surface-500: #989ca2;
-  --surface-600: #b4b8bd;
-  --surface-700: #e2e4e7;
-  --surface-800: #f0f1f3;
+  --surface-50: #171513;
+  --surface-100: #3c3832;
+  --surface-200: #554e47;
+  --surface-300: #6e665d;
+  --surface-400: #887e71;
+  --surface-500: #a39687;
+  --surface-600: #bfb4a5;
+  --surface-700: #e5e2db;
+  --surface-800: #f2efe9;
   --surface-900: #ffffff;
-  --surface-950: #f9fafb;
+  --surface-950: #faf9f7;
   color-scheme: light;
 }
 
