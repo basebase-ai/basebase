@@ -11,7 +11,7 @@
 
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import type { View, ChatSummary, OrganizationInfo } from './AppLayout';
-import { useAppStore, useAuthStore, useChatStore, useIsGlobalAdmin, useIsOrgAdmin, useActiveTasksByConversation, type UserOrganization, type AdminPanelTab } from '../store';
+import { useAppStore, useAuthStore, useChatStore, useIsGlobalAdmin, useActiveTasksByConversation, type UserOrganization, type AdminPanelTab } from '../store';
 import { apiRequest } from '../lib/api';
 import { Avatar } from './Avatar';
 import { ScopeLockIcon } from './ScopeVisibilityIcons';
@@ -544,13 +544,17 @@ export function Sidebar({
               </button>
             </div>
 
-            <ChatAccordion
+            <HubNav
               collapsed={collapsed}
               currentView={currentView}
+              onViewChange={onViewChange}
+            />
+
+            <ChatAccordion
+              collapsed={collapsed}
               orderedChats={orderedChats}
               currentChatId={currentChatId}
               activeTasksByConversation={activeTasksByConversation}
-              onViewChange={onViewChange}
               onSelectChat={(id) => {
                 onSelectChat(id);
                 if (isMobile) onCloseMobile?.();
@@ -633,27 +637,101 @@ function normalizeChannelIdForMemory(source: string | null | undefined, channelK
   return raw;
 }
 
-/** Recent chats: shared + private in one list (recency), pinned first; lock marks private. Row actions live in the chat ⋮ menu. */
-function ChatAccordion({
+/** Hub navigation: always-visible icon+label links above the chat list. */
+function HubNav({
   collapsed,
   currentView,
-  orderedChats,
-  currentChatId,
-  activeTasksByConversation,
   onViewChange,
-  onSelectChat,
 }: {
   collapsed: boolean;
   currentView: View;
+  onViewChange: (view: View) => void;
+}): JSX.Element {
+  const DATA_HUB_VIEWS: readonly View[] = ['data', 'documents', 'apps', 'workflows', 'activity-log'];
+
+  const items: readonly { label: string; view: View; icon: JSX.Element }[] = [
+    {
+      label: 'Home',
+      view: 'home',
+      icon: (
+        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+        </svg>
+      ),
+    },
+    {
+      label: 'Connectors',
+      view: 'data-sources',
+      icon: (
+        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+        </svg>
+      ),
+    },
+    {
+      label: 'Data',
+      view: 'data-hub',
+      icon: (
+        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+        </svg>
+      ),
+    },
+    {
+      label: 'Settings',
+      view: 'org-settings',
+      icon: (
+        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      ),
+    },
+  ];
+
+  return (
+    <div className={`${collapsed ? 'px-1' : 'px-3'} pt-1 pb-1 space-y-0.5 border-b border-surface-800/50 mb-1 flex-shrink-0`}>
+      {items.map((item) => {
+        const isActive: boolean = currentView === item.view
+          || (item.view === 'data-hub' && DATA_HUB_VIEWS.includes(currentView));
+
+        return (
+          <button
+            key={item.label}
+            type="button"
+            title={collapsed ? item.label : undefined}
+            onClick={() => onViewChange(item.view)}
+            className={`w-full flex items-center ${collapsed ? 'justify-center' : 'gap-2'} px-2 py-1.5 rounded-md text-sm transition-colors ${
+              isActive
+                ? 'bg-surface-800 text-surface-100'
+                : 'text-surface-400 hover:text-surface-100 hover:bg-surface-800/70'
+            }`}
+          >
+            {item.icon}
+            {!collapsed && <span>{item.label}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Recent chats: shared + private in one list (recency), pinned first; lock marks private. Row actions live in the chat ⋮ menu. */
+function ChatAccordion({
+  collapsed,
+  orderedChats,
+  currentChatId,
+  activeTasksByConversation,
+  onSelectChat,
+}: {
+  collapsed: boolean;
   orderedChats: ChatSummary[];
   currentChatId: string | null;
   activeTasksByConversation: Record<string, string>;
-  onViewChange: (view: View) => void;
   onSelectChat: (id: string) => void;
 }): JSX.Element | null {
-  const isOrgAdmin: boolean = useIsOrgAdmin();
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({ hub: true });
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
   const [channelPersonalityTarget, setChannelPersonalityTarget] = useState<{
     key: string;
     label: string;
@@ -880,40 +958,7 @@ function ChatAccordion({
   return (
     <div className="flex-1 flex flex-col min-h-0 px-3 pt-1 pb-px">
       <div className="flex-1 overflow-y-auto scrollbar-thin space-y-0 min-h-0">
-        <div className="mb-1">
-          <SidebarSectionHeader
-            title="Hub"
-            collapsed={isSectionCollapsed('hub')}
-            onToggle={() => toggleSection('hub')}
-          />
-          {!isSectionCollapsed('hub') && (
-            <div className="space-y-0.5 mb-1">
-              {[
-                { label: 'Home', view: 'home' as View },
-                { label: 'Connectors', view: 'data-sources' as View },
-                { label: 'Search Data', view: 'data' as View },
-                { label: 'Workflows', view: 'workflows' as View },
-                { label: 'Apps', view: 'apps' as View },
-                { label: 'Documents', view: 'documents' as View },
-                ...(isOrgAdmin ? [{ label: 'Activity', view: 'activity-log' as View }] : []),
-                { label: 'Settings', view: 'org-settings' as View },
-              ].map((item) => (
-                <button
-                  key={item.label}
-                  type="button"
-                  onClick={() => onViewChange(item.view)}
-                  className={`w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors ${
-                    currentView === item.view
-                      ? 'bg-surface-800 text-surface-100'
-                      : 'text-surface-300 hover:text-surface-100 hover:bg-surface-800/70'
-                  }`}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        {/* Hub nav items are now rendered outside ChatAccordion via HubNav */}
         {groupedSidebarChats.flattenCount > 0 ? (
           <>
             {groupedSidebarChats.pinned.length > 0 && (
