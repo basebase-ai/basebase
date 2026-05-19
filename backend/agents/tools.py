@@ -1572,10 +1572,7 @@ WRITABLE_TABLES: set[str] = {
 
 # Per-table column restrictions for UPDATE operations.
 # Tables not listed here allow all columns to be updated.
-WRITABLE_COLUMNS: dict[str, set[str]] = {
-    "workflows": {"name", "description", "prompt", "trigger_type", "schedule", "enabled"},
-    "org_members": {"display_name", "role"},
-}
+WRITABLE_COLUMNS: dict[str, set[str]] = {}
 
 # CRM tables that go through pending operations (review before commit)
 CRM_TABLES: set[str] = {
