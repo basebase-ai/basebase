@@ -78,7 +78,6 @@ celery_app = Celery(
         "workers.tasks.workflows",
         "workers.tasks.bulk_operations",
         "workers.tasks.monitoring",
-        "workers.tasks.daily_digest",
         "workers.tasks.topic_graph",
     ],
 )
@@ -156,10 +155,6 @@ if _ENABLE_BEAT:
         "enforce-action-ledger-retention": {
             "task": "workers.tasks.monitoring.enforce_action_ledger_retention",
             "schedule": crontab(minute=15, hour=2),
-        },
-        "daily-digests-all-orgs": {
-            "task": "workers.tasks.daily_digest.generate_daily_digests_all_orgs",
-            "schedule": crontab(minute=0, hour=8),
         },
     }
     nightly_topic_graph_flag = os.environ.get("ENABLE_NIGHTLY_TOPIC_GRAPH")

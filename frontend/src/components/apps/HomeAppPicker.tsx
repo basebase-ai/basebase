@@ -101,10 +101,10 @@ export function HomeAppPicker({
                 }`}
               >
                 <div className="font-medium text-surface-200 text-sm">
-                  Default Pipeline View
+                  No Home app
                 </div>
                 <div className="text-xs text-surface-400 mt-0.5">
-                  Show the built-in deals &amp; pipeline summary
+                  Show the setup prompt on Home
                 </div>
               </button>
 

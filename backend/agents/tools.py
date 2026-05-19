@@ -324,6 +324,9 @@ async def execute_tool(
         "think": lambda: _think(tool_input),
         "run_sql_query": lambda: _run_sql_query(tool_input, organization_id, user_id),
         "run_sql_write": lambda: _run_sql_write(tool_input, organization_id, user_id, context),
+        "collect_digest_data": lambda: _collect_digest_data(
+            tool_input, organization_id, user_id
+        ),
         "run_workflow": lambda: _run_workflow(tool_input, organization_id, user_id, context),
         "keep_notes": lambda: _keep_notes(tool_input, organization_id, user_id, context, skip_approval),
         "manage_memory": lambda: _manage_memory(tool_input, organization_id, user_id, skip_approval),
@@ -1565,13 +1568,6 @@ WRITABLE_TABLES: set[str] = {
     "accounts",
     "org_members",
     "temp_data",
-    "daily_digests",
-}
-
-# Per-table column restrictions: only these columns may appear in SET clauses.
-# Tables not listed here have no column restrictions.
-WRITABLE_COLUMNS: dict[str, set[str]] = {
-    "daily_digests": {"summary"},
 }
 
 # CRM tables that go through pending operations (review before commit)
@@ -2127,12 +2123,6 @@ async def _run_sql_write(
                         extra_cols.append("id")
                         extra_vals.append("gen_random_uuid()")
 
-                # daily_digests: bind user_id to the calling user
-                if table == "daily_digests":
-                    if "user_id" not in columns_lower:
-                        extra_cols.append("user_id")
-                        extra_vals.append(f"'{user_id}'")
-                
                 # Reconstruct the query
                 if extra_cols:
                     new_cols = f"{columns}, {', '.join(extra_cols)}"
@@ -6378,6 +6368,46 @@ async def execute_edit_cloud_file(
     except Exception as e:
         logger.error("[Tools._edit_cloud_file] Failed: %s", e)
         return {"error": f"Failed to edit cloud file: {str(e)}"}
+
+
+# =============================================================================
+# Daily digest data collection
+# =============================================================================
+
+
+async def _collect_digest_data(
+    tool_input: dict[str, Any],
+    organization_id: str,
+    user_id: str | None,
+) -> dict[str, Any]:
+    """Collect raw activity JSON for one member on one PT calendar day."""
+    from datetime import date as date_type
+
+    from models.database import get_session
+    from services.digest_data import collect_member_raw_data
+
+    member_id_raw: str = str(tool_input.get("user_id", "")).strip()
+    digest_date_raw: str = str(tool_input.get("digest_date", "")).strip()
+    if not member_id_raw:
+        return {"error": "user_id is required"}
+    if not digest_date_raw:
+        return {"error": "digest_date is required (YYYY-MM-DD)"}
+    try:
+        member_uuid: UUID = UUID(member_id_raw)
+        digest_date: date_type = date_type.fromisoformat(digest_date_raw)
+    except ValueError as exc:
+        return {"error": f"Invalid user_id or digest_date: {exc}"}
+
+    org_uuid: UUID = UUID(organization_id)
+    try:
+        async with get_session(organization_id=organization_id, user_id=user_id) as session:
+            raw: dict[str, Any] = await collect_member_raw_data(
+                session, org_uuid, member_uuid, digest_date
+            )
+        return {"data": raw}
+    except Exception as exc:
+        logger.exception("[Tools._collect_digest_data] failed: %s", exc)
+        return {"error": "Failed to collect digest data"}
 
 
 # =============================================================================

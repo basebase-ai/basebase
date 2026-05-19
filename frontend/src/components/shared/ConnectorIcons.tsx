@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 /**
- * Shared connector icon + color config used by DataSources and DailyDigestGrid.
+ * Shared connector icon + color config used by DataSources and digest apps.
  */
 import type { IconType } from "react-icons";
 import {

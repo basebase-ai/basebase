@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Text
+from sqlalchemy import DateTime, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -22,6 +22,16 @@ class TempData(Base):
     """Flexible key/value store for agent-generated results."""
 
     __tablename__ = "temp_data"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "namespace",
+            "key",
+            "entity_type",
+            "entity_id",
+            name="uq_temp_data_digest_slot",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
