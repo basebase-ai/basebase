@@ -4934,7 +4934,7 @@ interface EmptyStateProps {
 }
 
 /** Fallback empty thread (non-landing) — greeting only. */
-function EmptyState({ onSuggestionClick: _onSuggestionClick }: EmptyStateProps): JSX.Element {
+function EmptyState(_props: EmptyStateProps): JSX.Element {
   const currentUser = useUser();
   return (
     <div className="h-full flex items-center justify-center px-4 py-12">
