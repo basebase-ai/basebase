@@ -692,13 +692,14 @@ function HubNav({
             type="button"
             title={collapsed ? item.label : undefined}
             onClick={() => onViewChange(item.view)}
-            className={`w-full flex items-center ${collapsed ? 'justify-center' : ''} px-2 py-1 rounded-lg text-[13px] transition-colors outline-none focus:outline-none ${
+            className={`w-full flex items-center gap-2 ${collapsed ? 'justify-center' : ''} px-2 py-1 rounded-lg text-[13px] transition-colors outline-none focus:outline-none ${
               isActive
                 ? 'bg-surface-800 text-surface-100'
                 : 'text-surface-200 hover:text-surface-100 hover:bg-surface-800'
             }`}
           >
-            {collapsed ? item.icon : <span>{item.label}</span>}
+            {item.icon}
+            {!collapsed && <span>{item.label}</span>}
           </button>
         );
       })}
