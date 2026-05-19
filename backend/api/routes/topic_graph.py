@@ -53,9 +53,12 @@ async def get_graph_snapshot(
     auth: AuthContext = Depends(require_global_admin),
 ) -> dict[str, Any]:
     d = _parse_graph_date(graph_date)
+    logger.info("topic_graph.stage=view_graph_request org_id=%s graph_date=%s by=%s", organization_id, d.isoformat(), auth.user_id)
     snapshot = await get_topic_graph_snapshot(organization_id, d)
     if snapshot is None:
+        logger.warning("topic_graph.stage=view_graph_not_found org_id=%s graph_date=%s by=%s", organization_id, d.isoformat(), auth.user_id)
         raise HTTPException(status_code=404, detail="Graph snapshot not found")
+    logger.info("topic_graph.stage=view_graph_success org_id=%s graph_date=%s by=%s status=%s", organization_id, d.isoformat(), auth.user_id, snapshot.status)
     return {
         "organization_id": organization_id,
         "graph_date": d.isoformat(),
@@ -73,7 +76,9 @@ async def get_graph_node_evidence(
     auth: AuthContext = Depends(require_global_admin),
 ) -> dict[str, Any]:
     d = _parse_graph_date(graph_date)
+    logger.info("topic_graph.stage=view_evidence_request org_id=%s graph_date=%s node_id=%s by=%s", organization_id, d.isoformat(), node_id, auth.user_id)
     snippets = await get_node_evidence(organization_id, d, node_id)
+    logger.info("topic_graph.stage=view_evidence_success org_id=%s graph_date=%s node_id=%s by=%s snippet_count=%d", organization_id, d.isoformat(), node_id, auth.user_id, len(snippets))
     return {
         "organization_id": organization_id,
         "graph_date": d.isoformat(),

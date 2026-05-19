@@ -258,6 +258,7 @@ async def generate_topic_graph_for_org_day(org_id: str, graph_date: date) -> dic
             sd = await fn(org_id, graph_date)
             docs.extend(sd)
             coverage["sources"][source_name] = {"docs": len(sd), "status": "ok"}
+            logger.info("topic_graph.stage=ingest_source_ok org_id=%s graph_date=%s source=%s docs=%d", org_id, graph_date.isoformat(), source_name, len(sd))
         except Exception as exc:
             logger.exception("topic_graph.stage=ingest_failed source=%s org_id=%s", source_name, org_id)
             warnings.append(f"{source_name}:{exc}")
@@ -267,6 +268,7 @@ async def generate_topic_graph_for_org_day(org_id: str, graph_date: date) -> dic
         slack_docs, slack_channels = await _collect_slack_docs(org_id, graph_date)
         docs.extend(slack_docs)
         coverage["sources"]["slack"] = {"docs": len(slack_docs), "status": "ok"}
+        logger.info("topic_graph.stage=ingest_source_ok org_id=%s graph_date=%s source=slack docs=%d channels=%d", org_id, graph_date.isoformat(), len(slack_docs), len(slack_channels))
     except Exception as exc:
         warnings.append(f"slack:{exc}")
         coverage["sources"]["slack"] = {"docs": 0, "status": "failed"}
@@ -274,12 +276,13 @@ async def generate_topic_graph_for_org_day(org_id: str, graph_date: date) -> dic
     try:
         crm_people, crm_companies = await _seed_crm_nodes(org_id)
         coverage["sources"]["crm"] = {"people": len(crm_people), "companies": len(crm_companies), "status": "ok"}
+        logger.info("topic_graph.stage=ingest_source_ok org_id=%s graph_date=%s source=crm people=%d companies=%d", org_id, graph_date.isoformat(), len(crm_people), len(crm_companies))
     except Exception as exc:
         warnings.append(f"crm:{exc}")
         crm_people, crm_companies = [], []
         coverage["sources"]["crm"] = {"people": 0, "companies": 0, "status": "failed"}
 
-    logger.info("topic_graph.stage=extract org_id=%s docs=%d", org_id, len(docs))
+    logger.info("topic_graph.stage=extract org_id=%s graph_date=%s docs=%d", org_id, graph_date.isoformat(), len(docs))
     node_to_docs: dict[str, set[str]] = defaultdict(set)
     node_newest: dict[str, datetime] = {}
     node_oldest: dict[str, datetime] = {}
@@ -411,6 +414,7 @@ async def generate_topic_graph_for_org_day(org_id: str, graph_date: date) -> dic
     edges = [{"source": a, "target": b, "weight": w} for (a, b), w in sorted(edge_weights.items())]
 
     coverage["partial"] = any(v.get("status") == "failed" for v in coverage["sources"].values())
+    logger.info("topic_graph.stage=build_summary org_id=%s graph_date=%s docs=%d merged_nodes=%d edges=%d partial=%s", org_id, graph_date.isoformat(), len(docs), len(merged_docs), len(edge_weights), coverage["partial"])
     if coverage["partial"]:
         coverage["warning_text"] = PARTIAL_WARNING
 
