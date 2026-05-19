@@ -338,12 +338,19 @@ def test_deepseek_clamps_max_tokens_to_provider_output_limit():
     }
 
 
-def test_deepseek_thinking_kwargs_use_extra_body_when_enabled():
+def test_deepseek_thinking_kwargs_use_extra_body_without_reasoning_effort():
     adapter = OpenAIAdapter(api_key="test-key")
 
-    assert adapter._build_thinking_kwargs(model="deepseek-v4-pro", thinking=True) == {
+    result = adapter._build_thinking_kwargs(model="deepseek-v4-pro", thinking=True)
+    assert result == {"extra_body": {"thinking": {"type": "enabled"}}}
+    assert "reasoning_effort" not in result
+
+
+def test_openai_o_series_thinking_kwargs_include_reasoning_effort():
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    assert adapter._build_thinking_kwargs(model="o3-mini", thinking=True) == {
         "reasoning_effort": "high",
-        "extra_body": {"thinking": {"type": "enabled"}},
     }
 
 

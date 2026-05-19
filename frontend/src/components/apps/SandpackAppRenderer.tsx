@@ -13,8 +13,14 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import html2canvas from "html2canvas";
-import { APP_SDK_SOURCE, APP_STYLES, REACT_PLOTLY_SHIM } from "./appSdkSource";
+import {
+  APP_SDK_SOURCE,
+  getAppStyles,
+  type AppTheme,
+  REACT_PLOTLY_SHIM,
+} from "./appSdkSource";
 import { apiRequest, API_BASE } from "../../lib/api";
+import { useAppStore } from "../../store";
 
 // ---- types ----------------------------------------------------------------
 
@@ -57,6 +63,8 @@ function stripImportStatements(code: string): string {
 /** Strip import/export statements so code can live in a shared Babel block. */
 function stripModuleSyntax(code: string): string {
   return stripImportStatements(code)
+    // export async function Foo → async function Foo
+    .replace(/export\s+async\s+function\s+/g, "async function ")
     // export function Foo → function Foo
     .replace(/export\s+function\s+/g, "function ")
     // export default function Foo → function Foo
@@ -117,6 +125,28 @@ function normalizeHttpNavigationHref(href: string): string | null {
 
 // ---- build the srcdoc HTML ------------------------------------------------
 
+function readHostTheme(): AppTheme {
+  return document.documentElement.classList.contains("dark") ? "dark" : "light";
+}
+
+function useHostTheme(): AppTheme {
+  const [theme, setTheme] = useState<AppTheme>(readHostTheme);
+  useEffect(() => {
+    const root = document.documentElement;
+    const observer = new MutationObserver(() => {
+      setTheme(readHostTheme());
+    });
+    observer.observe(root, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
+  return theme;
+}
+
+const IFRAME_BACKGROUND: Record<AppTheme, string> = {
+  light: "#f9fafb",
+  dark: "#18181b",
+};
+
 function buildSrcdocHtml(opts: {
   frontendCode: string;
   frontendCodeCompiled?: string | null;
@@ -124,6 +154,7 @@ function buildSrcdocHtml(opts: {
   apiBase: string;
   appId: string;
   publicMode: boolean;
+  theme: AppTheme;
 }): string {
   const sdkInline: string = stripModuleSyntax(APP_SDK_SOURCE);
   const plotInline: string = stripModuleSyntax(REACT_PLOTLY_SHIM);
@@ -145,7 +176,7 @@ function buildSrcdocHtml(opts: {
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js">${CS}
 <script src="https://cdn.plot.ly/plotly-2.35.3.min.js">${CS}
 ${babelScript}
-<style>${escapeForScript(APP_STYLES)}</style>
+<style>${escapeForScript(getAppStyles(opts.theme))}</style>
 </head>
 <body>
 <div id="root"></div>
@@ -156,6 +187,7 @@ window.__REVTOPS_APP_TOKEN__ = ${JSON.stringify(opts.token)};
 window.__REVTOPS_API_BASE__  = ${JSON.stringify(opts.apiBase)};
 window.__REVTOPS_APP_ID__    = ${JSON.stringify(opts.appId)};
 window.__REVTOPS_PUBLIC_MODE__ = ${opts.publicMode ? "true" : "false"};
+window.__REVTOPS_APP_THEME__ = ${JSON.stringify(opts.theme)};
 
 // Harden popup behavior for untrusted app code:
 // - block javascript:/data: URLs
@@ -358,6 +390,8 @@ export function SandpackAppRenderer({
   const [error, setError] = useState<string | null>(null);
   const [externalNavPrompt, setExternalNavPrompt] = useState<ExternalNavigationPrompt | null>(null);
   const [tokenRetry, setTokenRetry] = useState<number>(0);
+  const hostTheme = useHostTheme();
+  const organizationId = useAppStore((state) => state.organization?.id ?? null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const retryingRef = useRef<boolean>(false);
   const screenshotCapturedRef = useRef<boolean>(false);
@@ -436,6 +470,8 @@ export function SandpackAppRenderer({
         transport?: string;
         workflowId?: string;
         triggerData?: Record<string, unknown>;
+        runId?: string;
+        pollIntervalMs?: number;
       } | null;
       if (data?.type === "external-link-navigation") {
         const href: string = typeof data.href === "string" && data.href.length > 0 ? data.href : "";
@@ -554,11 +590,83 @@ export function SandpackAppRenderer({
             }, "*");
           }
         })();
+        return;
+      }
+      if (data?.type === "app-wait-workflow-run") {
+        const requestId = data.requestId;
+        const runId = data.runId;
+        const payloadAppId = data.appId;
+        const pollIntervalMs = typeof data.pollIntervalMs === "number" && data.pollIntervalMs > 0
+          ? data.pollIntervalMs
+          : 2500;
+        const payloadAppIdMatchesCurrentApp = (() => {
+          if (!payloadAppId) return false;
+          try {
+            return payloadAppId.toLowerCase() === appId.toLowerCase();
+          } catch {
+            return false;
+          }
+        })();
+        if (!requestId || !runId || !payloadAppIdMatchesCurrentApp || !organizationId) {
+          (event.source as Window | null)?.postMessage({
+            type: "app-wait-workflow-run-result",
+            requestId,
+            ok: false,
+            error: !organizationId ? "Organization context unavailable" : "Invalid workflow wait payload",
+          }, "*");
+          return;
+        }
+        void (async () => {
+          const deadline = Date.now() + 600_000;
+          while (Date.now() < deadline) {
+            const response = await apiRequest<{
+              status: string;
+              error_message?: string | null;
+            }>(`/workflows/${organizationId}/runs/${runId}`);
+            if (response.error || !response.data) {
+              (event.source as Window | null)?.postMessage({
+                type: "app-wait-workflow-run-result",
+                requestId,
+                ok: false,
+                error: response.error ?? "Failed to load workflow run",
+              }, "*");
+              return;
+            }
+            const status = response.data.status;
+            if (status === "completed") {
+              (event.source as Window | null)?.postMessage({
+                type: "app-wait-workflow-run-result",
+                requestId,
+                ok: true,
+                result: { status, error_message: null },
+              }, "*");
+              return;
+            }
+            if (status === "failed" || status === "cancelled") {
+              (event.source as Window | null)?.postMessage({
+                type: "app-wait-workflow-run-result",
+                requestId,
+                ok: false,
+                error: response.data.error_message ?? `Workflow ${status}`,
+              }, "*");
+              return;
+            }
+            await new Promise((resolve) => {
+              setTimeout(resolve, pollIntervalMs);
+            });
+          }
+          (event.source as Window | null)?.postMessage({
+            type: "app-wait-workflow-run-result",
+            requestId,
+            ok: false,
+            error: "Workflow did not finish in time. Ensure the Celery worker is running.",
+          }, "*");
+        })();
       }
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [onError, appId]);
+  }, [onError, appId, organizationId]);
 
   const fetchToken = useCallback(async (): Promise<void> => {
     if (publicMode) {
@@ -719,6 +827,7 @@ export function SandpackAppRenderer({
     apiBase: resolvedApiBase,
     appId,
     publicMode,
+    theme: hostTheme,
   });
 
   return (
@@ -781,8 +890,8 @@ export function SandpackAppRenderer({
           height: "100%",
           minHeight: 400,
           border: "none",
-          borderRadius: 8,
-          background: "#18181b",
+          borderRadius: 0,
+          background: IFRAME_BACKGROUND[hostTheme],
         }}
         title="Basebase App"
       />
