@@ -690,7 +690,7 @@ function HubNav({
   ];
 
   return (
-    <div className={`${collapsed ? 'px-1' : 'px-3'} pt-1 pb-1 space-y-0.5 border-b border-surface-800/25 mb-1 flex-shrink-0`}>
+    <div className={`${collapsed ? 'px-1' : 'px-3'} pt-1 pb-1 space-y-0.5 border-b border-surface-700/20 mb-1 flex-shrink-0`}>
       {items.map((item) => {
         const isActive: boolean = currentView === item.view
           || (item.view === 'data-hub' && DATA_HUB_VIEWS.includes(currentView));
