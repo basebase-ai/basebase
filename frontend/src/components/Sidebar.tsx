@@ -520,7 +520,7 @@ export function Sidebar({
               <button
                 type="button"
                 onClick={onNewChat}
-                className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded-md text-[13px] text-surface-300 hover:text-surface-100 hover:bg-surface-800/50 transition-colors ${collapsed ? 'justify-center' : ''}`}
+                className={`w-full flex items-center gap-2 px-2 py-1 rounded-lg text-[13px] text-surface-200 hover:text-surface-100 hover:bg-surface-800 transition-colors outline-none focus:outline-none ${collapsed ? 'justify-center' : ''}`}
               >
                 <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
