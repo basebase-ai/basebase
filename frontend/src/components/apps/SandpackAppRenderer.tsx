@@ -49,11 +49,14 @@ interface SandpackAppRendererProps {
 
 // ---- helpers --------------------------------------------------------------
 
+/** Remove import statements (single-line and multi-line). */
+function stripImportStatements(code: string): string {
+  return code.replace(/import[\s\S]*?from\s+['"][^'"]+['"]\s*;?/g, "");
+}
+
 /** Strip import/export statements so code can live in a shared Babel block. */
 function stripModuleSyntax(code: string): string {
-  return code
-    // Remove import lines
-    .replace(/^\s*import\s+.*?from\s+['"].*?['"];?\s*$/gm, "")
+  return stripImportStatements(code)
     // export function Foo → function Foo
     .replace(/export\s+function\s+/g, "function ")
     // export default function Foo → function Foo
@@ -84,9 +87,7 @@ function transformAppCode(code: string): { transformed: string; appName: string 
     }
   }
 
-  const transformed: string = code
-    // Remove all import lines
-    .replace(/^\s*import\s+.*?from\s+['"].*?['"];?\s*$/gm, "")
+  const transformed: string = stripImportStatements(code)
     // export default function Foo → function Foo
     .replace(/export\s+default\s+function\s+(\w+)/, "function $1")
     // export default Foo; → (remove)
