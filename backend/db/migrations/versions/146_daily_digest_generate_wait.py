@@ -44,4 +44,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    pass
+    # Content-only update; previous template text is not stored.
+    op.execute("SELECT 1")

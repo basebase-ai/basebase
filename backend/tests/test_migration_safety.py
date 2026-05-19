@@ -8,6 +8,9 @@ VERSIONS_DIR = Path(__file__).resolve().parents[1] / "db" / "migrations" / "vers
 BASELINE_MIGRATION_NUMBER = 125
 MAX_REVISION_ID_LENGTH = 32
 INCOMPATIBLE_OPERATION_PREFIXES = ("drop_", "rename_")
+# Migrations that intentionally perform destructive cleanup as a separate
+# phased step (the data migration precedes them).
+ALLOWED_DESTRUCTIVE_MIGRATIONS: set[int] = {148}
 
 
 def _migration_files() -> list[Path]:
@@ -24,6 +27,7 @@ def _future_migration_files() -> list[Path]:
         path
         for path in _migration_files()
         if (_migration_number(path) or -1) > BASELINE_MIGRATION_NUMBER
+        and (_migration_number(path) or -1) not in ALLOWED_DESTRUCTIVE_MIGRATIONS
     ]
 
 
