@@ -2844,7 +2844,7 @@ export function Chat({
                   </p>
                 </div>
               ) : (
-                <EmptyState onSuggestionClick={handleSuggestionClick} />
+                <EmptyState />
               )
             ) : (
               <div>
@@ -4929,12 +4929,8 @@ function ChatQuickActions({
   );
 }
 
-interface EmptyStateProps {
-  onSuggestionClick: (text: string) => void;
-}
-
 /** Fallback empty thread (non-landing) — greeting only. */
-function EmptyState(_props: EmptyStateProps): JSX.Element {
+function EmptyState(): JSX.Element {
   const currentUser = useUser();
   return (
     <div className="h-full flex items-center justify-center px-4 py-12">
