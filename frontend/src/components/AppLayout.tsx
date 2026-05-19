@@ -355,7 +355,37 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
     setShowReleaseBanner(false);
   }, []);
 
-  
+  // Sidebar resize drag
+  const sidebarWidth = useAppStore((state) => state.sidebarWidth);
+  const setSidebarWidth = useAppStore((state) => state.setSidebarWidth);
+  const isDraggingRef = useRef(false);
+  const startXRef = useRef(0);
+  const startWidthRef = useRef(0);
+
+  const handleDividerMouseDown = (e: React.MouseEvent): void => {
+    e.preventDefault();
+    isDraggingRef.current = true;
+    startXRef.current = e.clientX;
+    startWidthRef.current = sidebarWidth;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMouseMove = (ev: MouseEvent): void => {
+      if (!isDraggingRef.current) return;
+      const newWidth: number = Math.min(400, Math.max(200, startWidthRef.current + ev.clientX - startXRef.current));
+      setSidebarWidth(newWidth);
+    };
+    const onMouseUp = (): void => {
+      isDraggingRef.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  };
+
   // Close mobile sidebar when view changes
   useEffect(() => {
     if (isMobile) {
@@ -1877,12 +1907,15 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
       )}
 
       {/* Sidebar - floating card on desktop, drawer on mobile */}
-      <div className={`
-        ${isMobile 
-          ? `fixed inset-y-0 left-0 z-50 transform transition-transform duration-300 ease-in-out ${mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`
-          : 'p-2 flex-shrink-0'
-        }
-      `}>
+      <div
+        className={`
+          ${isMobile 
+            ? `fixed inset-y-0 left-0 z-50 transform transition-transform duration-300 ease-in-out ${mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`
+            : 'p-2 flex-shrink-0'
+          }
+        `}
+        style={!isMobile && !sidebarCollapsed ? { width: `${sidebarWidth + 16}px` } : undefined}
+      >
         <div className={isMobile ? '' : 'h-full rounded-xl bg-surface-900 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.06)] overflow-hidden'}>
         <Sidebar
           collapsed={isMobile ? false : sidebarCollapsed}
@@ -1904,6 +1937,15 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
         />
         </div>
       </div>
+
+      {/* Resize handle (desktop only, expanded sidebar) */}
+      {!isMobile && !sidebarCollapsed && (
+        <div
+          onMouseDown={handleDividerMouseDown}
+          onDoubleClick={() => setSidebarWidth(288)}
+          className="w-1.5 cursor-col-resize hover:bg-surface-700/40 active:bg-surface-700/60 transition-colors flex-shrink-0 rounded-full my-4"
+        />
+      )}
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden bg-surface-950">
