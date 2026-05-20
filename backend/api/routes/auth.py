@@ -4504,7 +4504,11 @@ async def list_integrations(
                     # connected for discovery ("from team" / org-shared sections).
                     representative_integration = sorted(
                         integrations_for_provider,
-                        key=lambda row: (row.account_identifier or "", str(row.id)),
+                        key=lambda row: (
+                            not row.is_active,
+                            row.account_identifier or "",
+                            str(row.id),
+                        ),
                     )[0]
 
                 response_integrations.append(IntegrationResponse(
