@@ -1,0 +1,30 @@
+# Basebase API (FastAPI) — deploy: fly deploy --app basebase-api
+app = "basebase-api"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+  build-target = "api"
+
+[env]
+  ENVIRONMENT = "production"
+  PORT = "8000"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [[http_service.checks]]
+    grace_period = "60s"
+    interval = "15s"
+    method = "GET"
+    path = "/health"
+    timeout = "10s"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2gb"

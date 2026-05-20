@@ -1,0 +1,33 @@
+# Basebase frontend (Vite + nginx) — deploy: fly deploy --app basebase-frontend
+app = "basebase-frontend"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile.prod"
+
+  [build.args]
+    VITE_API_URL = "https://api.basebase.com"
+    VITE_SUPABASE_URL = "https://izcwxmpvafizqkcxioje.supabase.co"
+    VITE_SUPABASE_ANON_KEY = "sb_publishable_cT376efSsrslvrZF8jgmoA_JLsatNyO"
+    VITE_STRIPE_PUBLISHABLE_KEY = "pk_live_51SeKtdP5SO7X9dBUvZL79msr7pCl9mVGT67Psm9EGzPbeZfctym5qIUQwIxvFoCnp1VqefqMGtMv0voQq8Ypv26600tRnmNRiP"
+    # Set at deploy time if you use Nango OAuth in the UI (see scripts/fly-deploy.sh)
+    VITE_NANGO_PUBLIC_KEY = ""
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "15s"
+    method = "GET"
+    path = "/"
+    timeout = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

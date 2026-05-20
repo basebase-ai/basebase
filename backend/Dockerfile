@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11-slim AS base
 
 WORKDIR /app
 
@@ -29,8 +29,15 @@ COPY . .
 # Set Python path
 ENV PYTHONPATH=/app
 
-# Expose port (Railway provides PORT env var)
+# Expose port (Railway / Fly provide PORT env var)
 EXPOSE 8000
 
-# Run the application - use shell to expand $PORT
+# Fly.io / multi-service builds (Railway uses final stage = api)
+FROM base AS worker
+CMD ["python", "-m", "celery", "-A", "workers.celery_app", "worker", "--loglevel=info"]
+
+FROM base AS beat
+CMD ["python", "-m", "celery", "-A", "workers.celery_app", "beat", "--loglevel=info"]
+
+FROM base AS api
 CMD ["/bin/sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
