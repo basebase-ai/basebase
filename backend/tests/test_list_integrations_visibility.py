@@ -209,3 +209,71 @@ def test_list_integrations_team_rep_preserves_mcp_display_name(monkeypatch):
     row = [r for r in result.integrations if r.provider == "mcp_salesforce"][0]
     assert row.current_user_connected is False
     assert row.display_name == "Salesforce MCP"
+
+
+def test_list_integrations_team_rep_prioritizes_shared_active_rows(monkeypatch):
+    org_id = UUID("11111111-1111-1111-1111-111111111111")
+    current_user_id = UUID("22222222-2222-2222-2222-222222222222")
+    teammate_a_id = UUID("33333333-3333-3333-3333-333333333333")
+    teammate_b_id = UUID("44444444-4444-4444-4444-444444444444")
+
+    active_not_shared = SimpleNamespace(
+        id=UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+        connector="gmail",
+        organization_id=org_id,
+        user_id=teammate_a_id,
+        is_active=True,
+        last_sync_at=None,
+        last_error=None,
+        created_at=None,
+        share_synced_data=False,
+        share_query_access=False,
+        share_write_access=False,
+        pending_sharing_config=False,
+        sync_stats={"activities": 1},
+        account_identifier="alpha@example.com",
+        account_label="Alpha",
+        extra_data={},
+    )
+    active_shared = SimpleNamespace(
+        id=UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+        connector="gmail",
+        organization_id=org_id,
+        user_id=teammate_b_id,
+        is_active=True,
+        last_sync_at=None,
+        last_error=None,
+        created_at=None,
+        share_synced_data=True,
+        share_query_access=False,
+        share_write_access=False,
+        pending_sharing_config=False,
+        sync_stats={"activities": 2},
+        account_identifier="zeta@example.com",
+        account_label="Zeta",
+        extra_data={},
+    )
+
+    teammate_a = SimpleNamespace(id=teammate_a_id, name="Alpha", email="alpha@example.com")
+    teammate_b = SimpleNamespace(id=teammate_b_id, name="Zeta", email="zeta@example.com")
+
+    fake_session = _FakeSession([active_not_shared, active_shared], [teammate_a, teammate_b])
+    monkeypatch.setattr(auth, "get_session", lambda **kwargs: _FakeSessionContext(fake_session))
+    monkeypatch.setattr(auth, "_get_scope_by_provider", lambda: {"gmail": "user"})
+    monkeypatch.setattr(auth, "PROVIDER_SHARING_DEFAULTS", {"gmail": {}})
+
+    result = asyncio.run(
+        auth.list_integrations(
+            auth=auth.AuthContext(
+                user_id=current_user_id,
+                organization_id=org_id,
+                email="requester@example.com",
+                role="member",
+                is_global_admin=False,
+            ),
+        )
+    )
+
+    gmail_row = [row for row in result.integrations if row.provider == "gmail"][0]
+    assert gmail_row.id == str(active_shared.id)
+    assert gmail_row.share_synced_data is True

@@ -4508,6 +4508,11 @@ async def list_integrations(
                         team_visible_integrations,
                         key=lambda row: (
                             not row.is_active,
+                            not (
+                                row.share_synced_data
+                                or row.share_query_access
+                                or row.share_write_access
+                            ),
                             row.account_identifier or "",
                             str(row.id),
                         ),
