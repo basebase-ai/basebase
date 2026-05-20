@@ -162,3 +162,50 @@ def test_list_integrations_team_rep_ignores_non_team_rows(monkeypatch):
     gmail_row = [row for row in result.integrations if row.provider == "gmail"][0]
     assert gmail_row.id == str(teammate_integration.id)
     assert gmail_row.account_identifier == "teammate@gmail.com"
+
+
+def test_list_integrations_team_rep_preserves_mcp_display_name(monkeypatch):
+    org_id = UUID("11111111-1111-1111-1111-111111111111")
+    current_user_id = UUID("22222222-2222-2222-2222-222222222222")
+    teammate_id = UUID("33333333-3333-3333-3333-333333333333")
+
+    teammate_integration = SimpleNamespace(
+        id=UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+        connector="mcp_salesforce",
+        organization_id=org_id,
+        user_id=teammate_id,
+        is_active=True,
+        last_sync_at=None,
+        last_error=None,
+        created_at=None,
+        share_synced_data=True,
+        share_query_access=True,
+        share_write_access=False,
+        pending_sharing_config=False,
+        sync_stats={"activities": 7},
+        account_identifier="salesforce-teammate",
+        account_label="Salesforce MCP",
+        extra_data={"display_name": "Salesforce MCP"},
+    )
+    teammate_user = SimpleNamespace(id=teammate_id, name="Teammate", email="teammate@example.com")
+
+    fake_session = _FakeSession([teammate_integration], [teammate_user])
+    monkeypatch.setattr(auth, "get_session", lambda **kwargs: _FakeSessionContext(fake_session))
+    monkeypatch.setattr(auth, "_get_scope_by_provider", lambda: {"mcp_salesforce": "user"})
+    monkeypatch.setattr(auth, "PROVIDER_SHARING_DEFAULTS", {"mcp_salesforce": {}})
+
+    result = asyncio.run(
+        auth.list_integrations(
+            auth=auth.AuthContext(
+                user_id=current_user_id,
+                organization_id=org_id,
+                email="requester@example.com",
+                role="member",
+                is_global_admin=False,
+            ),
+        )
+    )
+
+    row = [r for r in result.integrations if r.provider == "mcp_salesforce"][0]
+    assert row.current_user_connected is False
+    assert row.display_name == "Salesforce MCP"

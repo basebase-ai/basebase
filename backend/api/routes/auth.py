@@ -4560,7 +4560,15 @@ async def list_integrations(
                     team_connections=team_connections,
                     team_total=team_total,
                     sync_stats=(representative_integration.sync_stats if representative_integration else None),
-                    display_name=None,
+                    display_name=(
+                        representative_integration.extra_data.get("display_name")
+                        if (
+                            representative_integration
+                            and provider.startswith("mcp_")
+                            and isinstance(representative_integration.extra_data, dict)
+                        )
+                        else None
+                    ),
                     account_identifier=(
                         representative_integration.account_identifier
                         if representative_integration
