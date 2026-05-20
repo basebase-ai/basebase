@@ -109,7 +109,7 @@
 
   /* Claude-style chat greeting (serif, spacious) */
   .chat-greeting {
-    @apply font-serif text-3xl md:text-4xl text-surface-100 tracking-tight;
+    @apply font-sans text-3xl md:text-4xl text-surface-100 tracking-tight font-light;
   }
 
   /* Centered composer shell for new-chat empty state */

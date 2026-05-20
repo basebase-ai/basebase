@@ -11,7 +11,7 @@
 
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import type { View, ChatSummary, OrganizationInfo } from './AppLayout';
-import { useAppStore, useAuthStore, useChatStore, useIsGlobalAdmin, useIsOrgAdmin, useActiveTasksByConversation, type UserOrganization, type AdminPanelTab } from '../store';
+import { useAppStore, useAuthStore, useChatStore, useIsGlobalAdmin, useActiveTasksByConversation, type UserOrganization, type AdminPanelTab } from '../store';
 import { apiRequest } from '../lib/api';
 import { Avatar } from './Avatar';
 import { ScopeLockIcon } from './ScopeVisibilityIcons';
@@ -101,18 +101,16 @@ function OrgSwitcherSection({
         onClick={onTogglePanel}
         aria-expanded={panelOpen}
         aria-label={panelOpen ? 'Hide workspace menu' : 'Show workspace menu'}
-        className="w-full flex items-center gap-3 px-4 pt-3 pb-1 hover:bg-surface-800/50 transition-colors"
+        className="w-full flex items-center gap-2.5 px-3.5 pt-3 pb-2 hover:bg-surface-800/40 rounded-lg mx-auto transition-colors"
       >
         {isAdminConsole ? (
           <>
-            <div className="w-9 h-9 rounded-lg bg-surface-800 flex items-center justify-center flex-shrink-0 self-start mt-0.5 text-amber-400">
-              <GlobalAdminShieldIcon className="w-6 h-6" />
+            <div className="w-7 h-7 rounded-md bg-surface-800 flex items-center justify-center flex-shrink-0 text-amber-400">
+              <GlobalAdminShieldIcon className="w-4 h-4" />
             </div>
-            <div className="flex-1 min-w-0 text-left">
-              <div className="text-lg font-semibold text-surface-100 truncate leading-tight">
-                Global Admin
-              </div>
-            </div>
+            <span className="flex-1 min-w-0 text-left text-sm font-semibold text-surface-100 truncate">
+              Global Admin
+            </span>
           </>
         ) : (
           <>
@@ -120,22 +118,20 @@ function OrgSwitcherSection({
               <img
                 src={organization.logoUrl}
                 alt={organization.name}
-                className="w-9 h-9 rounded-lg object-cover flex-shrink-0 self-start mt-0.5"
+                className="w-7 h-7 rounded-md object-cover flex-shrink-0"
               />
             ) : (
-              <div className="w-9 h-9 rounded-lg bg-surface-800 flex items-center justify-center flex-shrink-0 self-start mt-0.5">
-                <img src={LOGO_PATH} alt={APP_NAME} className="w-6 h-6" />
+              <div className="w-7 h-7 rounded-md bg-surface-800 flex items-center justify-center flex-shrink-0">
+                <img src={LOGO_PATH} alt={APP_NAME} className="w-4 h-4" />
               </div>
             )}
-            <div className="flex-1 min-w-0 text-left">
-              <div className="text-lg font-semibold text-surface-100 truncate leading-tight">
-                {organization.name}
-              </div>
-            </div>
+            <span className="flex-1 min-w-0 text-left text-sm font-semibold text-surface-100 truncate">
+              {organization.name}
+            </span>
           </>
         )}
         <svg
-          className={`w-4 h-4 text-surface-400 flex-shrink-0 transition-transform duration-200 ${panelOpen ? 'rotate-180' : ''}`}
+          className={`w-3.5 h-3.5 text-surface-400 flex-shrink-0 transition-transform duration-200 ${panelOpen ? 'rotate-180' : ''}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -445,7 +441,7 @@ export function Sidebar({
   const isGlobalAdmin = useIsGlobalAdmin();
   const activeTasksByConversation = useActiveTasksByConversation();
   const storedWidth = useAppStore((state) => state.sidebarWidth);
-  const widthPx = collapsed ? 64 : storedWidth;
+  const widthPx: number | undefined = isMobile ? undefined : (collapsed ? 64 : storedWidth);
 
   const [panelMode, setPanelMode] = useState<'chats' | 'org'>('chats');
   const togglePanel = useCallback((): void => {
@@ -467,8 +463,8 @@ export function Sidebar({
 
   return (
     <aside
-      style={{ width: widthPx }}
-      className="h-full bg-surface-950 flex flex-col transition-all duration-200 ease-in-out flex-shrink-0 overflow-hidden"
+      style={widthPx != null ? { width: widthPx } : undefined}
+      className="h-full flex flex-col transition-all duration-200 ease-in-out flex-shrink-0 overflow-hidden"
     >
       {/* Header: Organization identity */}
       <div className="relative min-w-0 overflow-hidden flex-shrink-0">
@@ -520,37 +516,18 @@ export function Sidebar({
               }`}
               aria-hidden={panelMode !== 'chats'}
             >
-            <div className={`px-3 py-2 flex-shrink-0 flex items-center gap-1.5 ${collapsed ? 'flex-col' : ''}`}>
-              <button
-                type="button"
-                onClick={onNewChat}
-                className={`flex-1 flex items-center gap-2 px-3 py-[5px] rounded-lg bg-primary-600 hover:bg-primary-700 text-white font-medium text-sm transition-colors ${collapsed ? 'w-full justify-center' : ''}`}
-              >
-                <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                {!collapsed && <span>New Chat</span>}
-              </button>
-              <button
-                type="button"
-                onClick={() => onViewChange('chats')}
-                title="Search all chats"
-                aria-label="Search all chats"
-                className={`flex items-center justify-center rounded-lg text-surface-400 hover:text-surface-100 hover:bg-surface-800/60 transition-colors ${collapsed ? 'w-full py-[5px]' : 'h-8 w-8'}`}
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-              </button>
-            </div>
+            <HubNav
+              collapsed={collapsed}
+              currentView={currentView}
+              onViewChange={onViewChange}
+              onNewChat={onNewChat}
+            />
 
             <ChatAccordion
               collapsed={collapsed}
-              currentView={currentView}
               orderedChats={orderedChats}
               currentChatId={currentChatId}
               activeTasksByConversation={activeTasksByConversation}
-              onViewChange={onViewChange}
               onSelectChat={(id) => {
                 onSelectChat(id);
                 if (isMobile) onCloseMobile?.();
@@ -584,20 +561,25 @@ export function Sidebar({
       </div>
 
       {/* Bottom Section */}
-      <div className="mt-auto bg-surface-900/40">
+      <div className="mt-auto px-3 py-2">
         {user && (
           <button
+            type="button"
             onClick={onOpenProfilePanel}
-            className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-surface-800/60 transition-colors ${collapsed ? 'justify-center' : ''}`}
+            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-surface-800/40 transition-colors ${collapsed ? 'justify-center' : ''}`}
           >
-            <Avatar user={user} size="md" />
+            <Avatar user={user} size="xs" />
             {!collapsed && (
-              <div className="flex-1 min-w-0 text-left">
-                <div className="text-sm font-medium text-surface-200 truncate">
-                  {user.name ?? 'User'}
-                </div>
-                <div className="text-xs text-surface-500 truncate">{user.email}</div>
-              </div>
+              <>
+                <span className="text-[13px] text-surface-200 truncate text-left">
+                  {user.name ?? user.email?.split('@')[0] ?? 'User'}
+                </span>
+                <span className="flex-1" />
+                <svg className="w-3.5 h-3.5 text-surface-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </>
             )}
           </button>
         )}
@@ -625,35 +607,106 @@ interface ChannelMemoryResponse {
   content: string;
 }
 
-function normalizeChannelIdForMemory(source: string | null | undefined, channelKey: string, normalizedChannelId?: string | null): string {
-  const raw = (normalizedChannelId ?? '').trim() || channelKey.replace(/^channel:/, '').trim();
-  if ((source ?? '').toLowerCase() === 'slack') {
-    return raw.split(':', 1)[0] ?? raw;
-  }
-  return raw;
+/** Always-visible hub nav: New Chat, Search, Artifacts, Settings. */
+function HubNav({
+  collapsed,
+  currentView,
+  onViewChange,
+  onNewChat,
+}: {
+  collapsed: boolean;
+  currentView: View;
+  onViewChange: (view: View) => void;
+  onNewChat: () => void;
+}): JSX.Element {
+  const DATA_HUB_VIEWS: readonly View[] = ['data', 'documents', 'apps', 'workflows', 'activity-log'];
+
+  const items: readonly { label: string; view: View | null; icon: JSX.Element; onClick?: () => void }[] = [
+    {
+      label: 'New chat',
+      view: null,
+      onClick: onNewChat,
+      icon: (
+        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+        </svg>
+      ),
+    },
+    {
+      label: 'Search',
+      view: 'chats',
+      icon: (
+        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+      ),
+    },
+    {
+      label: 'Artifacts',
+      view: 'data-hub',
+      icon: (
+        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+        </svg>
+      ),
+    },
+    {
+      label: 'Settings',
+      view: 'org-settings',
+      icon: (
+        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      ),
+    },
+  ];
+
+  return (
+    <div className={`${collapsed ? 'px-1' : 'px-3'} pt-0.5 pb-1 space-y-px flex-shrink-0`}>
+      {items.map((item) => {
+        const isActive: boolean = item.view != null && (
+          currentView === item.view
+          || (item.view === 'data-hub' && DATA_HUB_VIEWS.includes(currentView))
+        );
+
+        return (
+          <button
+            key={item.label}
+            type="button"
+            title={collapsed ? item.label : undefined}
+            onClick={item.onClick ?? (() => item.view && onViewChange(item.view))}
+            className={`w-full flex items-center gap-2 ${collapsed ? 'justify-center' : ''} px-2 py-1 rounded-lg text-[13px] transition-colors outline-none focus:outline-none ${
+              isActive
+                ? 'bg-surface-800 text-surface-100'
+                : 'text-surface-200 hover:text-surface-100 hover:bg-surface-800'
+            }`}
+          >
+            {item.icon}
+            {!collapsed && <span>{item.label}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 /** Recent chats: shared + private in one list (recency), pinned first; lock marks private. Row actions live in the chat ⋮ menu. */
 function ChatAccordion({
   collapsed,
-  currentView,
   orderedChats,
   currentChatId,
   activeTasksByConversation,
-  onViewChange,
   onSelectChat,
 }: {
   collapsed: boolean;
-  currentView: View;
   orderedChats: ChatSummary[];
   currentChatId: string | null;
   activeTasksByConversation: Record<string, string>;
-  onViewChange: (view: View) => void;
   onSelectChat: (id: string) => void;
 }): JSX.Element | null {
-  const isOrgAdmin: boolean = useIsOrgAdmin();
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({ hub: true });
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
   const [channelPersonalityTarget, setChannelPersonalityTarget] = useState<{
     key: string;
     label: string;
@@ -676,7 +729,7 @@ function ChatAccordion({
       if (!raw) return;
       const parsed: unknown = JSON.parse(raw);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        const normalized: Record<string, boolean> = { hub: true };
+        const normalized: Record<string, boolean> = {};
         for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
           if (typeof value === 'boolean') normalized[key] = value;
         }
@@ -803,10 +856,10 @@ function ChatAccordion({
     return (
       <div
         key={itemKey}
-        className={`group/chat relative w-full text-left px-2 py-1.5 rounded-md transition-colors cursor-pointer leading-tight min-h-[32px] flex items-center ${
+        className={`group/chat relative w-full text-left px-2 py-[3px] rounded-md transition-colors cursor-pointer leading-tight min-h-[24px] flex items-center ${
           isActive
-            ? 'bg-surface-800 text-surface-100'
-            : 'text-surface-300 hover:text-surface-100 hover:bg-surface-800/70'
+            ? 'bg-surface-800/60 text-surface-100 font-medium'
+            : 'text-surface-200 hover:text-surface-100 hover:bg-surface-800/40'
         }`}
         onClick={() => onSelectChat(chat.id)}
         onMouseEnter={() => {
@@ -828,7 +881,7 @@ function ChatAccordion({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
           )}
-          <div className="truncate text-[15px] flex-1 leading-tight">
+          <div className="truncate text-[13px] flex-1 leading-tight">
             {chat.title}
           </div>
           {isUnread && (
@@ -844,10 +897,8 @@ function ChatAccordion({
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
           )}
-          {/* Hover metadata: in flow so it pushes the title to truncate.
-              Row min-height keeps avatar height from shifting the row. */}
-          <div className="hidden group-hover/chat:flex items-center gap-1.5 leading-none flex-shrink-0">
-            <span className="text-xs text-surface-500">
+          <div className="hidden group-hover/chat:flex items-center gap-1.5 leading-none flex-shrink-0 absolute right-2 top-1/2 -translate-y-1/2 bg-surface-800/90 rounded px-1 py-0.5">
+            <span className="text-[11px] text-surface-500">
               {formatRelativeTime(chat.lastMessageAt)}
             </span>
             {hasParticipants && (
@@ -880,40 +931,6 @@ function ChatAccordion({
   return (
     <div className="flex-1 flex flex-col min-h-0 px-3 pt-1 pb-px">
       <div className="flex-1 overflow-y-auto scrollbar-thin space-y-0 min-h-0">
-        <div className="mb-1">
-          <SidebarSectionHeader
-            title="Hub"
-            collapsed={isSectionCollapsed('hub')}
-            onToggle={() => toggleSection('hub')}
-          />
-          {!isSectionCollapsed('hub') && (
-            <div className="space-y-0.5 mb-1">
-              {[
-                { label: 'Home', view: 'home' as View },
-                { label: 'Connectors', view: 'data-sources' as View },
-                { label: 'Search Data', view: 'data' as View },
-                { label: 'Workflows', view: 'workflows' as View },
-                { label: 'Apps', view: 'apps' as View },
-                { label: 'Documents', view: 'documents' as View },
-                ...(isOrgAdmin ? [{ label: 'Activity', view: 'activity-log' as View }] : []),
-                { label: 'Settings', view: 'org-settings' as View },
-              ].map((item) => (
-                <button
-                  key={item.label}
-                  type="button"
-                  onClick={() => onViewChange(item.view)}
-                  className={`w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors ${
-                    currentView === item.view
-                      ? 'bg-surface-800 text-surface-100'
-                      : 'text-surface-300 hover:text-surface-100 hover:bg-surface-800/70'
-                  }`}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
         {groupedSidebarChats.flattenCount > 0 ? (
           <>
             {groupedSidebarChats.pinned.length > 0 && (
@@ -923,52 +940,50 @@ function ChatAccordion({
                   collapsed={isSectionCollapsed('pinned')}
                   onToggle={() => toggleSection('pinned')}
                 />
-                {!isSectionCollapsed('pinned') && groupedSidebarChats.pinned.map((chat) => renderChatItem(chat, `pinned-${chat.id}`))}
+                {!isSectionCollapsed('pinned') &&
+                  groupedSidebarChats.pinned.map((chat) => renderChatItem(chat, `pinned-${chat.id}`))}
               </>
             )}
+
             {groupedSidebarChats.direct.length > 0 && (
               <>
                 <SidebarSectionHeader
-                  title="Direct"
+                  title="Recents"
                   collapsed={isSectionCollapsed('direct')}
                   onToggle={() => toggleSection('direct')}
                 />
-                {!isSectionCollapsed('direct') && groupedSidebarChats.direct.map((chat) => renderChatItem(chat, `direct-${chat.id}`, { suppressLockIcon: true }))}
+                {!isSectionCollapsed('direct') &&
+                  groupedSidebarChats.direct.map((chat) => renderChatItem(chat, `direct-${chat.id}`, { suppressLockIcon: false }))}
               </>
             )}
-            {groupedSidebarChats.channels.map((channel) => (
-              <div key={channel.key}>
+
+            {groupedSidebarChats.channels.map((section) => (
+              <div key={section.key}>
                 <SidebarSectionHeader
-                  title={channel.label}
-                  collapsed={isSectionCollapsed(`channel:${channel.key}`)}
-                  onToggle={() => toggleSection(`channel:${channel.key}`)}
-                  onOptionsClick={() => {
-                    const normalizedChannelId = normalizeChannelIdForMemory(
-                      channel.source,
-                      channel.key,
-                      channel.normalizedChannelId,
-                    );
-                    setChannelPersonalityTarget({
-                      key: channel.key,
-                      label: channel.label,
-                      source: channel.source,
-                      normalizedChannelId,
-                    });
-                  }}
+                  title={section.label}
+                  collapsed={isSectionCollapsed(section.key)}
+                  onToggle={() => toggleSection(section.key)}
+                  onOptionsClick={() => setChannelPersonalityTarget({
+                    key: section.key,
+                    label: section.label,
+                    source: section.source,
+                    normalizedChannelId: section.normalizedChannelId ?? section.key,
+                  })}
                 />
-                {!isSectionCollapsed(`channel:${channel.key}`) &&
-                  channel.chats.map((chat) => renderChatItem(chat, `channel-${channel.key}-${chat.id}`))}
+                {!isSectionCollapsed(section.key) &&
+                  section.chats.map((chat) => renderChatItem(chat, `chan-${section.key}-${chat.id}`))}
               </div>
             ))}
+
             {groupedSidebarChats.uncategorized.length > 0 && (
               <>
                 <SidebarSectionHeader
-                  title="Uncategorized"
+                  title="Other"
                   collapsed={isSectionCollapsed('uncategorized')}
                   onToggle={() => toggleSection('uncategorized')}
                 />
                 {!isSectionCollapsed('uncategorized') &&
-                  groupedSidebarChats.uncategorized.map((chat) => renderChatItem(chat, `uncategorized-${chat.id}`))}
+                  groupedSidebarChats.uncategorized.map((chat) => renderChatItem(chat, `uncat-${chat.id}`))}
               </>
             )}
           </>
@@ -1003,7 +1018,7 @@ function SidebarSectionHeader({
   onOptionsClick?: () => void;
 }): JSX.Element {
   return (
-    <div className="group/section flex items-center gap-1 px-1 pt-1.5 pb-0.5 min-h-[26px]">
+    <div className="group/section flex items-center gap-1 px-1 pt-1.5 pb-0 min-h-[20px]">
       <button
         type="button"
         onClick={onToggle}
@@ -1011,7 +1026,7 @@ function SidebarSectionHeader({
         aria-expanded={!collapsed}
         aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${title}`}
       >
-        <h3 className="truncate text-[10px] uppercase tracking-wider text-primary-500/85 font-semibold">
+        <h3 className="truncate text-[11px] text-surface-500 font-normal">
           {title}
         </h3>
       </button>
@@ -1032,7 +1047,7 @@ function SidebarSectionHeader({
       <button
         type="button"
         onClick={onToggle}
-        className="shrink-0 p-0.5 rounded text-primary-500/60 hover:text-primary-500 hover:bg-surface-800/60 transition-colors"
+        className="shrink-0 p-0.5 rounded text-surface-500 hover:text-surface-300 hover:bg-surface-800/60 transition-colors"
         aria-label={collapsed ? `Expand ${title}` : `Collapse ${title}`}
         aria-expanded={!collapsed}
       >

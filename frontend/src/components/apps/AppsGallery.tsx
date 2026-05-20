@@ -347,19 +347,7 @@ export function AppsGallery(): JSX.Element {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex-shrink-0 px-6 pt-6 pb-0">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-xl font-bold text-surface-100">Apps</h1>
-            <p className="text-sm text-surface-400 mt-1">
-              Interactive dashboards and data views created by Basebase
-            </p>
-          </div>
-          <span className="hidden sm:inline text-sm text-surface-500">
-            {apps.length} app{apps.length !== 1 ? "s" : ""}
-          </span>
-        </div>
-
+      <div className="flex-shrink-0 px-6 pt-4 pb-0">
         <div className="flex items-center gap-3 mb-4">
           <GallerySearchInput
             value={searchInput}

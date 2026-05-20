@@ -34,12 +34,14 @@ import {
   useChatStore,
   useConversationState,
   useActiveTasksByConversation,
+  useConnectedIntegrations,
   useIsOrgAdmin,
   useOrganization,
   useUser,
   type AppBlock,
   type ChatMessage,
   type ConversationSummaryText,
+  type Integration,
   type ThinkingBlock as ThinkingBlockType,
   type ToolCallData,
   type ToolUseBlock,
@@ -2601,6 +2603,9 @@ export function Chat({
                 title={activeModelName ?? undefined}
               >
                 {activeModelLabel}
+                <svg className="w-3 h-3 opacity-60 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
               </span>
             ) : null;
 
@@ -3109,6 +3114,9 @@ export function Chat({
                 title={activeModelName ?? undefined}
               >
                 {activeModelLabel}
+                <svg className="w-3 h-3 opacity-60 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
               </span>
             ) : null;
 
@@ -4873,50 +4881,46 @@ function ChatLandingGreeting({
   );
 }
 
-const QUICK_ACTION_ITEMS: readonly { label: string; icon: JSX.Element; prompt: string }[] = [
-  {
-    label: 'Write',
-    prompt: 'Help me write something',
-    icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>,
-  },
-  {
-    label: 'Research',
-    prompt: 'Help me research a topic',
-    icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>,
-  },
-  {
-    label: 'Analyze',
-    prompt: 'Analyze my data',
-    icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>,
-  },
-  {
-    label: 'Summarize',
-    prompt: 'Summarize something for me',
-    icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16m-7 6h7" /></svg>,
-  },
-  {
-    label: 'Explore',
-    prompt: 'What can you help me with?',
-    icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>,
-  },
-];
+function buildSuggestions(connected: Integration[]): string[] {
+  const providers = new Set(connected.map((i) => i.provider));
+  const suggestions: string[] = [];
+
+  if (providers.has('hubspot') || providers.has('salesforce'))
+    suggestions.push('Find all the inactive deals', 'Show me my pipeline by stage');
+  if (providers.has('gmail') || providers.has('microsoft_mail'))
+    suggestions.push('Summarize my unread emails from today');
+  if (providers.has('google_calendar') || providers.has('microsoft_calendar') || providers.has('zoom'))
+    suggestions.push('What meetings do I have this week?');
+  if (providers.has('github') || providers.has('linear') || providers.has('jira') || providers.has('asana'))
+    suggestions.push('Show me open issues assigned to me');
+  if (providers.has('slack'))
+    suggestions.push('What are the latest messages in my Slack channels?');
+
+  if (suggestions.length < 3)
+    return ['What can you help me with?', 'What connectors can I connect?', 'Show me what you can do'];
+
+  return suggestions.slice(0, 5);
+}
 
 function ChatQuickActions({
   onSuggestionClick,
 }: {
   onSuggestionClick: (text: string) => void;
 }): JSX.Element {
+  const connected: Integration[] = useConnectedIntegrations();
+  const suggestions: string[] = buildSuggestions(connected).slice(0, 5);
+
   return (
     <div className="flex flex-wrap gap-2 justify-center w-full max-w-2xl flex-shrink-0 px-1">
-      {QUICK_ACTION_ITEMS.map((item) => (
+      {suggestions.map((text) => (
         <button
-          key={item.label}
+          key={text}
           type="button"
-          onClick={() => onSuggestionClick(item.prompt)}
-          className="chat-quick-action"
+          onClick={() => onSuggestionClick(text)}
+          className="chat-quick-action max-w-[260px] truncate"
+          title={text}
         >
-          {item.icon}
-          {item.label}
+          {text}
         </button>
       ))}
     </div>

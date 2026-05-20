@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { apiRequest } from '../lib/api';
 import { useAppStore } from '../store';
 
@@ -37,7 +37,7 @@ interface DataSummaryResponse {
 type SortOrder = 'asc' | 'desc';
 
 export function Data(): JSX.Element {
-  const { organization, setCurrentView, startNewChat, setPendingChatInput, setPendingChatAutoSend } = useAppStore();
+  const { organization } = useAppStore();
   const [tables, setTables] = useState<TableSummary[]>([]);
   const [selectedTargets, setSelectedTargets] = useState<string[]>(['contacts']);
   const [dataByTarget, setDataByTarget] = useState<Record<string, DataResponse>>({});
@@ -185,52 +185,21 @@ export function Data(): JSX.Element {
     return groups;
   }, [selectedTargets, tables, dataByTarget]);
 
-  const buildChatPrompt = useCallback((): string => {
-    const targetSnippets = groupedResults
-      .map(({ table, data }) => {
-        if (!data || data.rows.length === 0) return null;
-        const label = table?.display_name ?? data.table;
-        const previewRows = data.rows.slice(0, 5).map((row) => {
-          const rowSummary = data.columns.slice(0, 6).map((column) => `${column}: ${formatCellValue(row.data[column])}`).join(', ');
-          return `- ${rowSummary}`;
-        }).join('\n');
-        return `${label} (showing ${Math.min(data.rows.length, 5)} of ${data.total}):\n${previewRows}`;
-      })
-      .filter(Boolean)
-      .join('\n\n');
-
-    return `Summarise this data:\n\n${targetSnippets || 'No records were returned for the selected targets.'}`;
-  }, [groupedResults]);
-
-  const handleStartChat = (): void => {
-    const prompt = buildChatPrompt();
-    setPendingChatInput(prompt);
-    setPendingChatAutoSend(false);
-    startNewChat();
-    setCurrentView('chat');
-  };
-
   return (
     <div className="flex-1 overflow-hidden flex flex-col">
-      <header className="sticky top-0 bg-surface-950 border-b border-surface-800 px-4 md:px-8 py-4 md:py-6">
-        <h1 className="text-xl md:text-2xl font-bold text-surface-50">Search Data</h1>
-        <p className="text-surface-400 mt-1 text-sm md:text-base">Browse and compare synced data from your connectors</p>
-      </header>
-
-      <div className="flex-1 overflow-hidden flex flex-col px-4 md:px-8 py-4 md:py-6">
-        <div className="flex flex-wrap gap-2 mb-4">
+      <div className="flex-1 overflow-hidden flex flex-col px-4 md:px-8 pt-4 pb-4 md:pb-6">
+        <div className="flex gap-1.5 mb-3 overflow-x-auto scrollbar-none flex-shrink-0">
           {tables.map((table) => {
             const isSelected = selectedTargets.includes(table.name);
             return (
               <button
                 key={table.name}
                 onClick={() => toggleTarget(table.name)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  isSelected ? 'bg-primary-500 text-white' : 'bg-surface-800 text-surface-300 hover:bg-surface-700'
+                className={`px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
+                  isSelected ? 'bg-primary-500 text-white' : 'bg-surface-800 text-surface-400 hover:bg-surface-700 hover:text-surface-200'
                 }`}
               >
-                {table.display_name}
-                <span className="ml-2 px-2 py-0.5 rounded-full text-xs bg-surface-900/50">{table.count.toLocaleString()}</span>
+                {table.display_name} <span className="opacity-60">{table.count.toLocaleString()}</span>
               </button>
             );
           })}
@@ -270,14 +239,6 @@ export function Data(): JSX.Element {
             placeholder={`Type to filter ${selectedTargets.join(', ')}...`}
             className="flex-1 min-w-[200px] px-4 py-2 bg-surface-800 border border-surface-700 rounded-lg text-surface-100 placeholder-surface-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
           />
-
-          <button
-            type="button"
-            onClick={handleStartChat}
-            className="px-4 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded-lg transition-colors"
-          >
-            Start Chat
-          </button>
 
           {(search || sourceSystemFilter || typeFilter) && (
             <button
