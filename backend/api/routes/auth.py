@@ -4438,9 +4438,11 @@ async def list_integrations(
             integrations_for_provider = integrations_by_provider.get(provider, [])
 
             team_connections: list[TeamConnection] = []
+            team_visible_integrations: list[Integration] = []
             for integration in integrations_for_provider:
                 if integration.user_id and integration.user_id in team_members:
                     user_obj = team_members[integration.user_id]
+                    team_visible_integrations.append(integration)
                     team_connections.append(TeamConnection(
                         user_id=str(integration.user_id),
                         user_name=user_obj.name or user_obj.email,
@@ -4499,11 +4501,11 @@ async def list_integrations(
                     ))
             else:
                 representative_integration: Integration | None = None
-                if integrations_for_provider:
+                if team_visible_integrations:
                     # When only teammates have connected a provider, expose it as
                     # connected for discovery ("from team" / org-shared sections).
                     representative_integration = sorted(
-                        integrations_for_provider,
+                        team_visible_integrations,
                         key=lambda row: (
                             not row.is_active,
                             row.account_identifier or "",
@@ -4512,7 +4514,11 @@ async def list_integrations(
                     )[0]
 
                 response_integrations.append(IntegrationResponse(
-                    id=f"pending-{provider}",
+                    id=(
+                        str(representative_integration.id)
+                        if representative_integration and representative_integration.is_active
+                        else f"pending-{provider}"
+                    ),
                     provider=provider,
                     is_active=(representative_integration.is_active if representative_integration else False),
                     last_sync_at=(
