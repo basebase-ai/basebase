@@ -7,7 +7,7 @@ from collections import Counter
 
 import redis.asyncio as aioredis
 
-from config import get_redis_connection_kwargs, settings
+from config import get_normalized_redis_url, get_redis_connection_kwargs
 from services.incident_throttling import clear_incident_failure, evaluate_incident_creation, mark_incident_created
 from services.pagerduty import create_pagerduty_incident
 
@@ -46,7 +46,7 @@ async def get_query_outcome_window_stats() -> dict[str, object]:
     timestamp = int(time.time())
     window_start = timestamp - _WINDOW_SECONDS
     redis_client = aioredis.from_url(
-        settings.REDIS_URL,
+        get_normalized_redis_url(),
         **get_redis_connection_kwargs(),
     )
 
@@ -120,7 +120,7 @@ async def record_query_outcome(
     normalized_conversation_id = (conversation_id or "unknown").strip() or "unknown"
 
     redis_client = aioredis.from_url(
-        settings.REDIS_URL,
+        get_normalized_redis_url(),
         **get_redis_connection_kwargs(),
     )
 

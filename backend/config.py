@@ -5,6 +5,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -256,6 +257,26 @@ def get_redis_connection_kwargs(
     if decode_responses:
         kwargs["decode_responses"] = True
     return kwargs
+
+
+def get_normalized_redis_url(redis_url: str | None = None) -> str:
+    """Return REDIS_URL with a valid scheme for redis-py URL parsing."""
+    raw_url = (redis_url or settings.REDIS_URL or "").strip()
+    if not raw_url:
+        return "redis://localhost:6379"
+
+    parsed_url = urlparse(raw_url)
+    if parsed_url.scheme in {"redis", "rediss", "unix"}:
+        return raw_url
+
+    normalized_url = f"redis://{raw_url.lstrip('/')}"
+    logger = logging.getLogger(__name__)
+    logger.warning(
+        "REDIS_URL missing scheme; normalizing value to redis:// URL. original=%s normalized=%s",
+        raw_url,
+        normalized_url,
+    )
+    return normalized_url
 
 
 EXPECTED_ENV_VARS: tuple[str, ...] = (
