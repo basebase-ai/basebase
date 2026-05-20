@@ -683,12 +683,13 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
   // Panels
   const [showOrgPanel, setShowOrgPanel] = useState(false);
   const [showProfilePanel, setShowProfilePanel] = useState(false);
-  const [orgPanelTab, setOrgPanelTab] = useState<'team' | 'billing' | 'settings'>('team');
-  const orgSettingsInitialTab: 'team' | 'billing' | 'settings' = (() => {
+  const [orgPanelTab, setOrgPanelTab] = useState<'team' | 'billing' | 'settings' | 'connectors'>('team');
+  const orgSettingsInitialTab: 'team' | 'billing' | 'settings' | 'connectors' = (() => {
     if (typeof window === 'undefined') return 'settings';
     const tab = new URLSearchParams(window.location.search).get('tab')?.toLowerCase();
     if (tab === 'team' || tab === 'members') return 'team';
     if (tab === 'billing') return 'billing';
+    if (tab === 'connectors') return 'connectors';
     return 'settings';
   })();
 

@@ -20,6 +20,7 @@ import type { TeamMember, IdentityMapping } from '../hooks';
 import { apiRequest } from '../lib/api';
 import { formatModelNameForUi } from '../lib/modelDisplay';
 import { Avatar } from './Avatar';
+import { DataSources } from './DataSources';
 import { SubscriptionSetup } from './SubscriptionSetup';
 
 interface BillingStatus {
@@ -131,7 +132,7 @@ function canonicalCreditId(id: string): string {
 interface OrganizationPanelProps {
   organization: OrganizationInfo;
   currentUser: UserProfile;
-  initialTab?: 'team' | 'billing' | 'settings';
+  initialTab?: 'team' | 'billing' | 'settings' | 'connectors';
   onClose: () => void;
   mode?: 'panel' | 'page';
 }
@@ -171,7 +172,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
   const fetchUserOrganizations = useAppStore((state) => state.fetchUserOrganizations);
   const switchActiveOrganization = useAppStore((state) => state.switchActiveOrganization);
   const setCurrentView = useAppStore((state) => state.setCurrentView);
-  const [activeTab, setActiveTab] = useState<'team' | 'billing' | 'settings'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'team' | 'billing' | 'settings' | 'connectors'>(initialTab);
 
   useEffect(() => {
     setActiveTab(initialTab);
@@ -960,7 +961,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
 
         {/* Tabs */}
         <div className={`flex border-b border-surface-800 overflow-x-auto ${isPageMode ? 'px-6 sm:px-8' : ''}`}>
-          {(isPageMode ? (['settings', 'team', 'billing'] as const) : (['team', 'billing', 'settings'] as const)).map((tab) => (
+          {(isPageMode ? (['settings', 'connectors', 'team', 'billing'] as const) : (['team', 'billing', 'settings', 'connectors'] as const)).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -970,7 +971,7 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                   : 'text-surface-400 hover:text-surface-200'
               }`}
             >
-              {tab === 'team' ? 'Members' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+              {tab === 'team' ? 'Members' : tab === 'connectors' ? 'Connectors' : tab.charAt(0).toUpperCase() + tab.slice(1)}
             </button>
           ))}
         </div>
@@ -1788,6 +1789,10 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                 </button>
               </div>
             </div>
+          )}
+
+          {activeTab === 'connectors' && (
+            <DataSources />
           )}
         </div>
       </div>
