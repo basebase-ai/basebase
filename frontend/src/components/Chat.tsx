@@ -4859,7 +4859,7 @@ function greetingFirstName(user: { name: string | null; email: string } | null |
 function buildChatGreeting(user: { name: string | null; email: string } | null | undefined): string {
   const first: string = greetingFirstName(user);
   const hour: number = new Date().getHours();
-  if (hour < 12) return `Good morning, ${first}`;
+  if (hour >= 6 && hour < 12) return `Good morning, ${first}`;
   if (hour < 18) return `Good afternoon, ${first}`;
   return `Back at it, ${first}`;
 }
