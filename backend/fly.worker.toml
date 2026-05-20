@@ -1,0 +1,15 @@
+# Celery worker — deploy: fly deploy -c fly.worker.toml --app basebase-worker
+app = "basebase-worker"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+  build-target = "worker"
+
+[env]
+  ENVIRONMENT = "production"
+  PYTHONPATH = "/app"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2gb"

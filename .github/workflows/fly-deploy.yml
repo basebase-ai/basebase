@@ -1,0 +1,84 @@
+# Deploy Basebase to Fly.io after Conformance Tests pass on main.
+# Setup: add repository secret FLY_API_TOKEN (see FLY_DEPLOY.md).
+name: Deploy to Fly.io
+
+on:
+  workflow_run:
+    workflows: ["Conformance Tests"]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: fly-deploy-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy production
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.event == 'push'
+      )
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+
+      - name: Detect changed paths
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+            frontend:
+              - 'frontend/**'
+
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy API
+        if: steps.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch'
+        working-directory: backend
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --app basebase-api --ha=false
+
+      - name: Deploy Celery worker
+        if: steps.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch'
+        working-directory: backend
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy -c fly.worker.toml --app basebase-worker --ha=false
+
+      - name: Deploy Celery beat
+        if: steps.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch'
+        working-directory: backend
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy -c fly.beat.toml --app basebase-beat --ha=false
+
+      - name: Deploy frontend
+        if: steps.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
+        working-directory: frontend
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          args=(
+            --app basebase-frontend
+            --ha=false
+            --build-arg "VITE_API_URL=https://api.basebase.com"
+            --build-arg "VITE_SUPABASE_URL=https://izcwxmpvafizqkcxioje.supabase.co"
+            --build-arg "VITE_SUPABASE_ANON_KEY=sb_publishable_cT376efSsrslvrZF8jgmoA_JLsatNyO"
+            --build-arg "VITE_STRIPE_PUBLISHABLE_KEY=pk_live_51SeKtdP5SO7X9dBUvZL79msr7pCl9mVGT67Psm9EGzPbeZfctym5qIUQwIxvFoCnp1VqefqMGtMv0voQq8Ypv26600tRnmNRiP"
+          )
+          if [ -n "${{ secrets.VITE_NANGO_PUBLIC_KEY }}" ]; then
+            args+=(--build-arg "VITE_NANGO_PUBLIC_KEY=${{ secrets.VITE_NANGO_PUBLIC_KEY }}")
+          fi
+          flyctl deploy "${args[@]}"

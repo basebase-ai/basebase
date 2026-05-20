@@ -1,0 +1,16 @@
+# Celery beat — deploy: fly deploy -c fly.beat.toml --app basebase-beat
+app = "basebase-beat"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+  build-target = "beat"
+
+[env]
+  ENVIRONMENT = "production"
+  PYTHONPATH = "/app"
+  ENABLE_CELERY_BEAT = "true"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

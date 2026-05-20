@@ -1,0 +1,23 @@
+# Internal Redis (Celery broker) — deploy: fly deploy -c fly.redis.toml --app basebase-redis
+# Connect from other Fly apps: redis://basebase-redis.internal:6379
+app = "basebase-redis"
+primary_region = "sjc"
+
+[build]
+  image = "redis:7-alpine"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 6379
+  processes = ["app"]
+
+  [[services.ports]]
+    port = 6379
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "2s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
