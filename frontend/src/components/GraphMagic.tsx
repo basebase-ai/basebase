@@ -485,6 +485,7 @@ export function GraphMagic(): JSX.Element {
           <Cosmograph
             key={`graph-${orgId}-${selectedDate}-${repulsionLevel}-${sizeMode}`}
             points={cosmographPoints}
+            pointIndexBy="id"
             pointIdBy="id"
             pointLabelBy="label"
             pointColorBy="color"
