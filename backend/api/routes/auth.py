@@ -4438,9 +4438,11 @@ async def list_integrations(
             integrations_for_provider = integrations_by_provider.get(provider, [])
 
             team_connections: list[TeamConnection] = []
+            team_visible_integrations: list[Integration] = []
             for integration in integrations_for_provider:
                 if integration.user_id and integration.user_id in team_members:
                     user_obj = team_members[integration.user_id]
+                    team_visible_integrations.append(integration)
                     team_connections.append(TeamConnection(
                         user_id=str(integration.user_id),
                         user_name=user_obj.name or user_obj.email,
@@ -4498,29 +4500,95 @@ async def list_integrations(
                         account_avatar_url=avatar_url,
                     ))
             else:
+                representative_integration: Integration | None = None
+                if team_visible_integrations:
+                    # When only teammates have connected a provider, expose it as
+                    # connected for discovery ("from team" / org-shared sections).
+                    representative_integration = sorted(
+                        team_visible_integrations,
+                        key=lambda row: (
+                            not row.is_active,
+                            not (
+                                row.share_synced_data
+                                or row.share_query_access
+                                or row.share_write_access
+                            ),
+                            row.account_identifier or "",
+                            str(row.id),
+                        ),
+                    )[0]
+
                 response_integrations.append(IntegrationResponse(
-                    id=f"pending-{provider}",
+                    id=(
+                        str(representative_integration.id)
+                        if representative_integration and representative_integration.is_active
+                        else f"pending-{provider}"
+                    ),
                     provider=provider,
-                    is_active=False,
-                    last_sync_at=None,
-                    last_error=None,
-                    connected_at=None,
+                    is_active=(representative_integration.is_active if representative_integration else False),
+                    last_sync_at=(
+                        f"{representative_integration.last_sync_at.isoformat()}Z"
+                        if representative_integration and representative_integration.last_sync_at
+                        else None
+                    ),
+                    last_error=(representative_integration.last_error if representative_integration else None),
+                    connected_at=(
+                        f"{representative_integration.created_at.isoformat()}Z"
+                        if representative_integration and representative_integration.created_at
+                        else None
+                    ),
                     scope=scope_by_provider.get(provider, ConnectorScope.USER.value),
                     user_id=None,
                     connected_by=None,
-                    share_synced_data=False,
-                    share_query_access=False,
-                    share_write_access=False,
-                    pending_sharing_config=False,
+                    share_synced_data=(
+                        representative_integration.share_synced_data
+                        if representative_integration
+                        else False
+                    ),
+                    share_query_access=(
+                        representative_integration.share_query_access
+                        if representative_integration
+                        else False
+                    ),
+                    share_write_access=(
+                        representative_integration.share_write_access
+                        if representative_integration
+                        else False
+                    ),
+                    pending_sharing_config=(
+                        representative_integration.pending_sharing_config
+                        if representative_integration
+                        else False
+                    ),
                     is_owner=False,
                     current_user_connected=False,
                     team_connections=team_connections,
                     team_total=team_total,
-                    sync_stats=None,
-                    display_name=None,
-                    account_identifier=None,
-                    account_label=None,
-                    account_avatar_url=None,
+                    sync_stats=(representative_integration.sync_stats if representative_integration else None),
+                    display_name=(
+                        representative_integration.extra_data.get("display_name")
+                        if (
+                            representative_integration
+                            and provider.startswith("mcp_")
+                            and isinstance(representative_integration.extra_data, dict)
+                        )
+                        else None
+                    ),
+                    account_identifier=(
+                        representative_integration.account_identifier
+                        if representative_integration
+                        else None
+                    ),
+                    account_label=(
+                        representative_integration.account_label
+                        if representative_integration
+                        else None
+                    ),
+                    account_avatar_url=(
+                        read_account_avatar_url(representative_integration.extra_data)
+                        if representative_integration
+                        else None
+                    ),
                 ))
 
         return IntegrationsListResponse(integrations=response_integrations)
