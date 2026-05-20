@@ -72,6 +72,7 @@ cors_origins: list[str] = [
     "https://app.basebase.com",
     "https://www.basebase.com",
     "https://basebase.com",
+    "null",  # srcdoc iframes (embedded apps)
 ]
 
 # Add production frontend URL from environment (if different)
