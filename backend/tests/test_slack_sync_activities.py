@@ -93,3 +93,47 @@ def test_sync_activities_returns_joined_count(monkeypatch) -> None:
 
     count = asyncio.run(connector.sync_activities())
     assert count == 3
+
+
+def test_normalize_message_includes_bot_messages_for_history_context() -> None:
+    connector = _make_connector()
+
+    activity = connector._normalize_message(
+        {
+            "subtype": "bot_message",
+            "bot_id": "B123",
+            "ts": "1710711600.200",
+            "text": "Workflow update: completed action",
+            "thread_ts": "1710711600.100",
+            "files": [],
+            "attachments": [],
+        },
+        channel_id="C123",
+        channel_name="sales",
+    )
+
+    assert activity is not None
+    assert activity.description == "Workflow update: completed action"
+    assert activity.custom_fields["sender_type"] == "bot"
+    assert activity.custom_fields["channel_id"] == "C123"
+
+
+def test_normalize_message_keeps_file_only_message() -> None:
+    connector = _make_connector()
+
+    activity = connector._normalize_message(
+        {
+            "subtype": "bot_message",
+            "bot_id": "B123",
+            "ts": "1710711600.300",
+            "text": "",
+            "thread_ts": "",
+            "files": [{"id": "F123", "name": "report.pdf"}],
+            "attachments": [],
+        },
+        channel_id="C123",
+        channel_name="sales",
+    )
+
+    assert activity is not None
+    assert activity.custom_fields["has_files"] is True

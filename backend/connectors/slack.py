@@ -1072,15 +1072,16 @@ Returns normalized messages for one channel since a cutoff (does not write to th
         channel_name: str,
     ) -> Optional[Activity]:
         """Transform Slack message to our Activity model."""
-        # Skip bot messages and system messages
-        if slack_msg.get("subtype") in ["bot_message", "channel_join", "channel_leave"]:
+        # Skip Slack join/leave system messages, but keep bot messages so
+        # workflow/bot outputs are available in channel history context.
+        if slack_msg.get("subtype") in ["channel_join", "channel_leave"]:
             return None
 
         msg_ts = slack_msg.get("ts", "")
         text = slack_msg.get("text", "")
 
-        # Skip empty messages
-        if not text.strip():
+        # Skip messages with no text and no file attachments.
+        if not text.strip() and not slack_msg.get("files"):
             return None
 
         # Parse timestamp
