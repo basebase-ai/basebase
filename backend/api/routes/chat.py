@@ -294,7 +294,7 @@ def _derive_bucket(
     if source == _WEB_PLATFORM_SLUG:
         return ("direct", "direct")
     if source == "slack" and normalized_channel_id:
-        if normalized_channel_id.startswith("D"):
+        if normalized_channel_id.startswith("D") or normalized_channel_id.startswith("MPDM"):
             return ("direct", "direct")
         return ("channel", f"channel:{normalized_channel_id}")
     return ("uncategorized", "uncategorized")

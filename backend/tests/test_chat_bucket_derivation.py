@@ -29,6 +29,14 @@ def test_derive_bucket_returns_direct_for_slack_dm_channel() -> None:
     )
 
 
+
+
+def test_derive_bucket_returns_direct_for_slack_mpdm_channel() -> None:
+    assert chat._derive_bucket(source="slack", scope="shared", normalized_channel_id="MPDM123") == (
+        "direct",
+        "direct",
+    )
+
 def test_derive_bucket_returns_uncategorized_for_other_sources() -> None:
     assert chat._derive_bucket(source="teams", scope="shared", normalized_channel_id=None) == (
         "uncategorized",
