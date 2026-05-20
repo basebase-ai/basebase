@@ -31,6 +31,7 @@ import { Memories } from './Memories';
 import { AdminPanel } from './AdminPanel';
 import { PendingChangesPage } from './PendingChangesPage';
 import { ActivityLog } from './ActivityLog';
+import { DataPage } from './DataPage';
 import { OrganizationPanel } from './OrganizationPanel';
 
 // Lazy-load app components (heavy due to Sandpack/Plotly deps)
@@ -518,6 +519,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
         chats: "chats",
         connectors: "data-sources",
         data: "data",
+        "data-hub": "data-hub",
         workflows: "workflows",
         memory: "memory",
         apps: "apps",
@@ -568,6 +570,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
       "/chats": "chats",
       "/connectors": "data-sources",
       "/data": "data",
+      "/data-hub": "data-hub",
       "/workflows": "workflows",
       "/memory": "memory",
       "/apps": "apps",
@@ -659,6 +662,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
           chats: "/chats",
           "data-sources": "/connectors",
           data: "/data",
+          "data-hub": "/data-hub",
           workflows: "/workflows",
           memory: "/memory",
           apps: "/apps",
@@ -1743,7 +1747,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
     const handleNavigate = (event: Event): void => {
       const customEvent = event as CustomEvent<string>;
       if (customEvent.detail) {
-        setCurrentView(customEvent.detail as 'home' | 'chat' | 'data-sources' | 'data' | 'workflows' | 'memory' | 'admin');
+        setCurrentView(customEvent.detail as 'home' | 'chat' | 'data-sources' | 'data' | 'data-hub' | 'workflows' | 'memory' | 'admin');
       }
     };
     window.addEventListener('navigate', handleNavigate);
@@ -1911,7 +1915,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
         `}
         style={!isMobile && !sidebarCollapsed ? { width: `${sidebarWidth + 16}px` } : undefined}
       >
-        <div className={isMobile ? '' : 'h-full rounded-xl bg-surface-900 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.06)] overflow-hidden'}>
+        <div className={isMobile ? 'h-full bg-surface-950 w-[85vw] max-w-xs overflow-hidden' : 'h-full rounded-xl bg-surface-900 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.06)] overflow-hidden'}>
         <Sidebar
           collapsed={isMobile ? false : sidebarCollapsed}
           onToggleCollapse={() => isMobile ? setMobileSidebarOpen(false) : setSidebarCollapsed(!sidebarCollapsed)}
@@ -2018,6 +2022,9 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
         )}
         {currentView === 'data' && (
           <Data />
+        )}
+        {currentView === 'data-hub' && (
+          <DataPage />
         )}
         {currentView === 'workflows' && (
           <Workflows />

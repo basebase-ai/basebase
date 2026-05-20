@@ -376,6 +376,7 @@ export type View =
   | "chats"
   | "data-sources"
   | "data"
+  | "data-hub"
   | "workflows"
   | "memory"
   | "apps"

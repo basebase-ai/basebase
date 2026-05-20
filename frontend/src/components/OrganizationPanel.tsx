@@ -928,26 +928,26 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
         ? 'flex-1 flex flex-col overflow-hidden'
         : 'fixed right-0 top-0 bottom-0 w-full max-w-lg bg-surface-900 border-l border-surface-800 z-50 flex flex-col shadow-2xl'
       }>
-        {/* Header */}
-        <header className={`flex items-center justify-between border-b border-surface-800 ${isPageMode ? 'px-6 sm:px-8 py-5' : 'px-4 sm:px-6 py-4'}`}>
-          <div className="flex items-center gap-3">
-            {logoUrl ? (
-              <img
-                src={logoUrl}
-                alt={organization.name}
-                className="w-10 h-10 rounded-lg object-cover"
-              />
-            ) : (
-              <div className="w-10 h-10 rounded-lg bg-surface-700 flex items-center justify-center text-surface-300 font-bold text-lg">
-                {organization.name.charAt(0).toUpperCase()}
+        {/* Header — only show org name in modal mode; page mode shows tabs directly */}
+        {!isPageMode && (
+          <header className="flex items-center justify-between border-b border-surface-800 px-4 sm:px-6 py-4">
+            <div className="flex items-center gap-3">
+              {logoUrl ? (
+                <img
+                  src={logoUrl}
+                  alt={organization.name}
+                  className="w-10 h-10 rounded-lg object-cover"
+                />
+              ) : (
+                <div className="w-10 h-10 rounded-lg bg-surface-700 flex items-center justify-center text-surface-300 font-bold text-lg">
+                  {organization.name.charAt(0).toUpperCase()}
+                </div>
+              )}
+              <div>
+                <h2 className="font-semibold text-surface-100">{organization.name}</h2>
+                <p className="text-xs text-surface-400">Team settings</p>
               </div>
-            )}
-            <div>
-              <h2 className={`font-semibold text-surface-100 ${isPageMode ? 'text-lg' : ''}`}>{organization.name}</h2>
-              <p className="text-xs text-surface-400">Team settings</p>
             </div>
-          </div>
-          {!isPageMode && (
             <button
               onClick={onClose}
               className="p-2 text-surface-400 hover:text-surface-200 hover:bg-surface-800 rounded-lg transition-colors"
@@ -956,11 +956,11 @@ export function OrganizationPanel({ organization, currentUser, initialTab = 'tea
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
-          )}
-        </header>
+          </header>
+        )}
 
         {/* Tabs */}
-        <div className={`flex border-b border-surface-800 overflow-x-auto ${isPageMode ? 'px-6 sm:px-8' : ''}`}>
+        <div className={`flex border-b border-surface-800 overflow-x-auto scrollbar-none ${isPageMode ? 'px-6 sm:px-8' : ''}`}>
           {(isPageMode ? (['settings', 'connectors', 'team', 'billing'] as const) : (['team', 'billing', 'settings', 'connectors'] as const)).map((tab) => (
             <button
               key={tab}
