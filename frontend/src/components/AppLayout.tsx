@@ -31,7 +31,6 @@ import { Memories } from './Memories';
 import { AdminPanel } from './AdminPanel';
 import { PendingChangesPage } from './PendingChangesPage';
 import { ActivityLog } from './ActivityLog';
-import { DataPage } from './DataPage';
 import { OrganizationPanel } from './OrganizationPanel';
 
 // Lazy-load app components (heavy due to Sandpack/Plotly deps)
@@ -362,7 +361,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
   const startXRef = useRef(0);
   const startWidthRef = useRef(0);
 
-  const handleDividerMouseDown = (e: React.MouseEvent): void => {
+  const handleDividerMouseDown = useCallback((e: React.MouseEvent): void => {
     e.preventDefault();
     isDraggingRef.current = true;
     startXRef.current = e.clientX;
@@ -372,7 +371,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
 
     const onMouseMove = (ev: MouseEvent): void => {
       if (!isDraggingRef.current) return;
-      const newWidth: number = Math.min(400, Math.max(200, startWidthRef.current + ev.clientX - startXRef.current));
+      const newWidth = Math.min(400, Math.max(200, startWidthRef.current + ev.clientX - startXRef.current));
       setSidebarWidth(newWidth);
     };
     const onMouseUp = (): void => {
@@ -384,8 +383,8 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
     };
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
-  };
-
+  }, [sidebarWidth, setSidebarWidth]);
+  
   // Close mobile sidebar when view changes
   useEffect(() => {
     if (isMobile) {
@@ -519,7 +518,6 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
         chats: "chats",
         connectors: "data-sources",
         data: "data",
-        "data-hub": "data-hub",
         workflows: "workflows",
         memory: "memory",
         apps: "apps",
@@ -570,7 +568,6 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
       "/chats": "chats",
       "/connectors": "data-sources",
       "/data": "data",
-      "/data-hub": "data-hub",
       "/workflows": "workflows",
       "/memory": "memory",
       "/apps": "apps",
@@ -662,7 +659,6 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
           chats: "/chats",
           "data-sources": "/connectors",
           data: "/data",
-          "data-hub": "/data-hub",
           workflows: "/workflows",
           memory: "/memory",
           apps: "/apps",
@@ -1746,7 +1742,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
     const handleNavigate = (event: Event): void => {
       const customEvent = event as CustomEvent<string>;
       if (customEvent.detail) {
-        setCurrentView(customEvent.detail as 'home' | 'chat' | 'data-sources' | 'data' | 'data-hub' | 'workflows' | 'memory' | 'admin');
+        setCurrentView(customEvent.detail as 'home' | 'chat' | 'data-sources' | 'data' | 'workflows' | 'memory' | 'admin');
       }
     };
     window.addEventListener('navigate', handleNavigate);
@@ -1827,8 +1823,6 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
     chat: 'Chat',
     chats: 'All Chats',
     'data-sources': 'Connectors',
-    data: 'Search Data',
-    'data-hub': 'Data',
     workflows: 'Workflows',
     memory: 'Memory',
     apps: 'Apps',
@@ -1841,7 +1835,7 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
   };
 
   return (
-    <div className="h-full flex flex-col bg-surface-950 overflow-hidden">
+    <div className="h-full flex flex-col bg-surface-900 overflow-hidden">
       {/* Masquerade Banner */}
       {masquerade && (
         <div className="bg-amber-500/20 dark:bg-amber-500/20 px-4 py-2 flex items-center justify-between flex-shrink-0">
@@ -1906,17 +1900,13 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
         />
       )}
 
-      {/* Sidebar - floating card on desktop, drawer on mobile */}
-      <div
-        className={`
-          ${isMobile 
-            ? `fixed inset-y-0 left-0 z-50 transform transition-transform duration-300 ease-in-out ${mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`
-            : 'p-2 flex-shrink-0'
-          }
-        `}
-        style={!isMobile && !sidebarCollapsed ? { width: `${sidebarWidth + 16}px` } : undefined}
-      >
-        <div className={isMobile ? '' : 'h-full rounded-xl bg-surface-900 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.06)] overflow-hidden'}>
+      {/* Sidebar - hidden on mobile, shown as overlay when open */}
+      <div className={`
+        ${isMobile 
+          ? `fixed inset-y-0 left-0 z-50 transform transition-transform duration-300 ease-in-out ${mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`
+          : ''
+        }
+      `}>
         <Sidebar
           collapsed={isMobile ? false : sidebarCollapsed}
           onToggleCollapse={() => isMobile ? setMobileSidebarOpen(false) : setSidebarCollapsed(!sidebarCollapsed)}
@@ -1935,20 +1925,19 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
           isMobile={isMobile}
           onCloseMobile={() => setMobileSidebarOpen(false)}
         />
-        </div>
       </div>
 
-      {/* Resize handle (desktop only, expanded sidebar) */}
+      {/* Resize divider (desktop only, expanded sidebar only) */}
       {!isMobile && !sidebarCollapsed && (
         <div
           onMouseDown={handleDividerMouseDown}
-          onDoubleClick={() => setSidebarWidth(288)}
-          className="w-1.5 cursor-col-resize hover:bg-surface-700/40 active:bg-surface-700/60 transition-colors flex-shrink-0 rounded-full my-4"
+          onDoubleClick={() => setSidebarWidth(256)}
+          className="w-1 cursor-col-resize hover:bg-primary-500/40 active:bg-primary-500/60 transition-colors flex-shrink-0"
         />
       )}
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden bg-surface-950">
+      <main className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
         {orgAccessError ? (
           <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
             <div className="max-w-md rounded-lg bg-surface-900/80 p-6 shadow-2xl ring-1 ring-white/10">
@@ -2023,9 +2012,6 @@ export function AppLayout({ onLogout, onCreateNewOrg }: AppLayoutProps): JSX.Ele
         )}
         {currentView === 'data' && (
           <Data />
-        )}
-        {currentView === 'data-hub' && (
-          <DataPage />
         )}
         {currentView === 'workflows' && (
           <Workflows />
