@@ -2170,8 +2170,8 @@ export function DataSources(): JSX.Element {
               </span>
             </span>
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="flex min-w-0 flex-1 items-center gap-2">
-                <span className="truncate text-sm text-surface-100">{integration.name}</span>
+              <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 sm:flex-nowrap sm:gap-2">
+                <span className="min-w-0 basis-full truncate text-sm text-surface-100 sm:basis-auto">{integration.name}</span>
                 {integration.provider.startsWith('mcp_') && (
                   <span className="shrink-0 rounded bg-surface-700 px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide text-surface-400">
                     Custom
