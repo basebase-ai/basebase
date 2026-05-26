@@ -13,7 +13,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import cast, Date, desc, func, select
+from sqlalchemy import cast, Date, desc, func, select, text
 
 from api.auth_middleware import (
     AuthContext,
@@ -24,6 +24,7 @@ from models.conversation import Conversation
 from models.credit_transaction import CreditTransaction
 from models.organization import Organization
 from models.user import User
+from models.app import App
 from models.database import get_admin_session
 from services.query_outcome_metrics import get_query_outcome_window_stats
 
@@ -208,3 +209,103 @@ async def get_top_conversations(
         })
 
     return {"organizations": organizations}
+
+
+@router.get("/data-exfiltration")
+async def get_data_exfiltration(
+    auth: AuthContext = Depends(require_global_admin),
+) -> dict[str, Any]:
+    """Return per-user data-exfiltration counters over the trailing 30 days."""
+    window_start: datetime = datetime.now(timezone.utc) - timedelta(days=30)
+    logger.info("[admin_dashboard] Computing data exfiltration metrics window_start=%s", window_start.isoformat())
+
+    async with get_admin_session() as session:
+        tool_rows = (
+            await session.execute(
+                text(
+                    """
+                    WITH tool_uses AS (
+                      SELECT
+                        cm.user_id,
+                        block->>'name' AS tool_name,
+                        COALESCE(block->'input'->>'connector', '') AS connector_name,
+                        COALESCE(block->'input'->>'query', '') AS sql_query
+                      FROM chat_messages cm
+                      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(cm.content_blocks, '[]'::jsonb)) AS block
+                      WHERE cm.user_id IS NOT NULL
+                        AND cm.created_at >= :window_start
+                        AND block->>'type' = 'tool_use'
+                    )
+                    SELECT
+                      user_id,
+                      COUNT(*) FILTER (WHERE tool_name IN ('query_on_connector', 'write_on_connector', 'run_on_connector') AND connector_name = 'code_sandbox') AS code_unix_data_out_count,
+                      COUNT(*) FILTER (WHERE tool_name IN ('query_on_connector', 'write_on_connector', 'run_on_connector') AND connector_name LIKE 'mcp_%') AS custom_mcp_data_out_count,
+                      COUNT(*) FILTER (WHERE tool_name = 'run_sql_query' AND sql_query ~* '^\\s*select\\b') AS select_query_count
+                    FROM tool_uses
+                    GROUP BY user_id
+                    """
+                ),
+                {"window_start": window_start},
+            )
+        ).all()
+
+        app_rows = (
+            await session.execute(
+                select(App.user_id, func.count(App.id).label("owned_app_count"))
+                .where(App.created_at >= window_start)
+                .group_by(App.user_id)
+            )
+        ).all()
+
+        user_ids: set[UUID] = set()
+        for row in tool_rows:
+            user_ids.add(row.user_id)
+        for row in app_rows:
+            user_ids.add(row.user_id)
+
+        name_map: dict[str, str] = {}
+        if user_ids:
+            user_rows = (await session.execute(select(User.id, User.name).where(User.id.in_(list(user_ids))))).all()
+            name_map = {str(u.id): u.name for u in user_rows if u.name}
+
+    by_user: dict[str, dict[str, Any]] = {}
+    for row in tool_rows:
+        uid = str(row.user_id)
+        by_user[uid] = {
+            "user_id": uid,
+            "user_name": name_map.get(uid),
+            "code_unix_data_out_count": int(row.code_unix_data_out_count or 0),
+            "custom_mcp_data_out_count": int(row.custom_mcp_data_out_count or 0),
+            "select_query_count": int(row.select_query_count or 0),
+            "owned_app_count": 0,
+        }
+    for row in app_rows:
+        uid = str(row.user_id)
+        if uid not in by_user:
+            by_user[uid] = {
+                "user_id": uid,
+                "user_name": name_map.get(uid),
+                "code_unix_data_out_count": 0,
+                "custom_mcp_data_out_count": 0,
+                "select_query_count": 0,
+                "owned_app_count": 0,
+            }
+        by_user[uid]["owned_app_count"] = int(row.owned_app_count or 0)
+
+    users: list[dict[str, Any]] = sorted(
+        by_user.values(),
+        key=lambda r: (
+            r["code_unix_data_out_count"]
+            + r["custom_mcp_data_out_count"]
+            + r["select_query_count"]
+            + r["owned_app_count"]
+        ),
+        reverse=True,
+    )
+    logger.info("[admin_dashboard] Computed data exfiltration rows=%d", len(users))
+    return {
+        "window": "rolling_30_days",
+        "window_start": window_start.isoformat().replace("+00:00", "Z"),
+        "owned_app_count_is_proxy": True,
+        "users": users,
+    }

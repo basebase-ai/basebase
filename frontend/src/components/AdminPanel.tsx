@@ -62,6 +62,22 @@ interface QueryOutcomeRateResponse {
   }>;
 }
 
+interface DataExfiltrationUserRow {
+  user_id: string;
+  user_name: string | null;
+  code_unix_data_out_count: number;
+  custom_mcp_data_out_count: number;
+  select_query_count: number;
+  owned_app_count: number;
+}
+
+interface DataExfiltrationResponse {
+  window: string;
+  window_start: string;
+  owned_app_count_is_proxy?: boolean;
+  users: DataExfiltrationUserRow[];
+}
+
 function formatRelativeTime(iso: string): string {
   const diffMs: number = Date.now() - new Date(iso).getTime();
   const mins: number = Math.floor(diffMs / 60_000);
@@ -552,6 +568,9 @@ export function AdminPanel(): JSX.Element {
   const [topConversationsError, setTopConversationsError] = useState<string | null>(null);
   const [PlotComponent, setPlotComponent] = useState<typeof import('react-plotly.js').default | null>(null);
   const [chartLoadError, setChartLoadError] = useState<boolean>(false);
+  const [dataExfiltration, setDataExfiltration] = useState<DataExfiltrationResponse | null>(null);
+  const [dataExfiltrationLoading, setDataExfiltrationLoading] = useState<boolean>(true);
+  const [dataExfiltrationError, setDataExfiltrationError] = useState<string | null>(null);
 
   useEffect(() => {
     import('react-plotly.js')
@@ -579,6 +598,17 @@ export function AdminPanel(): JSX.Element {
       setTopConversations(data);
     } catch { setTopConversationsError('Request failed'); }
     finally { setTopConversationsLoading(false); }
+  }, []);
+
+  const fetchDataExfiltration = useCallback(async (): Promise<void> => {
+    setDataExfiltrationLoading(true);
+    setDataExfiltrationError(null);
+    try {
+      const { data, error: reqErr } = await apiRequest<DataExfiltrationResponse>('/admin-dashboard/data-exfiltration');
+      if (reqErr || !data) { setDataExfiltrationError(reqErr ?? 'Failed to fetch'); return; }
+      setDataExfiltration(data);
+    } catch { setDataExfiltrationError('Request failed'); }
+    finally { setDataExfiltrationLoading(false); }
   }, []);
 
   const fetchWaitlist = useCallback(async (): Promise<void> => {
@@ -779,6 +809,7 @@ export function AdminPanel(): JSX.Element {
     if (activeTab === 'dashboard') {
       void fetchCreditUsage();
       void fetchTopConversations();
+      void fetchDataExfiltration();
     } else if (activeTab === 'waitlist') {
       void fetchWaitlist();
     } else if (activeTab === 'users') {
@@ -795,7 +826,7 @@ export function AdminPanel(): JSX.Element {
     } else if (activeTab === 'graph-magic') {
       // graph tab fetches on-demand in component
     }
-  }, [activeTab, fetchCreditUsage, fetchTopConversations, fetchWaitlist, fetchUsers, fetchOrganizations, fetchIntegrations, fetchQueryOutcomeRate, fetchRunningJobs, fetchModels]);
+  }, [activeTab, fetchCreditUsage, fetchTopConversations, fetchDataExfiltration, fetchWaitlist, fetchUsers, fetchOrganizations, fetchIntegrations, fetchQueryOutcomeRate, fetchRunningJobs, fetchModels]);
 
   const handleCancelJob = async (job: AdminRunningJob): Promise<void> => {
     if (!user) return;
@@ -1321,7 +1352,7 @@ export function AdminPanel(): JSX.Element {
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-semibold text-surface-100">Credit Usage — Past 7 Days</h2>
                 <button
-                  onClick={() => { void fetchCreditUsage(); void fetchTopConversations(); }}
+                  onClick={() => { void fetchCreditUsage(); void fetchTopConversations(); void fetchDataExfiltration(); }}
                   className="px-3 py-1.5 rounded-lg border border-surface-700 text-xs font-medium text-surface-300 hover:bg-surface-800 transition-colors"
                 >
                   Refresh
@@ -1342,6 +1373,41 @@ export function AdminPanel(): JSX.Element {
               )}
               {!creditUsageLoading && !creditUsageError && creditUsage && creditUsage.series.length === 0 && (
                 <div className="text-center py-16 text-surface-400">No credit usage in the past 7 days.</div>
+              )}
+            </section>
+
+            <section>
+              <h2 className="text-lg font-semibold text-surface-100 mb-4">Per-User Data Exfiltration — Rolling Month</h2>
+              {dataExfiltrationLoading && <div className="text-center py-12 text-surface-400">Loading exfiltration metrics...</div>}
+              {dataExfiltrationError && <div className="text-center py-12 text-red-400">{dataExfiltrationError}</div>}
+              {!dataExfiltrationLoading && !dataExfiltrationError && dataExfiltration && dataExfiltration.users.length === 0 && (
+                <div className="text-center py-12 text-surface-400">No exfiltration activity in this window.</div>
+              )}
+              {!dataExfiltrationLoading && !dataExfiltrationError && dataExfiltration && dataExfiltration.users.length > 0 && (
+                <div className="overflow-x-auto rounded-xl border border-surface-800 bg-surface-900">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-surface-800 text-left">
+                        <th className="px-4 py-3 text-sm font-medium text-surface-400">User</th>
+                        <th className="px-4 py-3 text-sm font-medium text-surface-400">Code/Unix Out</th>
+                        <th className="px-4 py-3 text-sm font-medium text-surface-400">Custom MCP Out</th>
+                        <th className="px-4 py-3 text-sm font-medium text-surface-400">SELECT Queries</th>
+                        <th className="px-4 py-3 text-sm font-medium text-surface-400">Owned Apps (Proxy)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-surface-800">
+                      {dataExfiltration.users.map((row) => (
+                        <tr key={row.user_id} className="hover:bg-surface-800/50">
+                          <td className="px-4 py-3 text-sm text-surface-200">{row.user_name || row.user_id}</td>
+                          <td className="px-4 py-3 text-sm text-surface-300">{row.code_unix_data_out_count.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-sm text-surface-300">{row.custom_mcp_data_out_count.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-sm text-surface-300">{row.select_query_count.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-sm text-surface-300">{row.owned_app_count.toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </section>
 
