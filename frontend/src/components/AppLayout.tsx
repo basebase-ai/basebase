@@ -56,6 +56,7 @@ function adminTabFromPathSegment(segment: string): AdminPanelTab {
   if (s === 'teams') return 'organizations';
   if (s === 'sources' || s === 'connectors') return 'connectors';
   if (s === 'jobs') return 'jobs';
+  if (s === 'egress') return 'egress';
   if (s === 'graph-magic') return 'graph-magic';
   return 'dashboard';
 }
@@ -68,6 +69,7 @@ const ADMIN_TAB_TO_PATH: Record<AdminPanelTab, string> = {
   connectors: '/admin/connectors',
   jobs: '/admin/jobs',
   models: '/admin/models',
+  egress: '/admin/egress',
   'graph-magic': '/admin/graph-magic',
 };
 

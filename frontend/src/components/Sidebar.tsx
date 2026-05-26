@@ -405,6 +405,15 @@ const GLOBAL_ADMIN_NAV_ITEMS: ReadonlyArray<{
     ),
   },
   {
+    id: 'egress',
+    label: 'Egress (30d)',
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7h18M3 12h12m-12 5h18" />
+      </svg>
+    ),
+  },
+  {
     id: 'graph-magic',
     label: "Graph Magic",
     icon: (

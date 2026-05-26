@@ -24,6 +24,7 @@ from models.conversation import Conversation
 from models.credit_transaction import CreditTransaction
 from models.organization import Organization
 from models.user import User
+from models.egress_event import EgressEvent
 from models.database import get_admin_session
 from services.query_outcome_metrics import get_query_outcome_window_stats
 
@@ -208,3 +209,49 @@ async def get_top_conversations(
         })
 
     return {"organizations": organizations}
+
+
+@router.get("/egress-by-user")
+async def get_egress_by_user_30d(
+    auth: AuthContext = Depends(require_global_admin),
+) -> dict[str, Any]:
+    """Return per-user outbound bytes over a rolling 30-day window."""
+    now_utc = datetime.now(timezone.utc)
+    window_start = now_utc - timedelta(days=30)
+
+    async with get_admin_session() as session:
+        rows = (
+            await session.execute(
+                select(
+                    EgressEvent.user_id,
+                    User.email.label("user_email"),
+                    User.name.label("user_name"),
+                    func.sum(EgressEvent.bytes_out).label("bytes_out_total"),
+                    func.count(EgressEvent.id).label("event_count"),
+                    func.max(EgressEvent.created_at).label("last_event_at"),
+                )
+                .join(User, User.id == EgressEvent.user_id, isouter=True)
+                .where(EgressEvent.created_at >= window_start)
+                .group_by(EgressEvent.user_id, User.email, User.name)
+                .order_by(desc("bytes_out_total"))
+                .limit(500)
+            )
+        ).all()
+
+    users: list[dict[str, Any]] = []
+    for row in rows:
+        users.append({
+            "user_id": str(row.user_id) if row.user_id else None,
+            "user_email": row.user_email,
+            "user_name": row.user_name,
+            "bytes_out_total": int(row.bytes_out_total or 0),
+            "event_count": int(row.event_count or 0),
+            "last_event_at": row.last_event_at.isoformat() + "Z" if row.last_event_at else None,
+        })
+
+    return {
+        "window_days": 30,
+        "window_start": window_start.isoformat(),
+        "window_end": now_utc.isoformat(),
+        "users": users,
+    }

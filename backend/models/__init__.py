@@ -36,6 +36,7 @@ from models.workstream_snapshot import WorkstreamSnapshot
 from models.notification import Notification
 from models.action_ledger import ActionLedgerEntry
 from models.topic_graph_snapshot import TopicGraphSnapshot
+from models.egress_event import EgressEvent
 
 __all__ = [
     "Base",
@@ -80,4 +81,5 @@ __all__ = [
     "Notification",
     "ActionLedgerEntry",
     "TopicGraphSnapshot",
+    "EgressEvent",
 ]
