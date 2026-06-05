@@ -1101,7 +1101,6 @@ async def sync_user(
             email=request.email,
             name=request.name,
             avatar_url=request.avatar_url,
-            organization_id=None,
             status="active",
             role="member",
             last_login=datetime.utcnow(),
@@ -5146,7 +5145,6 @@ async def register_user(request: CreateUserRequest) -> CreateUserResponse:
         user = User(
             email=request.email,
             name=request.name,
-            organization_id=None,
             role="member",
         )
         session.add(user)
