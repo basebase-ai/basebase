@@ -94,6 +94,25 @@ def _cache_set_org_membership(user_id: UUID, org_id: UUID, is_member: bool) -> N
 
 
 @dataclass
+class VerifiedTokenContext:
+    """Verified JWT claims that do not require a local users row.
+
+    Used by bootstrap endpoints such as /auth/users/sync, where a brand-new
+    Supabase user may have a valid JWT before our application has created the
+    corresponding users row.
+    """
+
+    user_id: UUID
+    email: str
+    payload: dict
+
+    @property
+    def user_id_str(self) -> str:
+        """String representation of the JWT subject."""
+        return str(self.user_id)
+
+
+@dataclass
 class AuthContext:
     """
     Verified authentication context.
@@ -537,6 +556,43 @@ async def _resolve_default_org_for_masquerade_user(user: User) -> Optional[UUID]
             .limit(1)
         )
         return first_org_row.scalar_one_or_none()
+
+
+async def get_verified_token_auth(
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+) -> VerifiedTokenContext:
+    """Verify the bearer JWT and return claims without requiring a DB user.
+
+    Most protected routes should use get_current_auth so the JWT subject is
+    tied to an application user and organization membership. This dependency is
+    intentionally narrower for auth bootstrap endpoints that must create the
+    application user row after Supabase has already issued the first JWT.
+    """
+    token = _extract_token(authorization)
+    payload = await _verify_jwt(token)
+
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: missing subject",
+        )
+    try:
+        user_uuid = UUID(sub)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: malformed subject",
+        )
+
+    email = (payload.get("email") or "").strip()
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: missing email",
+        )
+
+    return VerifiedTokenContext(user_id=user_uuid, email=email, payload=payload)
 
 
 async def get_current_auth(
