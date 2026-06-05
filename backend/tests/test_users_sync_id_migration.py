@@ -174,3 +174,20 @@ def test_sync_user_route_uses_jwt_only_bootstrap_auth() -> None:
 
     assert auth.get_verified_token_auth in dependency_calls
     assert auth.get_current_auth not in dependency_calls
+
+
+def test_sync_user_first_time_constructor_uses_user_model_columns() -> None:
+    """The brand-new-user path must not pass nonexistent columns to User()."""
+    user = auth.User(
+        id=_SUPABASE_SUB,
+        email="jim@example.com",
+        name="Jim Example",
+        avatar_url="https://example.com/avatar.png",
+        status="active",
+        role="member",
+    )
+
+    assert user.id == _SUPABASE_SUB
+    assert user.email == "jim@example.com"
+    assert user.avatar_url == "https://example.com/avatar.png"
+    assert not hasattr(auth.User, "organization_id")
