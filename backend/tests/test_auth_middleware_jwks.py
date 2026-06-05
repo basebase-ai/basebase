@@ -105,3 +105,25 @@ async def test_get_jwks_suppresses_incident_when_throttled(monkeypatch: pytest.M
         await am._get_jwks()
 
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_get_verified_token_auth_does_not_require_database_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_verify_jwt(_token: str) -> dict:
+        return {
+            "sub": "66401176-354f-48ec-8115-d2922e44cf49",
+            "email": "new.user@example.com",
+        }
+
+    async def _fail_user_lookup(_payload: dict):
+        raise AssertionError("JWT-only bootstrap auth must not query users")
+
+    monkeypatch.setattr(am, "_verify_jwt", _fake_verify_jwt)
+    monkeypatch.setattr(am, "_get_user_from_token", _fail_user_lookup)
+
+    ctx = await am.get_verified_token_auth("Bearer fake-token")
+
+    assert ctx.user_id_str == "66401176-354f-48ec-8115-d2922e44cf49"
+    assert ctx.email == "new.user@example.com"

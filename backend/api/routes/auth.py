@@ -27,7 +27,13 @@ import uuid as uuid_stdlib
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 
-from api.auth_middleware import AuthContext, get_current_auth, require_global_admin
+from api.auth_middleware import (
+    AuthContext,
+    VerifiedTokenContext,
+    get_current_auth,
+    get_verified_token_auth,
+    require_global_admin,
+)
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, bindparam, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
@@ -816,12 +822,14 @@ class SyncUserResponse(BaseModel):
 @router.post("/users/sync", response_model=SyncUserResponse)
 async def sync_user(
     request: SyncUserRequest,
-    auth: AuthContext = Depends(get_current_auth),
+    auth: VerifiedTokenContext = Depends(get_verified_token_auth),
 ) -> SyncUserResponse:
     """Sync a user from Supabase auth to our database.
     
     Called when a user authenticates via Supabase OAuth.
-    Creates the user in our database if they don't exist.
+    Creates the user in our database if they don't exist. This endpoint uses
+    JWT-only auth because first-time users have a valid Supabase JWT before
+    their local users row exists.
     """
     try:
         user_uuid = UUID(request.id)
@@ -835,16 +843,16 @@ async def sync_user(
     request_email: str = request.email.strip().lower()
     auth_email: str = (auth.email or "").strip().lower()
     if not auth_email or request_email != auth_email:
-        raise HTTPException(status_code=403, detail="Email does not match authenticated user")
+        raise HTTPException(
+            status_code=403, detail="Email does not match authenticated user"
+        )
 
-    # NOTE: Do NOT 403 on `auth.user_id != user_uuid` here. `request.id` is
-    # the Supabase auth `sub`, while `auth.user_id` is the DB primary key
-    # — and `_get_user_from_token` falls back to email-lookup when the DB
-    # has no user with that PK (the case for invited / waitlist users
-    # whose row was created with an auto-generated UUID before they
-    # signed in via OAuth). This very endpoint then migrates `users.id`
-    # to the Supabase `sub` further below; a 403 here would create a
-    # deadlock that prevents invited users from completing onboarding.
+    # NOTE: Do NOT 403 on `auth.user_id != user_uuid` here. Real requests
+    # should match because both values are the Supabase JWT subject, but
+    # preserving email-based validation keeps the invited/waitlist migration
+    # path safe if this function is reused with a DB-backed auth context.
+    # The endpoint will migrate any legacy users.id value to the Supabase
+    # `sub` further below.
     if auth.user_id != user_uuid:
         logger.info(
             "User ID mismatch on /users/sync — proceeding with migration: "
@@ -1083,6 +1091,11 @@ async def sync_user(
 
         # Create a new active user with no org. Organization assignment is now
         # invite/membership-driven and no longer inferred from email domain.
+        logger.info(
+            "Creating first-time app user from verified Supabase JWT: user_id=%s email=%s",
+            user_uuid,
+            request_email,
+        )
         new_user = User(
             id=user_uuid,
             email=request.email,
@@ -1145,8 +1158,15 @@ async def sync_user(
                     whatsapp_consent=existing.whatsapp_consent,
                     phone_number_verified=existing.phone_number_verified_at is not None,
                 )
-            raise HTTPException(status_code=500, detail="User creation conflict; please retry")
+            raise HTTPException(
+                status_code=500, detail="User creation conflict; please retry"
+            )
         await session.refresh(new_user)
+        logger.info(
+            "Created first-time app user from Supabase JWT: user_id=%s email=%s",
+            new_user.id,
+            new_user.email,
+        )
 
         return SyncUserResponse(
             id=str(new_user.id),

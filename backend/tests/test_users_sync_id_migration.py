@@ -156,8 +156,21 @@ def test_sync_user_rejects_invalid_user_id(
     with pytest.raises(HTTPException) as exc_info:
         asyncio.run(
             auth.sync_user(
-                request=auth.SyncUserRequest(id="not-a-uuid", email="jim@example.com"),
+                request=auth.SyncUserRequest(
+                    id="not-a-uuid", email="jim@example.com"
+                ),
                 auth=_auth_ctx(_DB_ID, "jim@example.com"),
             )
         )
     assert exc_info.value.status_code == 400
+
+
+def test_sync_user_route_uses_jwt_only_bootstrap_auth() -> None:
+    """Brand-new Supabase users must reach sync before a DB user row exists."""
+    route = next(
+        r for r in auth.router.routes if getattr(r, "path", None) == "/users/sync"
+    )
+    dependency_calls = {dep.call for dep in route.dependant.dependencies}
+
+    assert auth.get_verified_token_auth in dependency_calls
+    assert auth.get_current_auth not in dependency_calls
