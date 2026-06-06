@@ -13,6 +13,7 @@ from typing import Any, Optional
 
 from models.action_ledger import ActionLedgerEntry
 from models.database import get_session
+from services.egress_scanner import record_count_only_egress_event
 
 logger = logging.getLogger(__name__)
 GOOGLE_DRIVE_LOG_MAX_CHARS = 200
@@ -108,6 +109,17 @@ async def record_intent(
         async with get_session(organization_id) as session:
             session.add(entry)
             await session.commit()
+
+        await record_count_only_egress_event(
+            organization_id=organization_id,
+            user_id=user_id,
+            context=ctx,
+            connector=connector,
+            operation=operation,
+            payload=sanitized_data,
+            destination=None,
+            metadata={"dispatch_type": dispatch_type, "source": "action_ledger"},
+        )
 
         return change_id
     except Exception:

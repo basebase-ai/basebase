@@ -45,6 +45,23 @@ interface TopOrgConversations {
   conversations: TopConversation[];
 }
 
+
+interface UserEgressRow {
+  user_id: string | null;
+  user_email: string | null;
+  user_name: string | null;
+  bytes_out_total: number;
+  event_count: number;
+  last_event_at: string | null;
+}
+
+interface UserEgressResponse {
+  window_days: number;
+  window_start: string;
+  window_end: string;
+  users: UserEgressRow[];
+}
+
 interface TopConversationsResponse {
   organizations: TopOrgConversations[];
 }
@@ -552,6 +569,10 @@ export function AdminPanel(): JSX.Element {
   const [topConversationsError, setTopConversationsError] = useState<string | null>(null);
   const [PlotComponent, setPlotComponent] = useState<typeof import('react-plotly.js').default | null>(null);
   const [chartLoadError, setChartLoadError] = useState<boolean>(false);
+  const [userEgress, setUserEgress] = useState<UserEgressResponse | null>(null);
+  const [userEgressLoading, setUserEgressLoading] = useState<boolean>(true);
+  const [userEgressError, setUserEgressError] = useState<string | null>(null);
+
 
   useEffect(() => {
     import('react-plotly.js')
@@ -775,6 +796,26 @@ export function AdminPanel(): JSX.Element {
     }
   }, [user]);
 
+
+  const fetchUserEgress = useCallback(async (): Promise<void> => {
+    if (!user) return;
+    setUserEgressLoading(true);
+    setUserEgressError(null);
+    try {
+      const { data, error: reqErr } = await apiRequest<UserEgressResponse>('/admin-dashboard/egress-by-user');
+      if (reqErr || !data) {
+        setUserEgressError(reqErr ?? 'Failed to fetch per-user egress');
+        setUserEgress(null);
+        return;
+      }
+      setUserEgress(data);
+    } catch {
+      setUserEgressError('Failed to fetch per-user egress');
+      setUserEgress(null);
+    } finally {
+      setUserEgressLoading(false);
+    }
+  }, [user]);
   useEffect(() => {
     if (activeTab === 'dashboard') {
       void fetchCreditUsage();
@@ -792,10 +833,12 @@ export function AdminPanel(): JSX.Element {
       void fetchRunningJobs();
     } else if (activeTab === 'models') {
       void fetchModels();
+    } else if (activeTab === 'egress') {
+      void fetchUserEgress();
     } else if (activeTab === 'graph-magic') {
       // graph tab fetches on-demand in component
     }
-  }, [activeTab, fetchCreditUsage, fetchTopConversations, fetchWaitlist, fetchUsers, fetchOrganizations, fetchIntegrations, fetchQueryOutcomeRate, fetchRunningJobs, fetchModels]);
+  }, [activeTab, fetchCreditUsage, fetchTopConversations, fetchWaitlist, fetchUsers, fetchOrganizations, fetchIntegrations, fetchQueryOutcomeRate, fetchRunningJobs, fetchModels, fetchUserEgress]);
 
   const handleCancelJob = async (job: AdminRunningJob): Promise<void> => {
     if (!user) return;
@@ -2657,6 +2700,53 @@ export function AdminPanel(): JSX.Element {
               <div className="text-sm text-surface-500 text-center">
                 Showing {filteredIntegrations.length} of {adminIntegrations.length} connectors
                 {sourceSearch && ` matching "${sourceSearch}"`}
+              </div>
+            )}
+          </div>
+        )}
+
+
+        {activeTab === 'egress' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-surface-100">Per-User Egress — Rolling 30 Days</h2>
+              <button
+                onClick={() => { void fetchUserEgress(); }}
+                className="px-3 py-1.5 rounded-lg border border-surface-700 text-xs font-medium text-surface-300 hover:bg-surface-800 transition-colors"
+              >
+                Refresh
+              </button>
+            </div>
+            {userEgressLoading && <div className="text-center py-10 text-surface-400">Loading egress data...</div>}
+            {userEgressError && <div className="text-center py-10 text-red-400">{userEgressError}</div>}
+            {!userEgressLoading && !userEgressError && userEgress && userEgress.users.length === 0 && (
+              <div className="text-center py-10 text-surface-400">No egress events in the past 30 days.</div>
+            )}
+            {!userEgressLoading && !userEgressError && userEgress && userEgress.users.length > 0 && (
+              <div className="overflow-x-auto rounded-xl border border-surface-800">
+                <table className="min-w-full divide-y divide-surface-800">
+                  <thead className="bg-surface-900">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs text-surface-400">User</th>
+                      <th className="px-4 py-3 text-right text-xs text-surface-400">Bytes Out (30d)</th>
+                      <th className="px-4 py-3 text-right text-xs text-surface-400">Events</th>
+                      <th className="px-4 py-3 text-right text-xs text-surface-400">Last Event</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-800 bg-surface-950">
+                    {userEgress.users.map((row) => (
+                      <tr key={`${row.user_id ?? 'unknown'}-${row.user_email ?? 'none'}`}>
+                        <td className="px-4 py-3 text-sm text-surface-200">
+                          <div className="font-medium">{row.user_name || 'Unknown user'}</div>
+                          <div className="text-xs text-surface-500">{row.user_email || row.user_id || 'N/A'}</div>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-surface-200 text-right">{row.bytes_out_total.toLocaleString()}</td>
+                        <td className="px-4 py-3 text-sm text-surface-300 text-right">{row.event_count.toLocaleString()}</td>
+                        <td className="px-4 py-3 text-sm text-surface-300 text-right">{row.last_event_at ? formatRelativeTime(row.last_event_at) : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
