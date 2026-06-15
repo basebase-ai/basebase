@@ -16,7 +16,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "148_drop_legacy_digests"
-down_revision: Union[str, None] = "147_digest_app_theme_vars"
+down_revision: Union[str, None] = "147_daily_digest_theme"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
