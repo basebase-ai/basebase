@@ -36,7 +36,7 @@ pydantic-settings>=2.2,<3
 python-dotenv==1.2.2
 
 # Security
-cryptography==46.0.7
+cryptography==50.0.0
 python-jose[cryptography]==3.4.0
 
 # Utilities
